@@ -1,0 +1,8 @@
+description = "Create a Plan2Agent task graph from an approved implementation spec."
+prompt = """
+Use the Plan2Agent p2a-task-breakdown skill for the following approved implementation spec:
+
+{{args}}
+
+Gemini is read-only. Return the proposed task graph to the foreground owner; do not persist task artifacts or implement work.
+"""

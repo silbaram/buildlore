@@ -1,0 +1,8 @@
+description = "Create a Plan2Agent product and implementation spec from answered intake."
+prompt = """
+Use the Plan2Agent p2a-spec skill for the following context:
+
+{{args}}
+
+Gemini is read-only. Return the proposed Gate B content to the foreground harness owner; do not persist canonical artifacts or record approval.
+"""

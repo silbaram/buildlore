@@ -1,0 +1,605 @@
+{
+  "schema_version": "p2a.context_routes.v1",
+  "providers": [
+    "codex",
+    "claude",
+    "gemini"
+  ],
+  "skills": [
+    {
+      "id": "p2a-harness",
+      "stages": [
+        "entry",
+        "gate-a",
+        "gate-shape",
+        "gate-b"
+      ],
+      "gemini_command": "harness",
+      "references": [
+        {
+          "id": "harness.project-shape-approvals",
+          "path": "references/project-shape-and-approvals.md",
+          "phases": [],
+          "load": "on-demand",
+          "required": true,
+          "condition": "Gate A approval, Gate ② project shape, or Gate B approval must be proposed or recorded.",
+          "stages": [
+            "gate-a",
+            "gate-shape",
+            "gate-b"
+          ]
+        },
+        {
+          "id": "harness.artifact-persistence-evidence",
+          "path": "references/artifact-persistence-and-evidence.md",
+          "phases": [],
+          "load": "on-demand",
+          "required": true,
+          "condition": "Canonical planning state is about to be persisted, projected to status, or handed off.",
+          "stages": [
+            "gate-a",
+            "gate-shape",
+            "gate-b"
+          ]
+        },
+        {
+          "id": "harness.existing-documents",
+          "path": "references/existing-documents.md",
+          "phases": [],
+          "load": "conditional",
+          "required": true,
+          "condition": "The entry has a validated reference bundle, or the entry or active iteration points to an existing PRD, design, implementation plan, or approved Plan2Agent baseline.",
+          "stages": [
+            "entry",
+            "gate-a",
+            "gate-b"
+          ]
+        },
+        {
+          "id": "harness.memory-recall",
+          "path": "references/memory-recall.md",
+          "phases": [],
+          "load": "conditional",
+          "required": false,
+          "condition": "Planning Memory is configured and a recall report is relevant to Gate A, Gate B, or Orchestrated decomposition.",
+          "stages": [
+            "gate-a",
+            "gate-b"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2a-next",
+      "stages": [
+        "entry",
+        "gate-a",
+        "gate-shape",
+        "gate-b",
+        "gate-c",
+        "execution",
+        "closeout"
+      ],
+      "gemini_command": "next",
+      "references": []
+    },
+    {
+      "id": "p2a-spec",
+      "stages": [
+        "gate-b"
+      ],
+      "gemini_command": "spec",
+      "references": [
+        {
+          "id": "spec.contract",
+          "path": "references/spec-contract.md",
+          "phases": [],
+          "load": "on-demand",
+          "required": true,
+          "condition": "A Gate B specification is about to be authored or validated.",
+          "stages": [
+            "gate-b"
+          ]
+        },
+        {
+          "id": "spec.technology-reconnaissance",
+          "path": "references/technology-reconnaissance.md",
+          "phases": [],
+          "load": "conditional",
+          "required": true,
+          "condition": "A material external technology or reusable implementation choice may be stale, current-version-sensitive, or consequential.",
+          "stages": [
+            "gate-b"
+          ]
+        },
+        {
+          "id": "spec.baseline-memory",
+          "path": "references/baseline-and-memory.md",
+          "phases": [],
+          "load": "conditional",
+          "required": true,
+          "condition": "The intake carries a validated baseline, a prior spec is reused, or a relevant Planning Memory report exists.",
+          "stages": [
+            "gate-b"
+          ]
+        },
+        {
+          "id": "spec.entry-reference-bundle",
+          "path": "references/entry-reference-bundle.md",
+          "phases": [],
+          "load": "conditional",
+          "required": true,
+          "condition": "The validated entry has a p2a-reference-bundle.json with material evidence for Gate B.",
+          "stages": [
+            "gate-b"
+          ]
+        },
+        {
+          "id": "spec.markdown-views",
+          "path": "references/markdown-views.md",
+          "phases": [],
+          "load": "conditional",
+          "required": false,
+          "condition": "A human-readable product or implementation view is requested or needed for review.",
+          "stages": [
+            "gate-b"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2a-task-author",
+      "modes": [
+        "orchestrated"
+      ],
+      "stages": [
+        "gate-c"
+      ],
+      "gemini_command": "task-author",
+      "references": [
+        {
+          "id": "task-author.draft-contract",
+          "path": "references/draft-contract.md",
+          "phases": [],
+          "load": "on-demand",
+          "required": true,
+          "condition": "A new Gate C task graph draft is about to be authored from validated task context.",
+          "stages": [
+            "gate-c"
+          ]
+        },
+        {
+          "id": "task-author.replacement-promotion",
+          "path": "references/replacement-and-promotion.md",
+          "phases": [],
+          "load": "conditional",
+          "required": true,
+          "condition": "A canonical graph already exists, or a draft is ready for validation and promotion.",
+          "stages": [
+            "gate-c"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2a-task-breakdown",
+      "modes": [
+        "orchestrated"
+      ],
+      "stages": [
+        "gate-c"
+      ],
+      "gemini_command": "task-breakdown",
+      "references": []
+    },
+    {
+      "id": "p2a-dev-execution",
+      "modes": [
+        "direct",
+        "planned",
+        "orchestrated"
+      ],
+      "stages": [
+        "gate-c",
+        "execution",
+        "acceptance",
+        "monitor",
+        "visual",
+        "closeout"
+      ],
+      "gemini_command": "dev-execution",
+      "references": [
+        {
+          "id": "execution.lifecycle",
+          "path": "references/execution-lifecycle.md",
+          "phases": [
+            "prepare",
+            "owner-start",
+            "retry"
+          ],
+          "load": "on-demand",
+          "required": true,
+          "condition": "Gate C is absent and execution needs preparation, or a single-owner run is about to start or resume.",
+          "stages": [
+            "gate-c",
+            "execution"
+          ]
+        },
+        {
+          "id": "execution.provider-confinement",
+          "path": "references/provider-confinement.md",
+          "phases": [
+            "owner-start"
+          ],
+          "load": "on-demand",
+          "required": true,
+          "condition": "A write-capable owner is about to start or resume implementation.",
+          "stages": [
+            "execution"
+          ]
+        },
+        {
+          "id": "execution.verification-closeout",
+          "path": "references/verification-closeout.md",
+          "phases": [
+            "verify-closeout"
+          ],
+          "load": "on-demand",
+          "required": true,
+          "condition": "The implementation outcome is ready for executable verification, checkpointing, or run closeout.",
+          "stages": [
+            "execution",
+            "closeout"
+          ]
+        },
+        {
+          "id": "execution.acceptance-review",
+          "path": "references/acceptance-review.md",
+          "phases": [
+            "acceptance-review"
+          ],
+          "load": "conditional",
+          "required": true,
+          "condition": "Acceptance review policy is on, explicitly opted in, or an acceptance run is already active, and no required visual contract replaces it.",
+          "stages": [
+            "acceptance",
+            "closeout"
+          ]
+        },
+        {
+          "id": "execution.batch",
+          "path": "references/batch-execution.md",
+          "phases": [
+            "batch"
+          ],
+          "load": "conditional",
+          "required": true,
+          "condition": "Two or more independent ready tasks will run concurrently in isolated worktrees.",
+          "modes": [
+            "orchestrated"
+          ],
+          "stages": [
+            "execution"
+          ]
+        },
+        {
+          "id": "execution.monitor-gate",
+          "path": "references/monitor-gate.md",
+          "phases": [
+            "monitor"
+          ],
+          "load": "conditional",
+          "required": true,
+          "condition": "The current run was started with --require-monitor.",
+          "stages": [
+            "monitor",
+            "closeout"
+          ]
+        },
+        {
+          "id": "execution.visual-evidence",
+          "path": "references/visual-evidence.md",
+          "phases": [
+            "visual-review"
+          ],
+          "load": "conditional",
+          "required": true,
+          "condition": "The task is UI or mixed, or the approved execution envelope contains a visual contract.",
+          "stages": [
+            "visual",
+            "closeout"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2a-visual-experience",
+      "stages": [
+        "visual",
+        "gate-b"
+      ],
+      "gemini_command": "visual-experience",
+      "references": [
+        {
+          "id": "visual.full-procedure",
+          "path": "references/full-visual-procedure.md",
+          "phases": [],
+          "load": "conditional",
+          "required": true,
+          "condition": "The Gate B visual decision is full with current-iteration timing.",
+          "stages": [
+            "visual",
+            "gate-b"
+          ]
+        },
+        {
+          "id": "visual.implementation-feedback-review",
+          "path": "references/implementation-feedback-and-review.md",
+          "phases": [],
+          "load": "conditional",
+          "required": true,
+          "condition": "An approved visual contract affects task authoring, implementation feedback, or final iteration review.",
+          "stages": [
+            "visual"
+          ]
+        }
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "id": "p2a-spec-author",
+      "skills": [
+        "p2a-spec"
+      ],
+      "stages": [
+        "gate-b"
+      ],
+      "condition": "A Gate B product specification draft needs an independent author."
+    },
+    {
+      "id": "p2a-implementation-planner",
+      "skills": [
+        "p2a-spec"
+      ],
+      "stages": [
+        "gate-b"
+      ],
+      "condition": "An approved product specification needs a schema-compatible implementation plan."
+    },
+    {
+      "id": "p2a-task-author",
+      "skills": [
+        "p2a-task-author"
+      ],
+      "stages": [
+        "gate-c"
+      ],
+      "condition": "A validated task context needs a reviewable Gate C draft.",
+      "modes": [
+        "orchestrated"
+      ]
+    },
+    {
+      "id": "p2a-task-graph",
+      "skills": [
+        "p2a-task-breakdown"
+      ],
+      "stages": [
+        "gate-c"
+      ],
+      "condition": "Orchestrated execution benefits from dependency or ownership boundaries.",
+      "modes": [
+        "orchestrated"
+      ]
+    },
+    {
+      "id": "p2a-implementer",
+      "skills": [
+        "p2a-dev-execution"
+      ],
+      "stages": [
+        "execution"
+      ],
+      "condition": "An independently confined implementation owner materially helps an Orchestrated or batch task.",
+      "modes": [
+        "orchestrated"
+      ]
+    },
+    {
+      "id": "p2a-performance-monitor",
+      "skills": [
+        "p2a-dev-execution"
+      ],
+      "stages": [
+        "monitor"
+      ],
+      "condition": "The run contract explicitly requires independent monitor evidence."
+    },
+    {
+      "id": "p2a-acceptance-reviewer",
+      "skills": [
+        "p2a-dev-execution"
+      ],
+      "stages": [
+        "acceptance"
+      ],
+      "condition": "Acceptance review policy is on or explicitly opted in."
+    },
+    {
+      "id": "p2a-visual-designer",
+      "skills": [
+        "p2a-visual-experience"
+      ],
+      "stages": [
+        "visual"
+      ],
+      "condition": "A full current-iteration visual experience needs prototype candidates."
+    },
+    {
+      "id": "p2a-visual-reviewer",
+      "skills": [
+        "p2a-visual-experience",
+        "p2a-dev-execution"
+      ],
+      "stages": [
+        "visual",
+        "closeout"
+      ],
+      "condition": "A required visual contract needs independent evidence comparison."
+    },
+    {
+      "id": "p2a-skill-curator",
+      "skills": [
+        "p2a-dev-execution"
+      ],
+      "stages": [
+        "closeout"
+      ],
+      "condition": "A separately approved retrospective proposal needs read-only review or curation."
+    }
+  ],
+  "authorities": [
+    {
+      "id": "schema.entry-reference-bundle",
+      "owner": "schema",
+      "root": "runtime",
+      "path": "schemas/reference-bundle.schema.json",
+      "condition": "An optional entry reference bundle is declared or validated.",
+      "stages": [
+        "entry",
+        "gate-a",
+        "gate-b"
+      ]
+    },
+    {
+      "id": "schema.gate-a-intake",
+      "owner": "schema",
+      "root": "runtime",
+      "path": "schemas/intake.schema.json",
+      "condition": "Gate A intake is authored, validated, approved, or resumed.",
+      "stages": [
+        "gate-a"
+      ]
+    },
+    {
+      "id": "schema.gate-a-reference-bundle-snapshot",
+      "owner": "schema",
+      "root": "runtime",
+      "path": "schemas/reference-bundle-snapshot.schema.json",
+      "condition": "Validated entry reference metadata is snapshotted and bound to Gate A approval.",
+      "stages": [
+        "gate-a",
+        "gate-b"
+      ]
+    },
+    {
+      "id": "schema.gate-b-spec",
+      "owner": "schema",
+      "root": "runtime",
+      "path": "schemas/spec.schema.json",
+      "condition": "Gate B product and implementation scope is authored or validated.",
+      "stages": [
+        "gate-b"
+      ]
+    },
+    {
+      "id": "schema.gate-b-reference-bundle-usage",
+      "owner": "schema",
+      "root": "runtime",
+      "path": "schemas/reference-bundle-usage.schema.json",
+      "condition": "Gate B records which approved reference hashes supported which decisions and LOCAL evidence.",
+      "stages": [
+        "gate-b"
+      ]
+    },
+    {
+      "id": "schema.gate-c-task-graph",
+      "owner": "schema",
+      "root": "runtime",
+      "path": "schemas/task-graph.schema.json",
+      "condition": "An Orchestrated Gate C graph is authored or validated.",
+      "stages": [
+        "gate-c"
+      ],
+      "modes": [
+        "orchestrated"
+      ]
+    },
+    {
+      "id": "schema.next-contract",
+      "owner": "schema",
+      "root": "runtime",
+      "path": "schemas/next-v2.schema.json",
+      "condition": "An agent requests the typed p2a next v2 contract.",
+      "stages": [
+        "entry",
+        "gate-a",
+        "gate-shape",
+        "gate-b",
+        "gate-c",
+        "execution",
+        "visual",
+        "acceptance",
+        "monitor",
+        "closeout"
+      ]
+    },
+    {
+      "id": "cli.state-router",
+      "owner": "cli",
+      "root": "runtime",
+      "path": "scripts/p2a.mjs",
+      "condition": "The current canonical state is inspected or routed to one next action.",
+      "stages": [
+        "entry",
+        "gate-a",
+        "gate-shape",
+        "gate-b",
+        "gate-c",
+        "execution",
+        "visual",
+        "acceptance",
+        "monitor",
+        "closeout"
+      ]
+    },
+    {
+      "id": "cli.artifact-validator",
+      "owner": "cli",
+      "root": "runtime",
+      "path": "scripts/validate_artifacts.mjs",
+      "condition": "A canonical planning, execution, visual, or review artifact is validated.",
+      "stages": [
+        "entry",
+        "gate-a",
+        "gate-shape",
+        "gate-b",
+        "gate-c",
+        "execution",
+        "visual",
+        "acceptance",
+        "monitor",
+        "closeout"
+      ]
+    },
+    {
+      "id": "hook.claude-workspace-confinement",
+      "owner": "hook",
+      "root": "target",
+      "path": ".claude/hooks/p2a-confine-workspace.mjs",
+      "condition": "Claude owns a write-capable execution inside scaffold confinement.",
+      "stages": [
+        "execution"
+      ],
+      "providers": [
+        "claude"
+      ],
+      "modes": [
+        "direct",
+        "planned",
+        "orchestrated"
+      ]
+    }
+  ]
+}

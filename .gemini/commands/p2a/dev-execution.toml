@@ -1,0 +1,8 @@
+description = "Route Gemini dev-execution requests to a write-capable foreground owner."
+prompt = """
+Use the Plan2Agent p2a-dev-execution skill for the following ready task execution context:
+
+{{args}}
+
+Gemini is read-only. For write-required work, return the exact ready task or frozen batch context to a confined foreground Codex or approved Claude owner; do not mutate runs, worktrees, evidence, tasks, or branches.
+"""

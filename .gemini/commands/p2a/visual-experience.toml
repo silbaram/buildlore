@@ -1,0 +1,8 @@
+description = "Create and approve a structured visual experience with offline HTML prototype candidates."
+prompt = """
+Use the Plan2Agent p2a-visual-experience skill for the following Gate B visual context:
+
+{{args}}
+
+Gemini is read-only. Return proposed visual artifacts and comparison evidence to the foreground harness owner; do not persist candidates or record selection or approval.
+"""

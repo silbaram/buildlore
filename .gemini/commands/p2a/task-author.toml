@@ -1,0 +1,8 @@
+description = "Author a Gate C task graph draft from a Plan2Agent context bundle."
+prompt = """
+Use the Plan2Agent p2a-task-author skill for the following context:
+
+{{args}}
+
+Gemini is read-only. Return one complete proposed task graph to the foreground skill owner; do not write draft or canonical task artifacts.
+"""

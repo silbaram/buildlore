@@ -1,0 +1,8 @@
+description = "Run the gated Plan2Agent harness from a concise entry document."
+prompt = """
+Use the Plan2Agent p2a-harness skill for the following input:
+
+{{args}}
+
+Gemini is read-only. Return proposed planning content and the next state to the foreground Plan2Agent owner; do not persist Gate artifacts, record approvals, or perform other mutations.
+"""
