@@ -2,9 +2,11 @@
 
 ## Start through Plan2Agent
 
-For new issue work, store a provenance-bound snapshot under `docs/entries/`, then
-run `p2a next --entry <snapshot-path>`. To resume existing work, run `p2a next` and
-perform only the single action it returns. On a fresh clone, first run
+For new issue work, store a provenance-bound snapshot under the local-only,
+Git-ignored `plans/entries/` directory, then run `p2a next --entry <snapshot-path>`.
+Never add `plans/` to a product commit; project knowledge belongs in the separate
+knowledge repository. To resume existing work, run `p2a next` and perform only the
+single action it returns. On a fresh clone, first run
 `npm run p2a:init`. The repository bootstrap stages `p2a init` separately so it
 does not overwrite tracked agent instructions. It must fail closed when any
 manifest-managed asset path, file type, or SHA-256 does not match.
@@ -24,7 +26,7 @@ npm run typecheck
 p2a doctor --target . --dev
 ```
 
-For entry snapshots, also run `p2a validate --entry <snapshot-path>`.
+For local entry snapshots, also run `p2a validate --entry <snapshot-path>`.
 
 ## Product invariants
 

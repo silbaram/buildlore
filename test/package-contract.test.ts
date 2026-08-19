@@ -113,12 +113,5 @@ describe('package contract', () => {
     expect([...new Set(externalImports)]).toEqual(['llm-wiki-compiler']);
     expect(compilerSource).not.toMatch(/node:child_process|Promise\.race|process\.(?:on|once)\(/u);
 
-    const provenance = await readFile(
-      new URL('../docs/adr/0003-project-scoped-compiler-adapter.md', import.meta.url),
-      'utf8',
-    );
-    expect(provenance).toContain('llm-wiki-compiler@1.1.0');
-    expect(provenance).toContain(compilerIntegrity);
-    expect(provenance).toContain('6963a7f8374282de5d4084a324be69b50f62a32d');
   });
 });

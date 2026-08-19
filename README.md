@@ -115,13 +115,15 @@ fixtures, generated output, logs, or CLI error reflection.
 
 ## Plan2Agent entry
 
-The current compiler-adapter iteration snapshot is
-[`docs/entries/github-issue-4.md`](docs/entries/github-issue-4.md). On a fresh clone,
-initialize local harness state and enter through the snapshot:
+P2A entry snapshots are local working knowledge under the Git-ignored
+`plans/entries/` directory. On a fresh clone, initialize local harness state, create
+a provenance-bound snapshot from the source issue, validate it, and enter through
+that snapshot:
 
 ```sh
 npm run p2a:init
-p2a next --entry docs/entries/github-issue-4.md
+p2a validate --entry plans/entries/github-issue-<n>.md
+p2a next --entry plans/entries/github-issue-<n>.md
 ```
 
 `p2a:init` stages `p2a init` outside the checkout and copies only its ignored local
@@ -129,10 +131,10 @@ state back. This avoids overwriting the P2A agent assets and `PLAN2AGENT.md` alr
 tracked by the repository. Before succeeding, it verifies every manifest-managed
 asset SHA-256 and runs `p2a doctor`; reruns validate existing local state the same way.
 
-Thereafter, use `p2a next` for the single state-based next action. `.plan2agent/` is
-ignored local state; use Plan2Agent Memory or an explicit export to continue the
-same history in another environment. See [PLAN2AGENT.md](PLAN2AGENT.md) and the
-[entry snapshot rules](docs/entries/README.md).
+Thereafter, use `p2a next` for the single state-based next action. `.plan2agent/` and
+`plans/` are ignored local state; use Plan2Agent Memory, an explicit export, or the
+separate knowledge repository to continue the same history in another environment.
+See [PLAN2AGENT.md](PLAN2AGENT.md).
 
 ## Non-goals for v0.1
 
@@ -142,7 +144,6 @@ same history in another environment. See [PLAN2AGENT.md](PLAN2AGENT.md) and the
 - A language-specific knowledge contract
 - Cross-project reads or writes
 
-Architecture decisions and their trade-offs are recorded in
-[ADR 0001](docs/adr/0001-foundation-and-boundaries.md) and
-[ADR 0002](docs/adr/0002-mode-a-knowledge-workspaces.md), and
-[ADR 0003](docs/adr/0003-project-scoped-compiler-adapter.md).
+Working architecture decisions and their trade-offs may be kept under the local,
+Git-ignored `plans/adr/` directory before being projected into the project knowledge
+repository.
