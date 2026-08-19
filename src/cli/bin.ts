@@ -7,4 +7,4 @@ const io: CliIo = {
   stderr: (message) => process.stderr.write(message),
 };
 
-process.exitCode = runCli(process.argv.slice(2), io);
+process.exitCode = await runCli(process.argv.slice(2), io);
