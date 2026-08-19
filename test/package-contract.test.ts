@@ -19,6 +19,9 @@ interface PackageLockContract {
   }>>;
 }
 
+const compilerIntegrity =
+  'sha512-LJslVmSt8tng8n3t0tw1QEqZJKKD0ualJ/WupdZMCtCzmCNarkP999k6hiNIg5ezvE8B/JQ1C1bUi6eY88Q79A==';
+
 const approvedDevDependencies = {
   '@eslint/js': '10.0.1',
   '@types/node': '24.13.3',
@@ -61,13 +64,21 @@ describe('package contract', () => {
     expect(packageLock.packages['node_modules/llm-wiki-compiler']).toMatchObject({
       version: '1.1.0',
     });
-    expect(packageLock.packages['node_modules/llm-wiki-compiler']?.integrity).toMatch(/^sha512-/u);
+    expect(packageLock.packages['node_modules/llm-wiki-compiler']?.integrity).toBe(
+      compilerIntegrity,
+    );
 
     const adapterSource = await readFile(
-      new URL('../src/compiler/index.ts', import.meta.url),
+      new URL('../src/compiler/backend.ts', import.meta.url),
       'utf8',
     );
     expect(adapterSource).toContain("from 'llm-wiki-compiler'");
+    expect(adapterSource).not.toMatch(/\btype\s+Wiki\b/u);
+    const publicCompilerSource = await readFile(
+      new URL('../src/compiler/index.ts', import.meta.url),
+      'utf8',
+    );
+    expect(publicCompilerSource).not.toContain('createLlmWikiCompilerBackend');
     const sourceRoot = new URL('../src/', import.meta.url);
     const sourcePaths = (await readdir(sourceRoot, { recursive: true })).filter((path) =>
       path.endsWith('.ts'),
@@ -80,5 +91,34 @@ describe('package contract', () => {
       )
     ).join('\n');
     expect(allSource).not.toMatch(/from\s+['"]llm-wiki-compiler\//u);
+    const compilerSource = (
+      await Promise.all(
+        sourcePaths
+          .filter((path) => path.startsWith('compiler/'))
+          .map(async (path) =>
+            readFile(new URL(path.replaceAll('\\', '/'), sourceRoot), 'utf8'),
+          ),
+      )
+    ).join('\n');
+    const externalImports = [
+      ...compilerSource.matchAll(/\bfrom\s+['"]([^'"]+)['"]/gu),
+    ]
+      .map((match) => match[1])
+      .filter(
+        (specifier): specifier is string =>
+          specifier !== undefined &&
+          !specifier.startsWith('.') &&
+          !specifier.startsWith('node:'),
+      );
+    expect([...new Set(externalImports)]).toEqual(['llm-wiki-compiler']);
+    expect(compilerSource).not.toMatch(/node:child_process|Promise\.race|process\.(?:on|once)\(/u);
+
+    const provenance = await readFile(
+      new URL('../docs/adr/0003-project-scoped-compiler-adapter.md', import.meta.url),
+      'utf8',
+    );
+    expect(provenance).toContain('llm-wiki-compiler@1.1.0');
+    expect(provenance).toContain(compilerIntegrity);
+    expect(provenance).toContain('6963a7f8374282de5d4084a324be69b50f62a32d');
   });
 });

@@ -2,7 +2,6 @@ import { join } from 'node:path';
 
 import { KnowledgeError } from './errors.js';
 import { getSubmoduleStatus } from './git.js';
-import { resolveProjectWorkspace } from './paths.js';
 import {
   STATUS_SCHEMA_VERSION,
   type CompilerStatusPort,
@@ -114,12 +113,9 @@ export async function getProjectKnowledgeStatus(
   compiler: CompilerStatusPort,
 ): Promise<NonNullable<KnowledgeStatus['project']>> {
   const record = await showProject(knowledgeRoot, projectId);
-  const workspace = await resolveProjectWorkspace(knowledgeRoot, record.entry.projectId, {
-    mustExist: true,
-  });
   let status;
   try {
-    status = await compiler.status(workspace);
+    status = await compiler.status(record.entry.projectId);
   } catch (error) {
     if (error instanceof KnowledgeError) {
       throw error;

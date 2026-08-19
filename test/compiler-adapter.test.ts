@@ -4,7 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { detectSourceChanges, normalizeCompilerStatus } from '../src/compiler/index.js';
+import { createProjectCompiler, normalizeCompilerStatus } from '../src/compiler/index.js';
+import { addProject } from '../src/knowledge/index.js';
 
 const temporaryRoots: string[] = [];
 
@@ -23,12 +24,19 @@ function sha256(value: string): string {
 }
 
 async function createWorkspace(): Promise<{
+  readonly compiler: ReturnType<typeof createProjectCompiler>;
   readonly sourcePath: string;
   readonly statePath: string;
   readonly workspace: string;
 }> {
-  const workspace = await mkdtemp(join(process.cwd(), '.test-tmp-compiler-adapter-'));
-  temporaryRoots.push(workspace);
+  const knowledgeRoot = await mkdtemp(join(process.cwd(), '.test-tmp-compiler-adapter-'));
+  temporaryRoots.push(knowledgeRoot);
+  await addProject(knowledgeRoot, {
+    displayName: 'Alpha',
+    projectId: 'alpha',
+    sourceRepository: 'https://example.test/alpha.git',
+  });
+  const workspace = join(knowledgeRoot, 'projects', 'alpha');
   await Promise.all([
     mkdir(join(workspace, 'sources', 'nested'), { recursive: true }),
     mkdir(join(workspace, 'wiki', 'concepts'), { recursive: true }),
@@ -40,7 +48,12 @@ async function createWorkspace(): Promise<{
   await writeFile(sourcePath, INITIAL_SOURCE, 'utf8');
   await writeFile(join(workspace, 'sources', 'nested', 'ignored.md'), INITIAL_SOURCE, 'utf8');
   await writeFile(join(workspace, 'sources', 'ignored.txt'), 'not markdown\n', 'utf8');
-  return { sourcePath, statePath, workspace };
+  return {
+    compiler: createProjectCompiler({ knowledgeRoot }),
+    sourcePath,
+    statePath,
+    workspace,
+  };
 }
 
 afterEach(async () => {
@@ -86,7 +99,7 @@ describe('llm-wiki-compiler public status adapter', () => {
 
   it('detects direct new sources without scanning nested or non-Markdown files', async () => {
     const fixture = await createWorkspace();
-    await expect(detectSourceChanges(fixture.workspace)).resolves.toMatchObject({
+    await expect(fixture.compiler.status('alpha')).resolves.toMatchObject({
       pendingChanges: [{ file: 'decision--alpha.md', status: 'new' }],
       pendingChangesCount: 1,
       stateStatus: 'missing',
@@ -108,19 +121,19 @@ describe('llm-wiki-compiler public status adapter', () => {
     };
     await writeFile(fixture.statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
     const stateBefore = await readFile(fixture.statePath, 'utf8');
-    await expect(detectSourceChanges(fixture.workspace)).resolves.toMatchObject({
+    await expect(fixture.compiler.status('alpha')).resolves.toMatchObject({
       pendingChanges: [],
       pendingChangesCount: 0,
     });
 
     await writeFile(fixture.sourcePath, `${INITIAL_SOURCE}\nChanged.\n`, 'utf8');
-    await expect(detectSourceChanges(fixture.workspace)).resolves.toMatchObject({
+    await expect(fixture.compiler.status('alpha')).resolves.toMatchObject({
       pendingChanges: [{ file: 'decision--alpha.md', status: 'changed' }],
       pendingChangesCount: 1,
     });
 
     await unlink(fixture.sourcePath);
-    await expect(detectSourceChanges(fixture.workspace)).resolves.toMatchObject({
+    await expect(fixture.compiler.status('alpha')).resolves.toMatchObject({
       pendingChanges: [{ file: 'decision--alpha.md', status: 'deleted' }],
       pendingChangesCount: 1,
     });
@@ -130,7 +143,7 @@ describe('llm-wiki-compiler public status adapter', () => {
   it('surfaces corrupt and too-new state without false pending changes', async () => {
     const corrupt = await createWorkspace();
     await writeFile(corrupt.statePath, '{invalid json\n', 'utf8');
-    await expect(detectSourceChanges(corrupt.workspace)).resolves.toMatchObject({
+    await expect(corrupt.compiler.status('alpha')).resolves.toMatchObject({
       pendingChanges: [],
       pendingChangesCount: 0,
       stateStatus: 'corrupt',
@@ -142,7 +155,7 @@ describe('llm-wiki-compiler public status adapter', () => {
       `${JSON.stringify({ indexHash: '', sources: {}, version: 999 })}\n`,
       'utf8',
     );
-    await expect(detectSourceChanges(tooNew.workspace)).resolves.toMatchObject({
+    await expect(tooNew.compiler.status('alpha')).resolves.toMatchObject({
       pendingChanges: [],
       pendingChangesCount: 0,
       stateStatus: 'too-new',

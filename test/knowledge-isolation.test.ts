@@ -66,8 +66,8 @@ describe('project isolation and tracking policy', () => {
     );
     const calls: string[] = [];
     const compiler: CompilerStatusPort = {
-      status: (workspaceRoot) => {
-        calls.push(workspaceRoot);
+      status: (projectId) => {
+        calls.push(projectId);
         return Promise.resolve({
           pendingChanges: [{ file: 'decision--alpha.md', status: 'new' }],
           pendingChangesCount: 1,
@@ -81,7 +81,7 @@ describe('project isolation and tracking policy', () => {
       projectId: 'alpha',
       workspacePath: 'projects/alpha',
     });
-    expect(calls).toEqual([join(knowledge, 'projects', 'alpha')]);
+    expect(calls).toEqual(['alpha']);
     await expect(
       Promise.all(
         [betaSource, betaWiki, betaState, betaLog].map(async (path) => readFile(path, 'utf8')),

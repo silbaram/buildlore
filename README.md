@@ -40,6 +40,17 @@ node dist/cli/bin.js --help
 The lockfile and every direct dependency use exact versions.
 `llm-wiki-compiler@1.1.0` is consumed only through the replaceable `src/compiler`
 package-root adapter; BuildLore does not fork it or import its internal modules.
+Compiler operations accept only a registered `projectId`. Provider-backed compile,
+full evaluation, search, query, and semantic context operations deny egress unless
+the caller supplies an explicit project-and-capability authorizer; provider
+credentials remain external. Context with `topChunks: 0` stays local and requires no
+provider permit.
+
+`query` always uses `save: false`, but upstream still appends query activity to the
+selected project's `log.md`; callers should treat it as a project-local log write.
+The upstream SDK has no active cancellation, overall deadline, or progress callback,
+so BuildLore does not claim those behaviors. A host may translate process signals
+into the adapter's `AbortSignal`; the adapter itself installs no global handlers.
 
 ## Mode A commands
 
@@ -104,13 +115,13 @@ fixtures, generated output, logs, or CLI error reflection.
 
 ## Plan2Agent entry
 
-The current Mode A iteration snapshot is
-[`docs/entries/github-issue-3.md`](docs/entries/github-issue-3.md). On a fresh clone,
+The current compiler-adapter iteration snapshot is
+[`docs/entries/github-issue-4.md`](docs/entries/github-issue-4.md). On a fresh clone,
 initialize local harness state and enter through the snapshot:
 
 ```sh
 npm run p2a:init
-p2a next --entry docs/entries/github-issue-3.md
+p2a next --entry docs/entries/github-issue-4.md
 ```
 
 `p2a:init` stages `p2a init` outside the checkout and copies only its ignored local
@@ -133,4 +144,5 @@ same history in another environment. See [PLAN2AGENT.md](PLAN2AGENT.md) and the
 
 Architecture decisions and their trade-offs are recorded in
 [ADR 0001](docs/adr/0001-foundation-and-boundaries.md) and
-[ADR 0002](docs/adr/0002-mode-a-knowledge-workspaces.md).
+[ADR 0002](docs/adr/0002-mode-a-knowledge-workspaces.md), and
+[ADR 0003](docs/adr/0003-project-scoped-compiler-adapter.md).

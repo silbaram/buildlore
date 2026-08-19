@@ -66,7 +66,7 @@ export interface CompilerChangeStatus {
 }
 
 export interface CompilerStatusPort {
-  status(workspaceRoot: string): Promise<CompilerChangeStatus>;
+  status(projectId: string): Promise<CompilerChangeStatus>;
 }
 
 export type KnowledgePinState =

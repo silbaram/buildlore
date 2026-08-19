@@ -1,9 +1,10 @@
 import { join } from 'node:path';
 
-import { compilerStatusPort } from '../compiler/index.js';
+import { createProjectCompiler } from '../compiler/index.js';
 import { KnowledgeError, type KnowledgeErrorCode } from '../knowledge/errors.js';
 import { cloneKnowledge, initKnowledge } from '../knowledge/git.js';
 import { getKnowledgeStatus } from '../knowledge/status.js';
+import type { CompilerStatusPort } from '../knowledge/types.js';
 import { addProject, listProjects, showProject, validateProjectRegistry } from '../knowledge/workspace.js';
 import { HELP_TEXT } from './help.js';
 
@@ -14,7 +15,7 @@ export interface CliIo {
 
 export interface CliRuntime {
   readonly cwd: string;
-  readonly compiler: typeof compilerStatusPort;
+  readonly compiler?: CompilerStatusPort;
 }
 
 class CliUsageError extends Error {}
@@ -126,8 +127,10 @@ async function executeCommand(
   }
   if (group === 'knowledge' && operation === 'status') {
     const options = optionsFrom(rest, ['--project-id']);
+    const compiler =
+      runtime.compiler ?? createProjectCompiler({ knowledgeRoot: join(runtime.cwd, 'knowledge') });
     return getKnowledgeStatus(runtime.cwd, {
-      compiler: runtime.compiler,
+      compiler,
       ...(options['--project-id'] === undefined ? {} : { projectId: options['--project-id'] }),
     });
   }
@@ -167,7 +170,7 @@ async function executeCommand(
 export async function runCli(
   args: readonly string[],
   io: CliIo,
-  runtime: CliRuntime = { compiler: compilerStatusPort, cwd: process.cwd() },
+  runtime: CliRuntime = { cwd: process.cwd() },
 ): Promise<number> {
   if (args.length === 0 || args.every((argument) => argument === '--help' || argument === '-h')) {
     io.stdout(HELP_TEXT);

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { runCli, type CliIo, type CliRuntime } from '../src/cli/index.js';
 
 const temporaryRoots: string[] = [];
-const compiler: CliRuntime['compiler'] = {
+const compiler: NonNullable<CliRuntime['compiler']> = {
   status: () =>
     Promise.resolve({ pendingChanges: [], pendingChangesCount: 0, stateStatus: 'missing' }),
 };
