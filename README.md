@@ -15,9 +15,10 @@ long-running service.
 
 The code repository owns source code and BuildLore configuration. The separate
 knowledge repository owns generated and curated wiki content. In **Mode A**, one
-knowledge repository is checked out as a Git submodule of one code repository, and
-each isolated knowledge set lives under `projects/<project-id>/`. A projection must
-never read from or write to another project directory.
+knowledge repository is checked out at `knowledge/` as a Git submodule of one code
+repository, and each isolated compiler workspace lives under
+`projects/<project-id>/`. The top-level `knowledge/` directory is only the registry
+and Git boundary; it is never a compiler workspace.
 
 `source` means an input selected from the code repository. `wiki` means the
 sanitized, compiled knowledge artifact. A `project-id` is the stable isolation key
@@ -33,13 +34,50 @@ From a clean clone:
 ```sh
 npm ci --ignore-scripts
 npm run build
-node dist/cli/index.js --help
+node dist/cli/bin.js --help
 ```
 
-The lockfile and every direct development dependency use exact versions. There are
-no runtime dependencies in Step 1. When `llm-wiki-compiler` is introduced, it must
-be exact-pinned behind the replaceable `src/compiler` adapter; BuildLore does not
-fork it.
+The lockfile and every direct dependency use exact versions.
+`llm-wiki-compiler@1.1.0` is consumed only through the replaceable `src/compiler`
+package-root adapter; BuildLore does not fork it or import its internal modules.
+
+## Mode A commands
+
+Connect or restore one knowledge submodule and inspect its Git-native pin:
+
+```sh
+buildlore knowledge clone --repository <https-ssh-or-relative-local-locator> --branch main
+buildlore knowledge init
+buildlore knowledge status
+```
+
+Register and inspect an isolated project workspace:
+
+```sh
+buildlore project add \
+  --project-id example \
+  --display-name "Example" \
+  --source-repository https://example.invalid/example.git
+buildlore project list
+buildlore project show --project-id example
+buildlore project validate --project-id example
+buildlore knowledge status --project-id example
+```
+
+Project commands require the `knowledge/` submodule to be initialized at the
+superproject's pinned commit. `knowledge status` uses schema
+`buildlore.status.v1` and reports `initialized`, `currentCommit`, `pinnedCommit`,
+`pinState`, and, when selected, `projectId`, `workspacePath`, and compiler status.
+
+New product commands return deterministic JSON. Repository locators may not contain
+embedded credentials, query strings, fragments, custom remote helpers, or absolute
+personal paths. Authentication remains the responsibility of the user's existing
+Git credential helper or SSH agent.
+
+`knowledge/manifest.json` uses `buildlore.knowledge.v1`; each project descriptor
+uses `buildlore.project.v1`. Project paths are always `projects/<project-id>`, and
+source Markdown is stored directly under `sources/` with the compiler-required
+`title`, `source`, and `ingestedAt` frontmatter plus `buildlore.sourceKind`.
 
 ## Development commands
 
@@ -66,13 +104,13 @@ fixtures, generated output, logs, or CLI error reflection.
 
 ## Plan2Agent entry
 
-The issue snapshot for this iteration is
-[`docs/entries/github-issue-2.md`](docs/entries/github-issue-2.md). On a fresh clone,
+The current Mode A iteration snapshot is
+[`docs/entries/github-issue-3.md`](docs/entries/github-issue-3.md). On a fresh clone,
 initialize local harness state and enter through the snapshot:
 
 ```sh
 npm run p2a:init
-p2a next --entry docs/entries/github-issue-2.md
+p2a next --entry docs/entries/github-issue-3.md
 ```
 
 `p2a:init` stages `p2a init` outside the checkout and copies only its ignored local
@@ -94,4 +132,5 @@ same history in another environment. See [PLAN2AGENT.md](PLAN2AGENT.md) and the
 - Cross-project reads or writes
 
 Architecture decisions and their trade-offs are recorded in
-[ADR 0001](docs/adr/0001-foundation-and-boundaries.md).
+[ADR 0001](docs/adr/0001-foundation-and-boundaries.md) and
+[ADR 0002](docs/adr/0002-mode-a-knowledge-workspaces.md).

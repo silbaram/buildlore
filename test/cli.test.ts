@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { HELP_TEXT, runCli, type CliIo } from '../src/cli/index.js';
 
-function captureCli(args: readonly string[]): {
+async function captureCli(args: readonly string[]): Promise<{
   readonly exitCode: number;
   readonly stderr: string;
   readonly stdout: string;
-} {
+}> {
   let stdout = '';
   let stderr = '';
   const io: CliIo = {
@@ -19,7 +19,7 @@ function captureCli(args: readonly string[]): {
   };
 
   return {
-    exitCode: runCli(args, io),
+    exitCode: await runCli(args, io),
     stderr,
     stdout,
   };
@@ -30,17 +30,17 @@ describe('BuildLore CLI', () => {
     { args: [] as const, label: 'no arguments' },
     { args: ['--help'] as const, label: '--help' },
     { args: ['-h'] as const, label: '-h' },
-  ])('prints help for $label', ({ args }) => {
-    expect(captureCli(args)).toEqual({
+  ])('prints help for $label', async ({ args }) => {
+    await expect(captureCli(args)).resolves.toEqual({
       exitCode: 0,
       stderr: '',
       stdout: HELP_TEXT,
     });
   });
 
-  it('fails closed without reflecting unsupported input', () => {
+  it('fails closed without reflecting unsupported input', async () => {
     const secretLikeInput = 'token=do-not-reflect-me';
-    const result = captureCli([secretLikeInput]);
+    const result = await captureCli([secretLikeInput]);
 
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toBe('');

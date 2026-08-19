@@ -37,5 +37,8 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.67.0",
     "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "llm-wiki-compiler": "1.1.0"
   }
 }
