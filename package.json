@@ -1,0 +1,41 @@
+{
+  "name": "buildlore",
+  "version": "0.1.0",
+  "description": "Local-first, Git-backed development wiki tooling",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "npm@11.19.0",
+  "engines": {
+    "node": ">=24",
+    "npm": ">=11 <12"
+  },
+  "bin": {
+    "buildlore": "./dist/cli/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "p2a:init": "node scripts/bootstrap-p2a.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "eslint": "10.8.1",
+    "globals": "17.11.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.11"
+  }
+}

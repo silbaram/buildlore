@@ -4,6 +4,21 @@ This repository owns its Plan2Agent planning and development loop in-place.
 
 ## Start or resume work
 
+On a fresh clone, recreate local harness state first:
+
+```sh
+npm run p2a:init
+p2a next --entry docs/entries/github-issue-2.md
+```
+
+The repository bootstrap runs `p2a init` in an isolated staging directory and
+copies only ignored `.plan2agent/` state into the checkout. This preserves the
+tracked provider assets and this repository-specific guide. It verifies all
+manifest-managed asset hashes and runs doctor for both new and existing state.
+
+`docs/entries/` contains immutable, URL- and SHA-256-bound source snapshots. Use a
+new snapshot as the `--entry` whenever a GitHub issue begins a new P2A iteration.
+
 Use one state-based entry point whenever you begin or finish a Plan2Agent action:
 
 - Terminal: `p2a next`

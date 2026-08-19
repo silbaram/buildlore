@@ -5,6 +5,7 @@
 
 # Dependencies / build outputs
 node_modules/
+.test-tmp/
 build/
 dist/
 out/
