@@ -177,10 +177,61 @@ describe('project source writer', () => {
       body: 'approved body',
       ingestedAt: '2026-08-19T00:00:00.000Z',
       sourceRevision: `sha256:${'a'.repeat(64)}`,
+      sourceKind: 'planning',
       sourceUri: 'buildlore+p2a:/expected-source',
       target: `planning--${'0'.repeat(64)}.md`,
       title: 'Expected source',
     })).rejects.toMatchObject({ code: 'PROJECTION_PATH_UNSAFE' });
+  });
+
+  it('derives independent execution targets without weakening source identity checks', async () => {
+    const fixture = await createFixture();
+    const writer = await createProjectSourceWriter(
+      join(fixture.knowledgeRoot, 'projects', 'alpha'),
+      'alpha',
+    );
+    const sourceUri = 'buildlore+p2a:/execution-source';
+    const target = `execution--${sha256(sourceUri)}.md`;
+    const input = {
+      body: 'approved execution body',
+      ingestedAt: '2026-08-19T00:00:00.000Z',
+      sourceKind: 'execution' as const,
+      sourceRevision: `sha256:${'a'.repeat(64)}` as const,
+      sourceUri,
+      target,
+      title: 'Execution source',
+    };
+    const snapshot = await writer.inspect(input);
+    expect(snapshot).toEqual({
+      contentDigest: null,
+      writeStatus: 'create',
+    });
+
+    const planningMarkdown = renderSourceDocument(createSourceDocument({
+      body: 'foreign planning body',
+      ingestedAt: input.ingestedAt,
+      producer: 'p2a',
+      projectId: 'alpha',
+      source: sourceUri,
+      sourceKind: 'planning',
+      sourceRevision: input.sourceRevision,
+      sourceType: 'file',
+      title: input.title,
+    }));
+    await expect(writer.write(input, planningMarkdown, snapshot)).rejects.toMatchObject({
+      code: 'PROJECTION_SOURCE_COLLISION',
+    });
+    await expect(readFile(join(fixture.sources, target), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    await writeFile(join(fixture.sources, target), planningMarkdown, 'utf8');
+    const collisionWriter = await createProjectSourceWriter(
+      join(fixture.knowledgeRoot, 'projects', 'alpha'),
+      'alpha',
+    );
+    await expect(collisionWriter.inspect(input)).rejects.toMatchObject({
+      code: 'PROJECTION_SOURCE_COLLISION',
+    });
   });
 
   it('rejects a symlink target without touching the linked file or sibling sources', async () => {

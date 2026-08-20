@@ -12,6 +12,24 @@ export {
   validateSourceDocument,
 } from './source-document.js';
 export { createP2aPlanningProjector } from './p2a-planning-projector.js';
+export { createP2aExecutionKnowledgeProjector } from './p2a-execution-projector.js';
+export {
+  EXECUTION_INCLUSION_POLICY_VERSION,
+  EXECUTION_PROJECTION_PLAN_SCHEMA_VERSION,
+  type CanonicalTaskLineage,
+  type CreateP2aExecutionProjectorOptions,
+  type ExecutionDecision,
+  type ExecutionExcludeReason,
+  type ExecutionIncludeReason,
+  type ExecutionKnowledgeProjectorPort,
+  type ExecutionProjectionApplyResult,
+  type ExecutionProjectionInput,
+  type ExecutionProjectionPlan,
+  type ExecutionProjectionPlanEntry,
+  type ExecutionProjectionWriteResult,
+  type ExecutionQuarantineReason,
+  type ExecutionReasonCode,
+} from './execution-types.js';
 export {
   type P2aArtifactAdapter,
   type P2aArtifactBinding,
@@ -20,6 +38,7 @@ export {
 } from './p2a-artifacts.js';
 export {
   type ProjectSourceInput,
+  type ProjectSourceKind,
   type ProjectSourceTargetSnapshot,
   type ProjectSourceWriter,
   type ProjectSourceWriterFactory,

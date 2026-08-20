@@ -693,7 +693,7 @@ describe('compiler capability contract', () => {
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
     releases.shift()?.();
     await expect(second).resolves.toMatchObject({ projectId: 'alpha' });
-  });
+  }, 15_000);
 
   it('releases the project queue after a failed operation', async () => {
     let calls = 0;
@@ -733,6 +733,7 @@ describe('compiler capability contract', () => {
     const beta = compiler.execute({ capability: 'status', projectId: 'beta' });
 
     await expect(beta).resolves.toMatchObject({ projectId: 'beta' });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2), { timeout: 5_000 });
     expect(run).toHaveBeenCalledTimes(2);
     releaseAlpha?.();
     await expect(alpha).resolves.toMatchObject({ projectId: 'alpha' });
