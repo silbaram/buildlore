@@ -2,10 +2,17 @@ import { createHash } from 'node:crypto';
 
 import { resolveProjectWorkspace, showProject } from '../knowledge/index.js';
 import {
-  consumeSanitizationApproval,
-  type SanitizationApprovalBinding,
+  consumePreparedSource,
+  inspectPreparedSource,
+  type PreparedSourceBinding,
 } from '../sanitizer/approval.js';
-import type { SanitizationRequest, SourceSanitizerPort } from '../sanitizer/index.js';
+import {
+  createProjectSecurityService,
+  readSecurityPolicy,
+  SANITIZER_RULES_VERSION,
+  type PreparedSource,
+  type SanitizationReport,
+} from '../sanitizer/index.js';
 import { ProjectionError } from './errors.js';
 import type {
   CreateP2aExecutionProjectorOptions,
@@ -29,14 +36,13 @@ import {
   type ProjectSourceTargetSnapshot,
   type ProjectSourceWriter,
 } from './project-source-writer.js';
-import {
-  createSourceDocument,
-  normalizeSourceBody,
-  renderSourceDocument,
-} from './source-document.js';
+import { createSourceDocument, renderSourceDocument } from './source-document.js';
+import { validateP2aSourceIdentity } from './source-identity.js';
 
 interface PlannedCandidate {
   readonly input: ProjectSourceInput;
+  readonly prepared: PreparedSource;
+  readonly report: SanitizationReport;
   readonly source: ExecutionCandidate;
   readonly targetSnapshot: ProjectSourceTargetSnapshot;
 }
@@ -44,6 +50,7 @@ interface PlannedCandidate {
 interface PrivatePlan {
   readonly input: ExecutionProjectionInput;
   readonly planned: readonly PlannedCandidate[];
+  readonly policyDigest: `sha256:${string}`;
   readonly repository: string;
   readonly selection: P2aExecutionSelection;
   readonly writer: ProjectSourceWriter;
@@ -66,19 +73,35 @@ function sha256(value: string): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
 }
 
-function sourceInput(candidate: ExecutionCandidate): ProjectSourceInput {
+function securityPayload(source: ExecutionCandidate): string {
+  return `${source.title}\n${source.body}`;
+}
+
+function approvedInput(candidate: ExecutionCandidate, prepared: PreparedSource): ProjectSourceInput {
+  const binding = inspectPreparedSource(prepared);
+  if (binding === null) {
+    return fail('PROJECTION_SANITIZATION_FAILED', 'A prepared execution source is unavailable.');
+  }
+  const separator = binding.approvedBody.indexOf('\n');
+  if (separator < 1) {
+    return fail('PROJECTION_SANITIZATION_FAILED', 'A prepared execution source is invalid.');
+  }
   return {
-    body: candidate.body,
+    body: binding.approvedBody.slice(separator + 1),
     ingestedAt: candidate.ingestedAt,
     sourceKind: 'execution',
     sourceRevision: candidate.sourceRevision,
     sourceUri: candidate.sourceUri,
     target: candidate.target,
-    title: candidate.title,
+    title: binding.approvedBody.slice(0, separator),
   };
 }
 
-function assertSelectionConsistency(selection: P2aExecutionSelection): void {
+function assertSelectionConsistency(
+  selection: P2aExecutionSelection,
+  projectId: string,
+  repository: string,
+): void {
   const included = selection.entries.filter((entry) => entry.decision === 'include');
   const entriesBySource = new Map<string, ExecutionProjectionPlanEntry>();
   for (const entry of included) {
@@ -96,47 +119,27 @@ function assertSelectionConsistency(selection: P2aExecutionSelection): void {
       runRevision: attempt.runRevision,
       status: attempt.status,
     }));
-    if (
-      entry === undefined ||
-      seenTargets.has(candidate.target) ||
-      entry.reasonCode !== candidate.reasonCode ||
-      entry.sourceRevision !== candidate.sourceRevision ||
-      entry.target !== candidate.target ||
-      entry.taskStableId !== candidate.taskStableId ||
-      canonicalExecutionJson(entry.lineage) !== canonicalExecutionJson(candidate.lineage) ||
-      canonicalExecutionJson(entry.attempts) !== canonicalExecutionJson(attempts)
-    ) fail('PROJECTION_ARTIFACT_INVALID', 'Execution selection is inconsistent.');
+    if (entry === undefined || seenTargets.has(candidate.target) ||
+        validateP2aSourceIdentity({
+          artifactPath: candidate.lineage.graphRef,
+          iterationId: candidate.lineage.iterationId,
+          projectId,
+          repository,
+          source: candidate.sourceUri,
+          sourceKind: 'execution',
+          taskContractSha256: candidate.lineage.taskContractSha256,
+          taskId: candidate.lineage.taskId,
+        }) === null ||
+        entry.reasonCode !== candidate.reasonCode || entry.sourceRevision !== candidate.sourceRevision ||
+        entry.target !== candidate.target || entry.taskStableId !== candidate.taskStableId ||
+        canonicalExecutionJson(entry.lineage) !== canonicalExecutionJson(candidate.lineage) ||
+        canonicalExecutionJson(entry.attempts) !== canonicalExecutionJson(attempts)) {
+      fail('PROJECTION_ARTIFACT_INVALID', 'Execution selection is inconsistent.');
+    }
     entriesBySource.delete(candidate.sourceUri);
     seenTargets.add(candidate.target);
   }
-  if (entriesBySource.size !== 0) {
-    fail('PROJECTION_ARTIFACT_INVALID', 'Execution selection is inconsistent.');
-  }
-}
-
-function consumeApproval(
-  result: Awaited<ReturnType<SourceSanitizerPort['sanitize']>>,
-  request: SanitizationRequest,
-): SanitizationApprovalBinding {
-  if (!result.ok) {
-    return fail('PROJECTION_SANITIZATION_FAILED', 'An execution source was not approved.');
-  }
-  const binding = consumeSanitizationApproval(result);
-  if (binding === null) {
-    return fail('PROJECTION_SANITIZATION_FAILED', 'A sanitizer approval is invalid or used.');
-  }
-  let approvedBody: string;
-  try {
-    approvedBody = normalizeSourceBody(binding.approvedBody);
-  } catch {
-    return fail('PROJECTION_SANITIZATION_FAILED', 'A sanitizer approval is invalid.');
-  }
-  if (
-    binding.projectId !== request.projectId || binding.source !== request.source ||
-    binding.inputBodyDigest !== request.bodyDigest ||
-    binding.approvedBodyDigest !== sha256(binding.approvedBody)
-  ) return fail('PROJECTION_SANITIZATION_FAILED', 'A sanitizer approval is invalid.');
-  return { ...binding, approvedBody, approvedBodyDigest: sha256(approvedBody) };
+  if (entriesBySource.size !== 0) fail('PROJECTION_ARTIFACT_INVALID', 'Execution selection is inconsistent.');
 }
 
 async function resolveApplyProjectState(
@@ -157,9 +160,7 @@ async function assertTargetsUnchanged(
   planned: readonly PlannedCandidate[],
 ): Promise<void> {
   try {
-    for (const item of planned) {
-      await writer.assertUnchanged(item.input, item.targetSnapshot);
-    }
+    for (const item of planned) await writer.assertUnchanged(item.input, item.targetSnapshot);
   } catch {
     fail('PROJECTION_ARTIFACT_CHANGED', 'A source target changed after planning.');
   }
@@ -176,6 +177,7 @@ function freezePlan(
     right.attempts[0]?.runRef ?? right.sourceUri ?? '',
   ));
   const counts = {
+    blocked: sorted.filter((entry) => entry.decision === 'blocked').length,
     exclude: sorted.filter((entry) => entry.decision === 'exclude').length,
     include: sorted.filter((entry) => entry.decision === 'include').length,
     quarantine: sorted.filter((entry) => entry.decision === 'quarantine').length,
@@ -188,6 +190,8 @@ function freezePlan(
     projectId,
     targets: planned.map((item) => ({
       contentDigest: item.targetSnapshot.contentDigest,
+      outputDigest: item.report.outputDigest,
+      policyDigest: item.report.policyDigest,
       sourceUri: item.source.sourceUri,
       target: item.source.target,
     })),
@@ -195,9 +199,7 @@ function freezePlan(
   const immutableEntries = sorted.map((entry) => Object.freeze({
     ...entry,
     attempts: Object.freeze(entry.attempts.map((attempt) => Object.freeze({ ...attempt }))),
-    ...(entry.lineage === undefined
-      ? {}
-      : { lineage: Object.freeze({ ...entry.lineage }) }),
+    ...(entry.lineage === undefined ? {} : { lineage: Object.freeze({ ...entry.lineage }) }),
   }));
   return Object.freeze({
     counts: Object.freeze(counts),
@@ -207,6 +209,27 @@ function freezePlan(
     projectId,
     schemaVersion: EXECUTION_PROJECTION_PLAN_SCHEMA_VERSION,
   });
+}
+
+function consumePrepared(
+  item: PlannedCandidate,
+  projectId: string,
+  policyDigest: `sha256:${string}`,
+): PreparedSourceBinding {
+  const binding = consumePreparedSource(item.prepared);
+  if (binding === null || binding.projectId !== projectId ||
+      binding.source !== item.source.sourceUri || binding.sourceKind !== 'execution' ||
+      binding.sourceRevisionOrContentSha256 !== item.source.sourceRevision ||
+      binding.inputBodyDigest !== sha256(securityPayload(item.source)) ||
+      binding.approvedBodyDigest !== sha256(binding.approvedBody) ||
+      binding.policyDigest !== policyDigest ||
+      binding.rulesVersion !== SANITIZER_RULES_VERSION ||
+      binding.untrustedData !== item.report.summaries.some((summary) =>
+        summary.action === 'quarantine' && summary.count > 0) ||
+      binding.approvedBody !== `${item.input.title}\n${item.input.body}`) {
+    return fail('PROJECTION_SANITIZATION_FAILED', 'A prepared execution source binding is invalid.');
+  }
+  return binding;
 }
 
 export function createP2aExecutionKnowledgeProjector(
@@ -227,25 +250,59 @@ export function createP2aExecutionKnowledgeProjector(
       const workspace = await resolveProjectWorkspace(input.knowledgeRoot, input.projectId, {
         mustExist: true,
       });
+      const loadedPolicy = await readSecurityPolicy(input.knowledgeRoot, input.projectId);
+      const security = createProjectSecurityService({ knowledgeRoot: input.knowledgeRoot });
       const selection = await artifactReader.read(input, project.entry.sourceRepository);
-      assertSelectionConsistency(selection);
+      assertSelectionConsistency(selection, input.projectId, project.entry.sourceRepository);
       const writer = await sourceWriter.create(workspace, input.projectId);
       const planned: PlannedCandidate[] = [];
+      const reports = new Map<string, SanitizationReport>();
       const snapshots = new Map<string, ProjectSourceTargetSnapshot>();
       for (const source of selection.candidates) {
-        const candidateInput = sourceInput(source);
+        const payload = securityPayload(source);
+        const result = await security.prepareSource({
+          body: payload,
+          bodyDigest: sha256(payload),
+          projectId: input.projectId,
+          source: source.sourceUri,
+          sourceKind: 'execution',
+          sourceRevisionOrContentSha256: source.sourceRevision,
+        });
+        reports.set(source.sourceUri, result.report);
+        if (!result.ok) continue;
+        const candidateInput = approvedInput(source, result.prepared);
         const targetSnapshot = await writer.inspect(candidateInput);
-        planned.push({ input: candidateInput, source, targetSnapshot });
+        planned.push({
+          input: candidateInput,
+          prepared: result.prepared,
+          report: result.report,
+          source,
+          targetSnapshot,
+        });
         snapshots.set(source.sourceUri, targetSnapshot);
       }
       const entries = selection.entries.map((entry) => {
-        const snapshot = entry.sourceUri === undefined ? undefined : snapshots.get(entry.sourceUri);
-        return snapshot === undefined ? entry : { ...entry, writeStatus: snapshot.writeStatus };
+        if (entry.sourceUri === undefined) return entry;
+        const report = reports.get(entry.sourceUri);
+        if (report === undefined) return entry;
+        const snapshot = snapshots.get(entry.sourceUri);
+        if (snapshot === undefined) {
+          return {
+            ...entry,
+            decision: report.decision,
+            reasonCode: report.decision === 'quarantine'
+              ? 'security_quarantine' as const
+              : 'security_blocked' as const,
+            security: report,
+          };
+        }
+        return { ...entry, security: report, writeStatus: snapshot.writeStatus };
       });
       const plan = freezePlan(input.projectId, entries, planned, selection.bindings);
       privatePlans.set(plan, {
         input: { ...input },
         planned,
+        policyDigest: loadedPolicy.digest,
         repository: project.entry.sourceRepository,
         selection,
         writer,
@@ -253,50 +310,32 @@ export function createP2aExecutionKnowledgeProjector(
       return plan;
     },
 
-    async apply(plan, sanitizer): Promise<ExecutionProjectionApplyResult> {
+    async apply(plan): Promise<ExecutionProjectionApplyResult> {
       const bound = privatePlans.get(plan);
       if (bound === undefined || plan.schemaVersion !== EXECUTION_PROJECTION_PLAN_SCHEMA_VERSION) {
         return fail('PROJECTION_ARTIFACT_CHANGED', 'The execution plan is not bound here.');
       }
-      if (plan.counts.quarantine > 0) {
-        return fail('PROJECTION_ARTIFACT_INVALID', 'The execution plan contains quarantine.');
+      if (plan.counts.quarantine > 0 || plan.counts.blocked > 0) {
+        return fail('PROJECTION_ARTIFACT_INVALID', 'The execution plan contains blocking security decisions.');
       }
       const state = await resolveApplyProjectState(bound.input.knowledgeRoot, plan.projectId);
       if (state.repository !== bound.repository) {
         return fail('PROJECTION_ARTIFACT_CHANGED', 'Project metadata changed after planning.');
       }
-      await verifySelection(bound.selection);
-      const workspace = state.workspace;
-      const writer = bound.writer;
-      await assertTargetsUnchanged(writer, bound.planned);
-
-      const approvals: Array<Readonly<{
-        approvedBody: string;
-        item: PlannedCandidate;
-      }>> = [];
-      for (const item of bound.planned) {
-        const request: SanitizationRequest = {
-          body: item.source.body,
-          bodyDigest: sha256(item.source.body),
-          projectId: plan.projectId,
-          source: item.source.sourceUri,
-        };
-        let result;
-        try {
-          result = await sanitizer.sanitize(request);
-        } catch {
-          return fail('PROJECTION_SANITIZATION_FAILED', 'Execution sanitization failed.');
-        }
-        approvals.push({
-          approvedBody: consumeApproval(result, request).approvedBody,
-          item,
-        });
+      const currentPolicy = await readSecurityPolicy(bound.input.knowledgeRoot, plan.projectId);
+      if (currentPolicy.digest !== bound.policyDigest) {
+        return fail('PROJECTION_ARTIFACT_CHANGED', 'Security policy changed after planning.');
       }
-
-      const rendered = approvals.map(({ approvedBody, item }) => ({
+      await verifySelection(bound.selection);
+      await assertTargetsUnchanged(bound.writer, bound.planned);
+      const approved = bound.planned.map((item) => {
+        consumePrepared(item, plan.projectId, bound.policyDigest);
+        return item;
+      });
+      const rendered = approved.map((item) => ({
         item,
         markdown: renderSourceDocument(createSourceDocument({
-          body: approvedBody,
+          body: item.input.body,
           ingestedAt: item.source.ingestedAt,
           producer: 'p2a',
           projectId: plan.projectId,
@@ -304,32 +343,27 @@ export function createP2aExecutionKnowledgeProjector(
           sourceKind: 'execution',
           sourceRevision: item.source.sourceRevision,
           sourceType: 'file',
-          title: item.source.title,
+          title: item.input.title,
         })),
       }));
-
       const refreshed = await resolveApplyProjectState(bound.input.knowledgeRoot, plan.projectId);
-      if (
-        refreshed.repository !== bound.repository ||
-        refreshed.workspace !== workspace
-      ) return fail('PROJECTION_ARTIFACT_CHANGED', 'Project metadata changed during sanitization.');
+      const refreshedPolicy = await readSecurityPolicy(bound.input.knowledgeRoot, plan.projectId);
+      if (refreshed.repository !== bound.repository || refreshed.workspace !== state.workspace ||
+          refreshedPolicy.digest !== bound.policyDigest) {
+        return fail('PROJECTION_ARTIFACT_CHANGED', 'Project security state changed during apply.');
+      }
       await verifySelection(bound.selection);
-      await assertTargetsUnchanged(writer, bound.planned);
-
+      await assertTargetsUnchanged(bound.writer, bound.planned);
       const writes = [];
       for (const { item, markdown } of rendered) {
         writes.push({
           sourceRevision: item.source.sourceRevision,
           target: item.source.target,
           taskStableId: item.source.taskStableId,
-          writeStatus: await writer.write(item.input, markdown, item.targetSnapshot),
+          writeStatus: await bound.writer.write(item.input, markdown, item.targetSnapshot),
         });
       }
-      return {
-        planFingerprint: plan.planFingerprint,
-        projectId: plan.projectId,
-        writes,
-      };
+      return { planFingerprint: plan.planFingerprint, projectId: plan.projectId, writes };
     },
   };
 }

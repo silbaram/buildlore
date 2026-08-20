@@ -37,13 +37,6 @@ export {
   type P2aPlanningSelection,
 } from './p2a-artifacts.js';
 export {
-  type ProjectSourceInput,
-  type ProjectSourceKind,
-  type ProjectSourceTargetSnapshot,
-  type ProjectSourceWriter,
-  type ProjectSourceWriterFactory,
-} from './project-source-writer.js';
-export {
   PROJECTION_PLAN_SCHEMA_VERSION,
   type CreateP2aPlanningProjectorOptions,
   type PlanningDocumentKind,

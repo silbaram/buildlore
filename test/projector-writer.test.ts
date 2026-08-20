@@ -19,10 +19,6 @@ import {
   renderSourceDocument,
 } from '../src/projector/index.js';
 import { createProjectSourceWriter } from '../src/projector/project-source-writer.js';
-import {
-  issueSanitizationApproval,
-  type SourceSanitizerPort,
-} from '../src/sanitizer/index.js';
 
 const temporaryRoots: string[] = [];
 
@@ -33,18 +29,6 @@ function sha256(value: string): string {
 function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
-
-const sanitizer: SourceSanitizerPort = {
-  sanitize(request) {
-    return Promise.resolve(issueSanitizationApproval({
-      approvedBody: request.body,
-      approvedBodyDigest: `sha256:${sha256(request.body)}`,
-      inputBodyDigest: request.bodyDigest,
-      projectId: request.projectId,
-      source: request.source,
-    }));
-  },
-};
 
 async function createFixture(): Promise<{
   readonly artifactRoot: string;
@@ -249,7 +233,7 @@ describe('project source writer', () => {
     if (target === undefined) throw new Error('product source target is missing');
     await symlink(fixture.outside, join(fixture.sources, target));
 
-    await expect(projector.apply(plan, sanitizer)).rejects.toMatchObject({
+    await expect(projector.apply(plan)).rejects.toMatchObject({
       code: 'PROJECTION_PATH_UNSAFE',
     });
     await expect(readFile(fixture.outside, 'utf8')).resolves.toBe('OUTSIDE-SENTINEL\n');
@@ -282,7 +266,7 @@ describe('project source writer', () => {
     const targetPath = join(fixture.sources, target);
     await writeFile(targetPath, foreign, 'utf8');
 
-    await expect(projector.apply(plan, sanitizer)).rejects.toMatchObject({
+    await expect(projector.apply(plan)).rejects.toMatchObject({
       code: 'PROJECTION_SOURCE_COLLISION',
     });
     await expect(readFile(targetPath, 'utf8')).resolves.toBe(foreign);

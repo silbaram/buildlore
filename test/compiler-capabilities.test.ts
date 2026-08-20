@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +7,6 @@ import {
   COMPILER_CAPABILITIES,
   CompilerBackendError,
   CompilerOperationError,
-  createCompilerEgressAuthorizer,
   createProjectCompiler,
   type CompilerBackend,
   type CompilerCapabilityName,
@@ -15,6 +14,7 @@ import {
 } from '../src/compiler/index.js';
 import { createLlmWikiCompilerBackend } from '../src/compiler/backend.js';
 import { addProject } from '../src/knowledge/index.js';
+import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const temporaryRoots: string[] = [];
 
@@ -36,10 +36,10 @@ async function createFixture(backend: CompilerBackend, allowEgress = true) {
     projectId: 'alpha',
     sourceRepository: 'https://example.test/alpha.git',
   });
+  if (allowEgress) await writeSecurityPolicy(knowledgeRoot, 'alpha');
   return {
     compiler: createProjectCompiler({
       backend,
-      egressAuthorizer: createCompilerEgressAuthorizer(() => allowEgress),
       environment: {},
       knowledgeRoot,
     }),
@@ -395,7 +395,6 @@ describe('compiler capability contract', () => {
   });
 
   it('keeps context local without an egress decision when semantic chunks are disabled', async () => {
-    const authorize = vi.fn(() => false);
     const backend: CompilerBackend = {
       run: () =>
         Promise.resolve({
@@ -415,7 +414,6 @@ describe('compiler capability contract', () => {
     });
     const compiler = createProjectCompiler({
       backend,
-      egressAuthorizer: createCompilerEgressAuthorizer(authorize),
       knowledgeRoot,
     });
     await expect(
@@ -426,7 +424,6 @@ describe('compiler capability contract', () => {
         topChunks: 0,
       }),
     ).resolves.toMatchObject({ capability: 'context', projectId: 'alpha' });
-    expect(authorize).not.toHaveBeenCalled();
   });
 
   it('rejects unsafe input and forged optional write controls', async () => {
@@ -435,6 +432,12 @@ describe('compiler capability contract', () => {
     const { compiler } = await createFixture(backend);
     await expect(
       compiler.execute({ capability: 'query', projectId: 'alpha', question: 'line\nsecret' }),
+    ).rejects.toMatchObject({ code: 'COMPILER_CONFIG_INVALID' });
+    await expect(
+      compiler.execute({ capability: 'search', projectId: 'alpha', question: `unsafe${'\ud800'}` }),
+    ).rejects.toMatchObject({ code: 'COMPILER_CONFIG_INVALID' });
+    await expect(
+      compiler.execute({ capability: 'search', projectId: 'alpha', question: 'unsafe\u0085control' }),
     ).rejects.toMatchObject({ code: 'COMPILER_CONFIG_INVALID' });
     await expect(
       compiler.execute({
@@ -465,6 +468,39 @@ describe('compiler capability contract', () => {
       ),
     ).rejects.toMatchObject({ code: 'COMPILER_CONFIG_INVALID' });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it('uses one immutable request snapshot across asynchronous preflight and backend execution', async () => {
+    const run = vi.fn((_root: string, request: CompilerRequest) => {
+      expect(Object.isFrozen(request)).toBe(true);
+      return Promise.resolve(STATUS_RESULT);
+    });
+    const { compiler } = await createFixture({ run });
+    const request: CompilerRequest = { capability: 'status', projectId: 'alpha' };
+
+    const pending = compiler.execute(request);
+    (request as { capability: string }).capability = 'compile';
+
+    await expect(pending).resolves.toMatchObject({ capability: 'status' });
+    expect(run).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ capability: 'status', projectId: 'alpha' }),
+    );
+  });
+
+  it('normalizes provider request text before both security preflight and backend execution', async () => {
+    const run = vi.fn((_root: string, request: CompilerRequest) => {
+      expect(request).toMatchObject({ question: 'Café security design' });
+      return Promise.resolve({ pages: [], refs: [], warnings: [] });
+    });
+    const { compiler } = await createFixture({ run });
+
+    await expect(compiler.execute({
+      capability: 'search',
+      projectId: 'alpha',
+      question: 'Cafe\u0301 security design',
+    })).resolves.toMatchObject({ capability: 'search', outcome: 'succeeded' });
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it('fails closed on inconsistent, unsafe, or out-of-range upstream results', async () => {
@@ -676,21 +712,27 @@ describe('compiler capability contract', () => {
 
   it('serializes operations for the same project across adapter instances', async () => {
     const releases: Array<() => void> = [];
+    const startedResolvers: Array<() => void> = [];
+    const firstStarted = new Promise<void>((resolve) => startedResolvers.push(resolve));
+    const secondStarted = new Promise<void>((resolve) => startedResolvers.push(resolve));
     const run = vi.fn(
       () =>
         new Promise((resolve) => {
+          startedResolvers.shift()?.();
           releases.push(() => resolve(STATUS_RESULT));
         }),
     );
     const { compiler, knowledgeRoot } = await createFixture({ run });
     const secondCompiler = createProjectCompiler({ backend: { run }, knowledgeRoot });
     const first = compiler.execute({ capability: 'status', projectId: 'alpha' });
+    await firstStarted;
     const second = secondCompiler.execute({ capability: 'status', projectId: 'alpha' });
 
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run).toHaveBeenCalledTimes(1);
     releases.shift()?.();
     await expect(first).resolves.toMatchObject({ projectId: 'alpha' });
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    await secondStarted;
+    expect(run).toHaveBeenCalledTimes(2);
     releases.shift()?.();
     await expect(second).resolves.toMatchObject({ projectId: 'alpha' });
   }, 15_000);
@@ -776,7 +818,7 @@ describe('compiler capability contract', () => {
     }
   });
 
-  it('redacts thrown backend and egress-authorizer details', async () => {
+  it('redacts thrown backend and invalid-policy details', async () => {
     const backend: CompilerBackend = {
       run: () => Promise.reject(new Error('CREDENTIAL-SENTINEL SOURCE-SENTINEL /private/path')),
     };
@@ -794,11 +836,13 @@ describe('compiler capability contract', () => {
       projectId: 'alpha',
       sourceRepository: 'https://example.test/alpha.git',
     });
+    await writeFile(
+      join(knowledgeRoot, 'projects', 'alpha', 'security-policy.json'),
+      '{"credential":"CREDENTIAL-SENTINEL"}',
+      'utf8',
+    );
     const denied = createProjectCompiler({
       backend: { run },
-      egressAuthorizer: {
-        authorize: () => Promise.reject(new Error('CREDENTIAL-SENTINEL')),
-      },
       knowledgeRoot,
     });
     const egressError = await denied
@@ -809,7 +853,28 @@ describe('compiler capability contract', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it('passes an immutable project-and-capability context to the egress decision', async () => {
+  it('maps request accessor failures to a value-free configuration error', async () => {
+    const run = vi.fn();
+    const { compiler } = await createFixture({ run });
+    const secret = ['gh', 'p_', 'A1b2C3d4E5f6G7h8J9k0', 'LmNoPq'].join('');
+    const malformed = Object.defineProperty({}, 'capability', {
+      enumerable: true,
+      get() {
+        throw new Error(secret);
+      },
+    });
+
+    const failure = await compiler.execute(malformed as never).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      capability: 'unknown',
+      code: 'COMPILER_CONFIG_INVALID',
+      projectId: 'unknown',
+    });
+    expect(JSON.stringify(failure)).not.toContain(secret);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('authorizes only the project policy capability', async () => {
     const backend: CompilerBackend = {
       run: () =>
         Promise.resolve({
@@ -822,11 +887,6 @@ describe('compiler capability contract', () => {
           skipped: 0,
         }),
     };
-    const decision = vi.fn((context: Readonly<{ capability: string; projectId: string }>) => {
-      expect(Object.isFrozen(context)).toBe(true);
-      expect(context).toEqual({ capability: 'compile', projectId: 'alpha' });
-      return true;
-    });
     const knowledgeRoot = await mkdtemp(join(process.cwd(), '.test-tmp-compiler-capabilities-'));
     temporaryRoots.push(knowledgeRoot);
     await addProject(knowledgeRoot, {
@@ -834,15 +894,19 @@ describe('compiler capability contract', () => {
       projectId: 'alpha',
       sourceRepository: 'https://example.test/alpha.git',
     });
+    await writeSecurityPolicy(knowledgeRoot, 'alpha', { capabilities: ['compile'] });
     const compiler = createProjectCompiler({
       backend,
-      egressAuthorizer: createCompilerEgressAuthorizer(decision),
       knowledgeRoot,
     });
     await expect(
       compiler.execute({ capability: 'compile', projectId: 'alpha' }),
     ).resolves.toMatchObject({ outcome: 'unchanged' });
-    expect(decision).toHaveBeenCalledOnce();
+    await expect(compiler.execute({
+      capability: 'search',
+      projectId: 'alpha',
+      question: 'Find alpha.',
+    })).rejects.toMatchObject({ code: 'COMPILER_EGRESS_DENIED' });
   });
 
   it('rejects invalid provider timeout configuration before backend invocation', async () => {
@@ -855,9 +919,9 @@ describe('compiler capability contract', () => {
       projectId: 'alpha',
       sourceRepository: 'https://example.test/alpha.git',
     });
+    await writeSecurityPolicy(knowledgeRoot, 'alpha');
     const compiler = createProjectCompiler({
       backend,
-      egressAuthorizer: createCompilerEgressAuthorizer(() => true),
       environment: { LLMWIKI_REQUEST_TIMEOUT_MS: '-1' },
       knowledgeRoot,
     });

@@ -203,19 +203,6 @@ export interface CompilerBackend {
 
 export type EgressCapability = 'compile' | 'context' | 'eval-full' | 'query' | 'search';
 
-export interface CompilerEgressContext {
-  readonly capability: EgressCapability;
-  readonly projectId: string;
-}
-
-export interface CompilerEgressPermit {
-  readonly opaque: true;
-}
-
-export interface CompilerEgressAuthorizer {
-  authorize(context: CompilerEgressContext): Promise<CompilerEgressPermit>;
-}
-
 export interface ProjectCompilerPort {
   execute(
     request: CompilerRequest,

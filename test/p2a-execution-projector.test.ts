@@ -21,10 +21,6 @@ import { createP2aExecutionKnowledgeProjector } from '../src/projector/index.js'
 import { taskContractSha256 } from '../src/projector/p2a-execution-codecs.js';
 import { applyExecutionInclusionPolicy } from '../src/projector/p2a-execution-policy.js';
 import type { ProjectSourceWriter } from '../src/projector/project-source-writer.js';
-import {
-  issueSanitizationApproval,
-  type SourceSanitizerPort,
-} from '../src/sanitizer/index.js';
 
 const temporaryRoots: string[] = [];
 
@@ -289,18 +285,6 @@ async function fixture(
   };
 }
 
-const sanitizer: SourceSanitizerPort = {
-  sanitize(request) {
-    return Promise.resolve(issueSanitizationApproval({
-      approvedBody: request.body,
-      approvedBodyDigest: `sha256:${digest(request.body)}`,
-      inputBodyDigest: request.bodyDigest,
-      projectId: request.projectId,
-      source: request.source,
-    }));
-  },
-};
-
 function attempt(overrides: Partial<ExecutionAttempt> = {}): ExecutionAttempt {
   return {
     changedFiles: [],
@@ -397,7 +381,7 @@ describe('P2A execution projector', () => {
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
-    expect(plan.counts).toEqual({ exclude: 0, include: 1, quarantine: 0 });
+    expect(plan.counts).toEqual({ blocked: 0, exclude: 0, include: 1, quarantine: 0 });
     const included = plan.entries.find((entry) => entry.decision === 'include');
     expect(Object.isFrozen(plan)).toBe(true);
     expect(Object.isFrozen(plan.counts)).toBe(true);
@@ -417,7 +401,7 @@ describe('P2A execution projector', () => {
     expect(included?.target).toMatch(/^execution--[a-f0-9]{64}\.md$/u);
     expect(await readdir(item.sources)).toEqual([]);
 
-    const applied = await projector.apply(plan, sanitizer);
+    const applied = await projector.apply(plan);
     expect(applied.writes).toEqual([
       expect.objectContaining({ target: included?.target, writeStatus: 'create' }),
     ]);
@@ -456,7 +440,7 @@ describe('P2A execution projector', () => {
     });
     const firstIncluded = first.entries.find((entry) => entry.decision === 'include');
     if (firstIncluded?.target === undefined) throw new Error('execution target missing');
-    await projector.apply(first, sanitizer);
+    await projector.apply(first);
     const firstMarkdown = await readFile(join(item.sources, firstIncluded.target), 'utf8');
     const index = JSON.parse(await readFile(item.indexPath, 'utf8')) as Record<string, unknown>;
     if (!Array.isArray(index.runs)) throw new Error('fixture index runs missing');
@@ -477,7 +461,7 @@ describe('P2A execution projector', () => {
       target: (pick(first) as Readonly<{ target: unknown }>).target,
       writeStatus: 'unchanged',
     });
-    await projector.apply(second, sanitizer);
+    await projector.apply(second);
     await expect(readFile(join(item.sources, firstIncluded.target), 'utf8')).resolves.toBe(
       firstMarkdown,
     );
@@ -561,7 +545,7 @@ describe('P2A execution projector', () => {
       projectId: 'alpha',
     });
     const included = plan.entries.filter((entry) => entry.decision === 'include');
-    expect(plan.counts).toEqual({ exclude: 0, include: 4, quarantine: 0 });
+    expect(plan.counts).toEqual({ blocked: 0, exclude: 0, include: 4, quarantine: 0 });
     expect(included.map((entry) => entry.lineage?.iterationId)).toEqual([
       'v1-execution',
       'v2-knowledge-workspace',
@@ -577,7 +561,6 @@ describe('P2A execution projector', () => {
     const failed = JSON.parse(await readFile(item.failedRunPath, 'utf8')) as Record<string, unknown>;
     failed.schema_version = 'p2a.run.v1';
     await writeFile(item.failedRunPath, json(failed), 'utf8');
-    let sanitizerCalls = 0;
     const projector = createP2aExecutionKnowledgeProjector();
     const plan = await projector.plan({
       artifactRoot: item.artifactRoot,
@@ -585,13 +568,9 @@ describe('P2A execution projector', () => {
       projectId: 'alpha',
     });
     expect(plan.counts.quarantine).toBe(1);
-    await expect(projector.apply(plan, {
-      sanitize(request) {
-        sanitizerCalls += 1;
-        return sanitizer.sanitize(request);
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
-    expect(sanitizerCalls).toBe(0);
+    await expect(projector.apply(plan)).rejects.toMatchObject({
+      code: 'PROJECTION_ARTIFACT_INVALID',
+    });
     expect(await readdir(item.sources)).toEqual([]);
   });
 
@@ -603,7 +582,7 @@ describe('P2A execution projector', () => {
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
-    expect(plan.counts).toEqual({ exclude: 0, include: 1, quarantine: 1 });
+    expect(plan.counts).toEqual({ blocked: 0, exclude: 0, include: 1, quarantine: 1 });
     expect(plan.entries).toContainEqual(expect.objectContaining({
       decision: 'quarantine',
       reasonCode: 'unsupported_schema',
@@ -651,7 +630,7 @@ describe('P2A execution projector', () => {
       knowledgeRoot: reportFixture.knowledgeRoot,
       projectId: 'alpha',
     });
-    expect(report.counts).toEqual({ exclude: 0, include: 1, quarantine: 1 });
+    expect(report.counts).toEqual({ blocked: 0, exclude: 0, include: 1, quarantine: 1 });
     expect(report.entries).toContainEqual(expect.objectContaining({
       decision: 'quarantine',
       reasonCode: 'run_reference_invalid',
@@ -669,14 +648,9 @@ describe('P2A execution projector', () => {
       json({ schema_version: 'p2a.run.v2' }),
       'utf8',
     );
-    let sanitizerCalls = 0;
-    await expect(projector.apply(plan, {
-      sanitize(request) {
-        sanitizerCalls += 1;
-        return sanitizer.sanitize(request);
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_CHANGED' });
-    expect(sanitizerCalls).toBe(0);
+    await expect(projector.apply(plan)).rejects.toMatchObject({
+      code: 'PROJECTION_ARTIFACT_CHANGED',
+    });
   });
 
   it('quarantines archived lineage when iteration close metadata diverges', async () => {
@@ -697,7 +671,7 @@ describe('P2A execution projector', () => {
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
-    expect(plan.counts).toEqual({ exclude: 0, include: 0, quarantine: 2 });
+    expect(plan.counts).toEqual({ blocked: 0, exclude: 0, include: 0, quarantine: 2 });
     expect(plan.entries.every((entry) => entry.reasonCode === 'lineage_missing')).toBe(true);
   });
 
@@ -708,7 +682,7 @@ describe('P2A execution projector', () => {
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
-    expect(plan.counts).toEqual({ exclude: 0, include: 0, quarantine: 2 });
+    expect(plan.counts).toEqual({ blocked: 0, exclude: 0, include: 0, quarantine: 2 });
     expect(plan.entries.every((entry) => entry.reasonCode === 'lineage_mismatch')).toBe(true);
   });
 
@@ -719,7 +693,7 @@ describe('P2A execution projector', () => {
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
-    expect(plan.counts).toEqual({ exclude: 0, include: 0, quarantine: 1 });
+    expect(plan.counts).toEqual({ blocked: 0, exclude: 0, include: 0, quarantine: 1 });
     expect(plan.entries).toContainEqual(expect.objectContaining({
       decision: 'quarantine',
       reasonCode: 'path_unsafe',
@@ -739,14 +713,9 @@ describe('P2A execution projector', () => {
       'Execute the codec fixture.',
       'Execute the changed codec fixture.',
     ), 'utf8');
-    let sanitizerCalls = 0;
-    await expect(projector.apply(plan, {
-      sanitize(request) {
-        sanitizerCalls += 1;
-        return sanitizer.sanitize(request);
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_CHANGED' });
-    expect(sanitizerCalls).toBe(0);
+    await expect(projector.apply(plan)).rejects.toMatchObject({
+      code: 'PROJECTION_ARTIFACT_CHANGED',
+    });
     expect(await readdir(item.sources)).toEqual([]);
   });
 
@@ -759,14 +728,9 @@ describe('P2A execution projector', () => {
       projectId: 'alpha',
     });
     await rm(item.failedRunPath);
-    let sanitizerCalls = 0;
-    await expect(projector.apply(plan, {
-      sanitize(request) {
-        sanitizerCalls += 1;
-        return sanitizer.sanitize(request);
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_CHANGED' });
-    expect(sanitizerCalls).toBe(0);
+    await expect(projector.apply(plan)).rejects.toMatchObject({
+      code: 'PROJECTION_ARTIFACT_CHANGED',
+    });
   });
 
   it('detects project descriptor and sources-directory replacement before sanitization', async () => {
@@ -782,13 +746,9 @@ describe('P2A execution projector', () => {
       json({ schemaVersion: 'invalid' }),
       'utf8',
     );
-    let sanitizerCalls = 0;
-    await expect(descriptorProjector.apply(descriptorPlan, {
-      sanitize(request) {
-        sanitizerCalls += 1;
-        return sanitizer.sanitize(request);
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_CHANGED' });
+    await expect(descriptorProjector.apply(descriptorPlan)).rejects.toMatchObject({
+      code: 'PROJECTION_ARTIFACT_CHANGED',
+    });
 
     const sourcesFixture = await fixture();
     const sourcesProjector = createP2aExecutionKnowledgeProjector();
@@ -799,13 +759,9 @@ describe('P2A execution projector', () => {
     });
     await rm(sourcesFixture.sources, { recursive: true });
     await mkdir(sourcesFixture.sources);
-    await expect(sourcesProjector.apply(sourcesPlan, {
-      sanitize(request) {
-        sanitizerCalls += 1;
-        return sanitizer.sanitize(request);
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_CHANGED' });
-    expect(sanitizerCalls).toBe(0);
+    await expect(sourcesProjector.apply(sourcesPlan)).rejects.toMatchObject({
+      code: 'PROJECTION_ARTIFACT_CHANGED',
+    });
   });
 
   it('rejects an inconsistent injected selection before opening a writer', async () => {
@@ -821,7 +777,16 @@ describe('P2A execution projector', () => {
       taskId: 'task-001',
       taskTitle: 'Task',
     };
-    const sourceUri = 'buildlore+p2a:/alpha/v1/task-001';
+    const sourceUri = [
+      'buildlore+p2a:',
+      encodeURIComponent('https://example.test/alpha.git'),
+      'alpha',
+      'v1',
+      'execution-task',
+      encodeURIComponent(lineage.graphRef),
+      lineage.taskId,
+      'e'.repeat(64),
+    ].join('/');
     const source = attempt({ changedFiles: ['src/index.ts'] });
     const candidate: ExecutionCandidate = {
       attempts: [source],
@@ -851,7 +816,7 @@ describe('P2A execution projector', () => {
         reasonCode: candidate.reasonCode,
         sourceRevision: candidate.sourceRevision,
         sourceUri,
-        target: `execution--${'0'.repeat(64)}.md`,
+        target: candidate.target,
         taskStableId: candidate.taskStableId,
       }],
     };
@@ -880,7 +845,7 @@ describe('P2A execution projector', () => {
     expect(writerFactoryCalls).toBe(0);
   });
 
-  it('collects every sanitizer approval before the first write', async () => {
+  it('blocks every write when one prepared source is unsafe', async () => {
     const item = await fixture();
     const lineage = {
       graphRef: 'iterations/v1/gate-c-task-graph/task-graph.json',
@@ -893,23 +858,45 @@ describe('P2A execution projector', () => {
       taskId: 'task-001',
       taskTitle: 'Task',
     };
-    const candidate = (suffix: string): ExecutionCandidate => ({
-      attempts: [attempt({
+    const candidate = (
+      suffix: string,
+      body = `body ${suffix}`,
+      title = `Task ${suffix}`,
+    ): ExecutionCandidate => {
+      const candidateLineage = {
+        ...lineage,
+        taskContractSha256: digest(`contract-${suffix}`),
+        taskId: suffix === 'c' ? 'task-003' : 'task-004',
+      };
+      const sourceUri = [
+        'buildlore+p2a:',
+        encodeURIComponent('https://example.test/alpha.git'),
+        'alpha',
+        candidateLineage.iterationId,
+        'execution-task',
+        encodeURIComponent(candidateLineage.graphRef),
+        candidateLineage.taskId,
+        candidateLineage.taskContractSha256,
+      ].join('/');
+      return {
+        attempts: [attempt({
         changedFiles: [`src/${suffix}.ts`],
         runId: `run-${suffix}`,
         runRef: `v1/run-${suffix}.json`,
       })],
-      body: `body ${suffix}`,
+      body,
       ingestedAt: '2026-08-20T01:01:00.000Z',
-      lineage,
+      lineage: candidateLineage,
       reasonCode: 'significant_change',
       sourceRevision: `sha256:${suffix.padEnd(64, 'a')}`,
-      sourceUri: `buildlore+p2a:/alpha/v1/${suffix}`,
-      target: `execution--${digest(`buildlore+p2a:/alpha/v1/${suffix}`)}.md`,
-      taskStableId: digest(`buildlore+p2a:/alpha/v1/${suffix}`),
-      title: `Task ${suffix}`,
-    });
-    const candidates = [candidate('c'), candidate('d')];
+      sourceUri,
+      target: `execution--${digest(sourceUri)}.md`,
+      taskStableId: digest(sourceUri),
+      title,
+      };
+    };
+    const privateKey = ['-----BEGIN ', 'PRIVATE KEY-----', '\nsynthetic'].join('');
+    const candidates = [candidate('c'), candidate('d', 'safe body', privateKey)];
     const selection: P2aExecutionSelection = {
       artifactRoot: item.artifactRoot,
       bindings: [],
@@ -922,7 +909,7 @@ describe('P2A execution projector', () => {
           status: item.status,
         })),
         decision: 'include',
-        lineage,
+        lineage: source.lineage,
         reasonCode: 'significant_change',
         sourceRevision: source.sourceRevision,
         sourceUri: source.sourceUri,
@@ -963,16 +950,10 @@ describe('P2A execution projector', () => {
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
-    let approvals = 0;
-    await expect(projector.apply(plan, {
-      sanitize(request) {
-        approvals += 1;
-        return approvals === 1
-          ? sanitizer.sanitize(request)
-          : Promise.resolve({ code: 'secret-suspected' as const, ok: false as const });
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_SANITIZATION_FAILED' });
-    expect(approvals).toBe(2);
+    expect(plan.counts).toMatchObject({ blocked: 1, include: 1 });
+    await expect(projector.apply(plan)).rejects.toMatchObject({
+      code: 'PROJECTION_ARTIFACT_INVALID',
+    });
     expect(writes).toBe(0);
   });
 });

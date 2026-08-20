@@ -12,25 +12,17 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  createCompilerEgressAuthorizer,
-  createProjectCompiler,
-} from '../src/compiler/index.js';
+import { createProjectCompiler } from '../src/compiler/index.js';
 import { addProject } from '../src/knowledge/index.js';
 import {
   createP2aPlanningProjector,
-  MAX_SOURCE_BODY_CHARS,
   parseSourceDocument,
 } from '../src/projector/index.js';
 import type { ProjectionError } from '../src/projector/index.js';
 import { createP2aArtifactAdapter } from '../src/projector/p2a-artifacts.js';
 import { createProjectSourceWriter } from '../src/projector/project-source-writer.js';
-import {
-  issueSanitizationApproval,
-  type SanitizationApproval,
-  type SourceSanitizerPort,
-} from '../src/sanitizer/index.js';
 import { startFakeOpenAiServer } from './fixtures/fake-openai.js';
+import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const temporaryRoots: string[] = [];
 
@@ -75,18 +67,6 @@ function decisionRecords(
 function serializeDecisions(records: readonly Readonly<Record<string, unknown>>[]): string {
   return `${records.map((value) => JSON.stringify(value)).join('\n')}\n`;
 }
-
-const passthroughSanitizer: SourceSanitizerPort = {
-  sanitize(request) {
-    return Promise.resolve(issueSanitizationApproval({
-      approvedBody: request.body,
-      approvedBodyDigest: `sha256:${digest(request.body)}`,
-      inputBodyDigest: request.bodyDigest,
-      projectId: request.projectId,
-      source: request.source,
-    }));
-  },
-};
 
 async function fixture(options: {
   readonly archived?: boolean;
@@ -329,7 +309,7 @@ describe('P2A planning projector', () => {
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
-    await projector.apply(plan, passthroughSanitizer);
+    await projector.apply(plan);
 
     expect({ reads, verifications, writers }).toEqual({
       reads: 1,
@@ -349,7 +329,7 @@ describe('P2A planning projector', () => {
     const sourceFiles = await readdir(join(item.workspace, 'sources'));
 
     expect(sourceFiles).toEqual([]);
-    expect(plan.counts).toEqual({ error: 0, exclude: 6, include: 3 });
+    expect(plan.counts).toEqual({ blocked: 0, error: 0, exclude: 6, include: 3, quarantine: 0 });
     expect(plan.entries.filter((entry) => entry.decision === 'include')).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ reasonCode: 'approved_product_spec', writeStatus: 'create' }),
@@ -502,7 +482,7 @@ describe('P2A planning projector', () => {
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
-    const first = await projector.apply(firstPlan, passthroughSanitizer);
+    const first = await projector.apply(firstPlan);
     expect(first.writes.map((write) => write.writeStatus)).toEqual(['create', 'create', 'create']);
 
     const files = (await readdir(join(item.workspace, 'sources'))).sort();
@@ -517,7 +497,7 @@ describe('P2A planning projector', () => {
       expect(source.ingestedAt).toMatch(/^2026-08-19T0[12]:00:00\.000Z$/u);
       expect(decodeURIComponent(source.source)).toContain('https://example.test/alpha.git');
     }
-    await expect(projector.apply(firstPlan, passthroughSanitizer)).rejects.toMatchObject({
+    await expect(projector.apply(firstPlan)).rejects.toMatchObject({
       code: 'PROJECTION_ARTIFACT_CHANGED',
     });
 
@@ -529,7 +509,7 @@ describe('P2A planning projector', () => {
     expect(secondPlan.entries
       .filter((entry) => entry.decision === 'include')
       .map((entry) => entry.writeStatus)).toEqual(['unchanged', 'unchanged', 'unchanged']);
-    const second = await projector.apply(secondPlan, passthroughSanitizer);
+    const second = await projector.apply(secondPlan);
     expect(second.writes.map((write) => write.writeStatus)).toEqual([
       'unchanged',
       'unchanged',
@@ -539,10 +519,8 @@ describe('P2A planning projector', () => {
       files.map(async (file) => readFile(join(item.workspace, 'sources', file), 'utf8')),
     )).resolves.toEqual(before);
 
-    const compiler = createProjectCompiler({
-      egressAuthorizer: createCompilerEgressAuthorizer(() => true),
-      knowledgeRoot: item.knowledgeRoot,
-    });
+    await writeSecurityPolicy(item.knowledgeRoot, 'alpha');
+    const compiler = createProjectCompiler({ knowledgeRoot: item.knowledgeRoot });
     await expect(compiler.status('alpha')).resolves.toMatchObject({
       pendingChangesCount: 3,
       stateStatus: 'missing',
@@ -576,7 +554,7 @@ describe('P2A planning projector', () => {
       projectId: 'alpha',
     });
 
-    expect(plan.counts).toEqual({ error: 0, exclude: 5, include: 4 });
+    expect(plan.counts).toEqual({ blocked: 0, error: 0, exclude: 5, include: 4, quarantine: 0 });
     expect(plan.entries).toContainEqual(expect.objectContaining({
       decision: 'include',
       documentKind: 'archived-iteration',
@@ -846,65 +824,7 @@ describe('P2A planning projector', () => {
     }));
   });
 
-  it('rejects forged and reused sanitizer approvals before any target write', async () => {
-    const forgedItem = await fixture();
-    const forgedProjector = createP2aPlanningProjector();
-    const forgedPlan = await forgedProjector.plan({
-      artifactRoot: forgedItem.artifactRoot,
-      knowledgeRoot: forgedItem.knowledgeRoot,
-      projectId: 'alpha',
-    });
-    await expect(forgedProjector.apply(forgedPlan, {
-      sanitize() {
-        return Promise.resolve({ ok: true, opaque: true } as SanitizationApproval);
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_SANITIZATION_FAILED' });
-    await expect(readdir(join(forgedItem.workspace, 'sources'))).resolves.toEqual([]);
-
-    const reusedItem = await fixture();
-    const reusedProjector = createP2aPlanningProjector();
-    const reusedPlan = await reusedProjector.plan({
-      artifactRoot: reusedItem.artifactRoot,
-      knowledgeRoot: reusedItem.knowledgeRoot,
-      projectId: 'alpha',
-    });
-    let approval: SanitizationApproval | undefined;
-    await expect(reusedProjector.apply(reusedPlan, {
-      sanitize(request) {
-        approval ??= issueSanitizationApproval({
-          approvedBody: request.body,
-          approvedBodyDigest: `sha256:${digest(request.body)}`,
-          inputBodyDigest: request.bodyDigest,
-          projectId: request.projectId,
-          source: request.source,
-        });
-        return Promise.resolve(approval);
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_SANITIZATION_FAILED' });
-    await expect(readdir(join(reusedItem.workspace, 'sources'))).resolves.toEqual([]);
-
-    const mismatchItem = await fixture();
-    const mismatchProjector = createP2aPlanningProjector();
-    const mismatchPlan = await mismatchProjector.plan({
-      artifactRoot: mismatchItem.artifactRoot,
-      knowledgeRoot: mismatchItem.knowledgeRoot,
-      projectId: 'alpha',
-    });
-    await expect(mismatchProjector.apply(mismatchPlan, {
-      sanitize(request) {
-        return Promise.resolve(issueSanitizationApproval({
-          approvedBody: request.body,
-          approvedBodyDigest: `sha256:${'0'.repeat(64)}`,
-          inputBodyDigest: request.bodyDigest,
-          projectId: request.projectId,
-          source: request.source,
-        }));
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_SANITIZATION_FAILED' });
-    await expect(readdir(join(mismatchItem.workspace, 'sources'))).resolves.toEqual([]);
-  });
-
-  it('hashes and truncates the sanitizer-approved body rather than the raw projection', async () => {
+  it('keeps prepared source bodies private and rejects a cloned plan', async () => {
     const item = await fixture();
     const projector = createP2aPlanningProjector();
     const plan = await projector.plan({
@@ -912,87 +832,24 @@ describe('P2A planning projector', () => {
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
-    const approvedBody = `SANITIZED-${'x'.repeat(MAX_SOURCE_BODY_CHARS)}`;
-    await projector.apply(plan, {
-      sanitize(request) {
-        return Promise.resolve(issueSanitizationApproval({
-          approvedBody,
-          approvedBodyDigest: `sha256:${digest(approvedBody)}`,
-          inputBodyDigest: request.bodyDigest,
-          projectId: request.projectId,
-          source: request.source,
-        }));
-      },
+    expect(plan.entries.filter((entry) => entry.decision === 'include').every((entry) =>
+      entry.security?.decision === 'include')).toBe(true);
+    await expect(projector.apply(structuredClone(plan))).rejects.toMatchObject({
+      code: 'PROJECTION_ARTIFACT_CHANGED',
     });
-
-    const files = await readdir(join(item.workspace, 'sources'));
-    expect(files).toHaveLength(3);
-    const first = files[0];
-    if (first === undefined) throw new Error('projected source is missing');
-    const projected = parseSourceDocument(
-      await readFile(join(item.workspace, 'sources', first), 'utf8'),
-    );
-    expect(projected.truncated).toBe(true);
-    expect(projected.originalChars).toBe(approvedBody.length);
-    expect(projected.body.length).toBe(MAX_SOURCE_BODY_CHARS + 1);
-    expect(projected.body.startsWith('SANITIZED-')).toBe(true);
-    expect(projected.buildlore.contentHash).toBe(`sha256:${digest(projected.body)}`);
-  });
-
-  it('normalizes the sanitizer-approved body after verifying its opaque binding', async () => {
-    const item = await fixture();
-    const projector = createP2aPlanningProjector();
-    const plan = await projector.plan({
-      artifactRoot: item.artifactRoot,
-      knowledgeRoot: item.knowledgeRoot,
-      projectId: 'alpha',
-    });
-    const approvedBody = 'approved\r\nbody\n\n';
-    await projector.apply(plan, {
-      sanitize(request) {
-        return Promise.resolve(issueSanitizationApproval({
-          approvedBody,
-          approvedBodyDigest: `sha256:${digest(approvedBody)}`,
-          inputBodyDigest: request.bodyDigest,
-          projectId: request.projectId,
-          source: request.source,
-        }));
-      },
-    });
-
-    const files = await readdir(join(item.workspace, 'sources'));
-    expect(files).toHaveLength(3);
-    for (const file of files) {
-      const projected = parseSourceDocument(
-        await readFile(join(item.workspace, 'sources', file), 'utf8'),
-      );
-      expect(projected.body).toBe('approved\nbody\n');
-      expect(projected.buildlore.contentHash).toBe(`sha256:${digest(projected.body)}`);
-    }
-  });
-
-  it('fails closed before writes when sanitization is denied or artifacts drift', async () => {
-    const item = await fixture();
-    const projector = createP2aPlanningProjector();
-    const deniedPlan = await projector.plan({
-      artifactRoot: item.artifactRoot,
-      knowledgeRoot: item.knowledgeRoot,
-      projectId: 'alpha',
-    });
-    await expect(projector.apply(deniedPlan, {
-      sanitize() {
-        return Promise.resolve({ code: 'secret-suspected' as const, ok: false as const });
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_SANITIZATION_FAILED' });
     await expect(readdir(join(item.workspace, 'sources'))).resolves.toEqual([]);
+  });
 
+  it('fails closed before writes when artifacts or project security state drift', async () => {
+    const item = await fixture();
+    const projector = createP2aPlanningProjector();
     const driftPlan = await projector.plan({
       artifactRoot: item.artifactRoot,
       knowledgeRoot: item.knowledgeRoot,
       projectId: 'alpha',
     });
     await writeFile(item.specPath, '{"changed":true}\n', 'utf8');
-    await expect(projector.apply(driftPlan, passthroughSanitizer)).rejects.toEqual(
+    await expect(projector.apply(driftPlan)).rejects.toEqual(
       expect.objectContaining<Partial<ProjectionError>>({ code: 'PROJECTION_ARTIFACT_CHANGED' }),
     );
     await expect(readdir(join(item.workspace, 'sources'))).resolves.toEqual([]);
@@ -1005,7 +862,7 @@ describe('P2A planning projector', () => {
       projectId: 'alpha',
     });
     await writeFile(ledgerItem.decisionsPath, '{"changed":true}\n', 'utf8');
-    await expect(ledgerProjector.apply(ledgerPlan, passthroughSanitizer)).rejects.toMatchObject({
+    await expect(ledgerProjector.apply(ledgerPlan)).rejects.toMatchObject({
       code: 'PROJECTION_ARTIFACT_CHANGED',
     });
     await expect(readdir(join(ledgerItem.workspace, 'sources'))).resolves.toEqual([]);
@@ -1018,7 +875,7 @@ describe('P2A planning projector', () => {
       projectId: 'alpha',
     });
     await writeFile(join(fileSetItem.artifactRoot, 'generated-after-plan.json'), '{}\n', 'utf8');
-    await expect(fileSetProjector.apply(fileSetPlan, passthroughSanitizer)).rejects.toMatchObject({
+    await expect(fileSetProjector.apply(fileSetPlan)).rejects.toMatchObject({
       code: 'PROJECTION_ARTIFACT_CHANGED',
     });
     await expect(readdir(join(fileSetItem.workspace, 'sources'))).resolves.toEqual([]);
@@ -1030,52 +887,13 @@ describe('P2A planning projector', () => {
       knowledgeRoot: projectItem.knowledgeRoot,
       projectId: 'alpha',
     });
-    let changedProject = false;
-    await expect(projectProjector.apply(projectPlan, {
-      async sanitize(request) {
-        if (!changedProject) {
-          changedProject = true;
-          const descriptorPath = join(projectItem.workspace, 'project.json');
-          const descriptor = JSON.parse(
-            await readFile(descriptorPath, 'utf8'),
-          ) as Record<string, unknown>;
-          descriptor.sourceRepository = 'https://example.test/changed.git';
-          await writeFile(descriptorPath, canonicalJson(descriptor), 'utf8');
-        }
-        return issueSanitizationApproval({
-          approvedBody: request.body,
-          approvedBodyDigest: `sha256:${digest(request.body)}`,
-          inputBodyDigest: request.bodyDigest,
-          projectId: request.projectId,
-          source: request.source,
-        });
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_CHANGED' });
-    await expect(readdir(join(projectItem.workspace, 'sources'))).resolves.toEqual([]);
-
-    const duringSanitization = await fixture();
-    const duringProjector = createP2aPlanningProjector();
-    const duringPlan = await duringProjector.plan({
-      artifactRoot: duringSanitization.artifactRoot,
-      knowledgeRoot: duringSanitization.knowledgeRoot,
-      projectId: 'alpha',
+    const descriptorPath = join(projectItem.workspace, 'project.json');
+    const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as Record<string, unknown>;
+    descriptor.sourceRepository = 'https://example.test/changed.git';
+    await writeFile(descriptorPath, canonicalJson(descriptor), 'utf8');
+    await expect(projectProjector.apply(projectPlan)).rejects.toMatchObject({
+      code: 'PROJECTION_ARTIFACT_CHANGED',
     });
-    let changedArtifact = false;
-    await expect(duringProjector.apply(duringPlan, {
-      async sanitize(request) {
-        if (!changedArtifact) {
-          changedArtifact = true;
-          await writeFile(duringSanitization.specPath, '{"changed":true}\n', 'utf8');
-        }
-        return issueSanitizationApproval({
-          approvedBody: request.body,
-          approvedBodyDigest: `sha256:${digest(request.body)}`,
-          inputBodyDigest: request.bodyDigest,
-          projectId: request.projectId,
-          source: request.source,
-        });
-      },
-    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_CHANGED' });
-    await expect(readdir(join(duringSanitization.workspace, 'sources'))).resolves.toEqual([]);
+    await expect(readdir(join(projectItem.workspace, 'sources'))).resolves.toEqual([]);
   });
 });
