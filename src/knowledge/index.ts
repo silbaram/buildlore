@@ -20,9 +20,12 @@ export {
   validateProjectRegistry,
 } from './workspace.js';
 export {
+  BUILDLORE_LIFECYCLE_PROFILE_ID,
+  BUILDLORE_LIFECYCLE_PROFILE_VERSION,
   DEFAULT_PROFILE_VERSION,
   KNOWLEDGE_SCHEMA_VERSION,
   PROJECT_SCHEMA_VERSION,
+  PROJECT_SCHEMA_VERSION_V2,
   STATUS_SCHEMA_VERSION,
   type AddProjectInput,
   type CompilerChangeStatus,
@@ -33,18 +36,23 @@ export {
   type KnowledgePinState,
   type KnowledgeStatus,
   type ProjectDescriptor,
+  type ProjectDescriptorV1,
+  type ProjectDescriptorV2,
   type ProjectKnowledgeStatus,
   type ProjectRecord,
   type ProjectRegistryEntry,
+  type ResolvedProjectProfileBinding,
   type SubmoduleState,
   type SubmoduleStatus,
 } from './types.js';
 export {
   createProjectDescriptor,
+  createProfileProjectDescriptor,
   isSshScpLocator,
   parseKnowledgeManifest,
   parseProjectDescriptor,
   projectPathFor,
+  resolveProjectProfileBinding,
   validateProjectId,
   validateRepositoryLocator,
 } from './validation.js';

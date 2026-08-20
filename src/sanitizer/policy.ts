@@ -32,6 +32,7 @@ const SOURCE_KINDS = new Set<SecuritySourceKind>([
   'compiler-cache',
   'execution',
   'planning',
+  'profile',
   'provider-request',
   'wiki',
 ]);

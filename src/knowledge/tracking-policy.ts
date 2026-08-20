@@ -40,7 +40,16 @@ export const LLWIKI_TRACKING_MATRIX = {
     '.llmwiki/workflows/',
     '.llmwiki/eval/',
   ],
-  tracked: ['manifest.json', 'projects/*/project.json', 'projects/*/sources/*.md', 'projects/*/wiki/', 'projects/*/log.md'],
+  tracked: [
+    'manifest.json',
+    'projects/*/project.json',
+    'projects/*/profile.json',
+    'projects/*/sources/*.md',
+    'projects/*/wiki/',
+    'projects/*/.llmwiki/profile.json',
+    'projects/*/.llmwiki/config.json',
+    'projects/*/log.md',
+  ],
 } as const;
 
 function assertExistingIgnorePolicy(status: Awaited<ReturnType<typeof lstat>>): void {

@@ -2,11 +2,17 @@ import { isAbsolute, posix, win32 } from 'node:path';
 
 import { KnowledgeError } from './errors.js';
 import {
+  BUILDLORE_LIFECYCLE_PROFILE_ID,
+  BUILDLORE_LIFECYCLE_PROFILE_VERSION,
   DEFAULT_PROFILE_VERSION,
   KNOWLEDGE_SCHEMA_VERSION,
   PROJECT_SCHEMA_VERSION,
+  PROJECT_SCHEMA_VERSION_V2,
   type KnowledgeManifest,
   type ProjectDescriptor,
+  type ProjectDescriptorV1,
+  type ProjectDescriptorV2,
+  type ResolvedProjectProfileBinding,
   type ProjectRegistryEntry,
 } from './types.js';
 
@@ -14,6 +20,7 @@ const PROJECT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const RESERVED_PROJECT_IDS = new Set(['knowledge', 'manifest', 'projects', 'shared']);
 const SCP_LOCATOR_PATTERN = /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:[^\s@?#]+$/u;
 const WINDOWS_DRIVE_PREFIX_PATTERN = /^[A-Za-z]:/u;
+const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
 function containsControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
@@ -200,6 +207,39 @@ export function parseKnowledgeManifest(value: unknown): KnowledgeManifest {
 
 export function parseProjectDescriptor(value: unknown): ProjectDescriptor {
   const record = asRecord(value, 'Project descriptor');
+  if (record.schemaVersion === PROJECT_SCHEMA_VERSION_V2) {
+    requireExactKeys(
+      record,
+      [
+        'outputLanguage',
+        'profileHash',
+        'profileId',
+        'profileVersion',
+        'projectId',
+        'schemaVersion',
+        'sourceRepository',
+      ],
+      'Project descriptor',
+    );
+    const profileHash = requireString(record.profileHash, 'profileHash');
+    if (!SHA256_PATTERN.test(profileHash) ||
+        record.profileId !== BUILDLORE_LIFECYCLE_PROFILE_ID ||
+        record.profileVersion !== BUILDLORE_LIFECYCLE_PROFILE_VERSION ||
+        (record.outputLanguage !== 'en' && record.outputLanguage !== 'ko')) {
+      invalid('Project descriptor profile binding is unsupported.');
+    }
+    return {
+      outputLanguage: record.outputLanguage,
+      profileHash: profileHash as `sha256:${string}`,
+      profileId: BUILDLORE_LIFECYCLE_PROFILE_ID,
+      profileVersion: BUILDLORE_LIFECYCLE_PROFILE_VERSION,
+      projectId: validateProjectId(requireString(record.projectId, 'projectId')),
+      schemaVersion: PROJECT_SCHEMA_VERSION_V2,
+      sourceRepository: validateRepositoryLocator(
+        requireString(record.sourceRepository, 'sourceRepository'),
+      ),
+    } satisfies ProjectDescriptorV2;
+  }
   requireExactKeys(
     record,
     ['profileVersion', 'projectId', 'schemaVersion', 'sourceRepository'],
@@ -217,18 +257,64 @@ export function parseProjectDescriptor(value: unknown): ProjectDescriptor {
     sourceRepository: validateRepositoryLocator(
       requireString(record.sourceRepository, 'sourceRepository'),
     ),
-  };
+  } satisfies ProjectDescriptorV1;
 }
 
 export function createProjectDescriptor(input: {
   readonly profileVersion?: string;
   readonly projectId: string;
   readonly sourceRepository: string;
-}): ProjectDescriptor {
-  return parseProjectDescriptor({
+}): ProjectDescriptorV1 {
+  const descriptor = parseProjectDescriptor({
     profileVersion: input.profileVersion ?? DEFAULT_PROFILE_VERSION,
     projectId: input.projectId,
     schemaVersion: PROJECT_SCHEMA_VERSION,
     sourceRepository: input.sourceRepository,
   });
+  if (descriptor.schemaVersion !== PROJECT_SCHEMA_VERSION) {
+    return invalid('Project descriptor schema is unsupported.');
+  }
+  return descriptor;
+}
+
+export function createProfileProjectDescriptor(input: {
+  readonly outputLanguage: 'en' | 'ko';
+  readonly profileHash: `sha256:${string}`;
+  readonly projectId: string;
+  readonly sourceRepository: string;
+}): ProjectDescriptorV2 {
+  const descriptor = parseProjectDescriptor({
+    outputLanguage: input.outputLanguage,
+    profileHash: input.profileHash,
+    profileId: BUILDLORE_LIFECYCLE_PROFILE_ID,
+    profileVersion: BUILDLORE_LIFECYCLE_PROFILE_VERSION,
+    projectId: input.projectId,
+    schemaVersion: PROJECT_SCHEMA_VERSION_V2,
+    sourceRepository: input.sourceRepository,
+  });
+  if (descriptor.schemaVersion !== PROJECT_SCHEMA_VERSION_V2) {
+    return invalid('Project descriptor schema is unsupported.');
+  }
+  return descriptor;
+}
+
+export function resolveProjectProfileBinding(
+  descriptor: ProjectDescriptor,
+): ResolvedProjectProfileBinding {
+  if (descriptor.schemaVersion === PROJECT_SCHEMA_VERSION) {
+    return {
+      mode: 'default',
+      outputLanguage: 'en',
+      profileHash: null,
+      profileId: null,
+      profileVersion: DEFAULT_PROFILE_VERSION,
+    };
+  }
+  return {
+    mode: 'custom',
+    outputLanguage: descriptor.outputLanguage,
+    profileHash: descriptor.profileHash,
+    profileId: descriptor.profileId,
+    profileVersion: descriptor.profileVersion,
+  };
 }

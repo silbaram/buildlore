@@ -13,6 +13,7 @@ export type SecuritySourceKind =
   | 'compiler-cache'
   | 'execution'
   | 'planning'
+  | 'profile'
   | 'provider-request'
   | 'wiki';
 export type SecurityEgressCapability =

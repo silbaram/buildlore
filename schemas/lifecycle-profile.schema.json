@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/lifecycle-profile.schema.json",
+  "title": "BuildLore Lifecycle Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "profileId",
+    "profileVersion",
+    "outputLanguage",
+    "entities",
+    "relations",
+    "lifecycles",
+    "reviewPolicy",
+    "freshnessPolicy",
+    "exclusions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.profile.v1" },
+    "profileId": { "const": "buildlore-lifecycle" },
+    "profileVersion": { "const": "0.1.0" },
+    "outputLanguage": { "enum": ["en", "ko"] },
+    "entities": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        { "$ref": "#/$defs/decisionEntity" },
+        { "$ref": "#/$defs/failureEntity" },
+        { "$ref": "#/$defs/verificationEntity" }
+      ],
+      "items": false
+    },
+    "relations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        { "$ref": "#/$defs/supersedesRelation" },
+        { "$ref": "#/$defs/verifiedByRelation" }
+      ],
+      "items": false
+    },
+    "lifecycles": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        { "$ref": "#/$defs/decisionLifecycle" },
+        { "$ref": "#/$defs/failureLifecycle" },
+        { "$ref": "#/$defs/verificationLifecycle" }
+      ],
+      "items": false
+    },
+    "reviewPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hold", "lowConfidenceThreshold", "treatMissingConfidenceAs"],
+      "properties": {
+        "hold": {
+          "const": [
+            "low-confidence",
+            "contradicted",
+            "schema-violating",
+            "provenance-violating"
+          ]
+        },
+        "lowConfidenceThreshold": { "const": 0.5 },
+        "treatMissingConfidenceAs": { "const": "low" }
+      }
+    },
+    "freshnessPolicy": {
+      "const": {
+        "stale": "retain-warn-recompile",
+        "orphaned": "retain-review-exclude-active",
+        "archived": "retain-history-exclude-active"
+      }
+    },
+    "exclusions": {
+      "const": {
+        "entities": ["project", "feature", "task", "run", "artifact"],
+        "relations": ["implements", "failed-by", "produced", "belongs-to"],
+        "workflows": ["generic-workflow", "workflow-actions", "artifacts", "connectors"]
+      }
+    }
+  },
+  "$defs": {
+    "decisionEntity": {
+      "const": { "id": "decision", "upstreamType": "decisions", "directory": "wiki/decisions" }
+    },
+    "failureEntity": {
+      "const": { "id": "failure", "upstreamType": "failures", "directory": "wiki/failures" }
+    },
+    "verificationEntity": {
+      "const": {
+        "id": "verification",
+        "upstreamType": "verifications",
+        "directory": "wiki/verifications"
+      }
+    },
+    "supersedesRelation": {
+      "const": {
+        "id": "supersedes",
+        "from": ["decisions"],
+        "to": ["decisions"],
+        "direction": "directed",
+        "cardinality": { "from": "0..n", "to": "0..n" }
+      }
+    },
+    "verifiedByRelation": {
+      "const": {
+        "id": "verified-by",
+        "from": ["decisions", "failures"],
+        "to": ["verifications"],
+        "direction": "directed",
+        "cardinality": { "from": "0..n", "to": "0..n" }
+      }
+    },
+    "decisionLifecycle": {
+      "const": {
+        "entity": "decisions",
+        "field": "status",
+        "initial": "active",
+        "terminal": ["archived"],
+        "transitions": {
+          "active": ["superseded", "archived"],
+          "superseded": ["archived"],
+          "archived": []
+        }
+      }
+    },
+    "failureLifecycle": {
+      "const": {
+        "entity": "failures",
+        "field": "status",
+        "initial": "open",
+        "terminal": ["archived"],
+        "transitions": { "open": ["resolved"], "resolved": ["archived"], "archived": [] }
+      }
+    },
+    "verificationLifecycle": {
+      "const": {
+        "entity": "verifications",
+        "field": "status",
+        "initial": "recorded",
+        "terminal": ["archived"],
+        "transitions": {
+          "recorded": ["passed", "failed"],
+          "passed": ["archived"],
+          "failed": ["archived"],
+          "archived": []
+        }
+      }
+    }
+  }
+}
