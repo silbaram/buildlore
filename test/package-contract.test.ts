@@ -50,7 +50,13 @@ describe('package contract', () => {
     expect(packageJson.exports['./schemas/source-document.schema.json']).toBe(
       './schemas/source-document.schema.json',
     );
-    expect(packageJson.files).toEqual(['dist', 'schemas']);
+    expect(packageJson.exports['./schemas/lifecycle-profile.schema.json']).toBe(
+      './schemas/lifecycle-profile.schema.json',
+    );
+    expect(packageJson.exports['./profiles/buildlore.profile.v1.json']).toBe(
+      './profiles/buildlore.profile.v1.json',
+    );
+    expect(packageJson.files).toEqual(['dist', 'schemas', 'profiles']);
     expect(packageJson.dependencies).toEqual(approvedRuntimeDependencies);
     expect(packageJson.engines).toEqual({ node: '>=24', npm: '>=11 <12' });
     expect(packageJson.devDependencies).toEqual(approvedDevDependencies);

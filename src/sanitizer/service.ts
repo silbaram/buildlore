@@ -38,6 +38,7 @@ const SOURCE_KINDS = new Set([
   'compiler-cache',
   'execution',
   'planning',
+  'profile',
   'provider-request',
   'wiki',
 ]);

@@ -1,10 +1,18 @@
 import { resolveProjectWorkspace } from '../knowledge/paths.js';
 import { validateProjectId } from '../knowledge/validation.js';
 import { showProject } from '../knowledge/workspace.js';
+import {
+  createProfileBindingPreflight,
+  type ProfileBindingPreflight,
+} from '../profile/preflight.js';
 import { requiresEgress } from './capabilities.js';
 import { createLlmWikiCompilerBackend } from './backend.js';
 import { CompilerBackendError, CompilerOperationError } from './errors.js';
 import { normalizeCompilerResult, validateCompilerRequest } from './normalizers.js';
+import {
+  processOutputLanguageCoordinator,
+  type OutputLanguageCoordinator,
+} from './output-language.js';
 import {
   prepareCompilerEgress,
   verifyAndConsumeCompilerEgress,
@@ -15,6 +23,7 @@ import type {
   CompilerExecutionControl,
   CompilerOperationResult,
   CompilerRequest,
+  EgressCapability,
   ProjectCompilerPort,
 } from './types.js';
 
@@ -172,12 +181,17 @@ export interface CreateProjectCompilerOptions {
   readonly backend?: CompilerBackend;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly knowledgeRoot: string;
+  readonly outputLanguageCoordinator?: OutputLanguageCoordinator;
+  readonly profilePreflight?: ProfileBindingPreflight;
 }
 
 export function createProjectCompiler(options: CreateProjectCompilerOptions): ProjectCompilerPort {
   const backend = options.backend ?? createLlmWikiCompilerBackend();
   const environment = options.environment ?? process.env;
   const knowledgeRoot = options.knowledgeRoot;
+  const outputLanguageCoordinator = options.outputLanguageCoordinator ??
+    processOutputLanguageCoordinator;
+  const profilePreflight = options.profilePreflight ?? createProfileBindingPreflight(knowledgeRoot);
   const requestOrdering = new ProjectOperationCoordinator();
 
   async function resolveWorkspace(projectId: string): Promise<string> {
@@ -223,11 +237,15 @@ export function createProjectCompiler(options: CreateProjectCompilerOptions): Pr
       const selectedWorkspace = await resolveWorkspace(request.projectId);
       return projectOperations.run(selectedWorkspace, async () => {
         const workspace = await resolveWorkspace(request.projectId);
+        const profileBinding = await profilePreflight.resolve(request.projectId);
+        if (profileBinding.workspace !== workspace) throw configError(request);
         if (isAborted(control.signal)) {
           throw cancellationError(request, false);
         }
         let egressPermit: CompilerSecurityPermit | undefined;
+        let egressRequest: (CompilerRequest & { readonly capability: EgressCapability }) | undefined;
         if (requiresEgress(request)) {
+          egressRequest = request;
           validateProviderTimeouts(request, environment);
           try {
             egressPermit = await prepareCompilerEgress(knowledgeRoot, workspace, request);
@@ -247,71 +265,78 @@ export function createProjectCompiler(options: CreateProjectCompilerOptions): Pr
           if (isAborted(control.signal)) {
             throw cancellationError(request, false);
           }
-          try {
-            await verifyAndConsumeCompilerEgress(
-              egressPermit,
-              knowledgeRoot,
-              workspace,
-              request,
-            );
-          } catch {
-            throw new CompilerOperationError(
-              'COMPILER_EGRESS_DENIED',
-              'Compiler egress is not authorized.',
-              {
-                capability: request.capability,
-                projectId: request.projectId,
-                recoveryAction: 'check-config',
-                retryable: false,
-                sideEffectsPossible: false,
-              },
-            );
-          }
         }
 
-        let cancelRequested = false;
-        const onAbort = (): void => {
-          cancelRequested = true;
+        const performBackend = async (): Promise<CompilerOperationResult> => {
+          const freshBinding = await profilePreflight.resolve(request.projectId);
+          if (freshBinding.workspace !== workspace || freshBinding.mode !== profileBinding.mode ||
+              freshBinding.outputLanguage !== profileBinding.outputLanguage) {
+            throw configError(request);
+          }
+          if (isAborted(control.signal)) throw cancellationError(request, false);
+          if (egressPermit !== undefined && egressRequest !== undefined) {
+            try {
+              await verifyAndConsumeCompilerEgress(
+                egressPermit,
+                knowledgeRoot,
+                workspace,
+                egressRequest,
+              );
+            } catch {
+              throw new CompilerOperationError(
+                'COMPILER_EGRESS_DENIED',
+                'Compiler egress is not authorized.',
+                {
+                  capability: request.capability,
+                  projectId: request.projectId,
+                  recoveryAction: 'check-config',
+                  retryable: false,
+                  sideEffectsPossible: false,
+                },
+              );
+            }
+          }
+          let cancelRequested = false;
+          const onAbort = (): void => {
+            cancelRequested = true;
+          };
+          control.signal?.addEventListener('abort', onAbort, { once: true });
+          if (isAborted(control.signal)) cancelRequested = true;
+          try {
+            if (cancelRequested) throw cancellationError(request, false);
+            let raw: unknown;
+            try {
+              raw = await backend.run(workspace, request);
+            } catch (error) {
+              if (cancelRequested) throw cancellationError(request, true);
+              if (error instanceof CompilerOperationError) throw error;
+              if (error instanceof CompilerBackendError) throw mapBackendError(request, error);
+              throw new CompilerOperationError('COMPILER_FAILED', 'Compiler operation failed.', {
+                capability: request.capability,
+                projectId: request.projectId,
+                recoveryAction: 'status',
+                retryable: false,
+                sideEffectsPossible: mayWriteWorkspace(request.capability),
+              });
+            }
+            if (cancelRequested) throw cancellationError(request, true);
+            try {
+              return normalizeCompilerResult(request, raw);
+            } catch (error) {
+              if (error instanceof CompilerOperationError) throw error;
+              throw contractError(request);
+            }
+          } finally {
+            control.signal?.removeEventListener('abort', onAbort);
+          }
         };
-        control.signal?.addEventListener('abort', onAbort, { once: true });
-        if (isAborted(control.signal)) cancelRequested = true;
-        try {
-          if (cancelRequested) throw cancellationError(request, false);
-          let raw: unknown;
-          try {
-            raw = await backend.run(workspace, request);
-          } catch (error) {
-            if (cancelRequested) {
-              throw cancellationError(request, true);
-            }
-            if (error instanceof CompilerOperationError) {
-              throw error;
-            }
-            if (error instanceof CompilerBackendError) {
-              throw mapBackendError(request, error);
-            }
-            throw new CompilerOperationError('COMPILER_FAILED', 'Compiler operation failed.', {
-              capability: request.capability,
-              projectId: request.projectId,
-              recoveryAction: 'status',
-              retryable: false,
-              sideEffectsPossible: mayWriteWorkspace(request.capability),
-            });
-          }
-          if (cancelRequested) {
-            throw cancellationError(request, true);
-          }
-          try {
-            return normalizeCompilerResult(request, raw);
-          } catch (error) {
-            if (error instanceof CompilerOperationError) {
-              throw error;
-            }
-            throw contractError(request);
-          }
-        } finally {
-          control.signal?.removeEventListener('abort', onAbort);
+        if (request.capability === 'compile' || request.capability === 'query') {
+          return outputLanguageCoordinator.run(
+            profileBinding.mode === 'custom' ? profileBinding.outputLanguage : null,
+            performBackend,
+          );
         }
+        return performBackend();
       });
     });
   }

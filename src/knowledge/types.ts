@@ -1,7 +1,10 @@
 export const KNOWLEDGE_SCHEMA_VERSION = 'buildlore.knowledge.v1' as const;
 export const PROJECT_SCHEMA_VERSION = 'buildlore.project.v1' as const;
+export const PROJECT_SCHEMA_VERSION_V2 = 'buildlore.project.v2' as const;
 export const STATUS_SCHEMA_VERSION = 'buildlore.status.v1' as const;
 export const DEFAULT_PROFILE_VERSION = 'llmwiki.default.v1' as const;
+export const BUILDLORE_LIFECYCLE_PROFILE_ID = 'buildlore-lifecycle' as const;
+export const BUILDLORE_LIFECYCLE_PROFILE_VERSION = '0.1.0' as const;
 
 export interface ProjectRegistryEntry {
   readonly displayName: string;
@@ -15,12 +18,40 @@ export interface KnowledgeManifest {
   readonly schemaVersion: typeof KNOWLEDGE_SCHEMA_VERSION;
 }
 
-export interface ProjectDescriptor {
+export interface ProjectDescriptorV1 {
   readonly profileVersion: typeof DEFAULT_PROFILE_VERSION;
   readonly projectId: string;
   readonly schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   readonly sourceRepository: string;
 }
+
+export interface ProjectDescriptorV2 {
+  readonly outputLanguage: 'en' | 'ko';
+  readonly profileHash: `sha256:${string}`;
+  readonly profileId: typeof BUILDLORE_LIFECYCLE_PROFILE_ID;
+  readonly profileVersion: typeof BUILDLORE_LIFECYCLE_PROFILE_VERSION;
+  readonly projectId: string;
+  readonly schemaVersion: typeof PROJECT_SCHEMA_VERSION_V2;
+  readonly sourceRepository: string;
+}
+
+export type ProjectDescriptor = ProjectDescriptorV1 | ProjectDescriptorV2;
+
+export type ResolvedProjectProfileBinding =
+  | Readonly<{
+      mode: 'custom';
+      outputLanguage: 'en' | 'ko';
+      profileHash: `sha256:${string}`;
+      profileId: typeof BUILDLORE_LIFECYCLE_PROFILE_ID;
+      profileVersion: typeof BUILDLORE_LIFECYCLE_PROFILE_VERSION;
+    }>
+  | Readonly<{
+      mode: 'default';
+      outputLanguage: 'en';
+      profileHash: null;
+      profileId: null;
+      profileVersion: typeof DEFAULT_PROFILE_VERSION;
+    }>;
 
 export interface AddProjectInput {
   readonly displayName: string;

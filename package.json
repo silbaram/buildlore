@@ -18,11 +18,14 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./schemas/source-document.schema.json": "./schemas/source-document.schema.json"
+    "./schemas/source-document.schema.json": "./schemas/source-document.schema.json",
+    "./schemas/lifecycle-profile.schema.json": "./schemas/lifecycle-profile.schema.json",
+    "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json"
   },
   "files": [
     "dist",
-    "schemas"
+    "schemas",
+    "profiles"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
