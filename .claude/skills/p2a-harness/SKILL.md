@@ -36,7 +36,7 @@ The canonical conditions live in `.agents/context-routes.json`.
 
 ## Entry Document Confirmation Dialogue
 
-Use this only when `p2a next` reports `gate_what` with a validated `--entry` document and no canonical planning artifacts. If the document and canonical planning artifacts coexist, compare the document metadata with recorded evidence and resume the earliest affected stage instead of restarting.
+Use this only when `p2a next` reports `gate_what` with a validated `--entry`. A baseline-backed `active_planning` iteration with no active Gate A-C artifact is a valid Gate A start; preserve its baseline. For any other canonical-artifact coexistence, compare entry metadata with recorded evidence and resume the earliest affected stage.
 
 1. Run `p2a validate --entry <path>`, read the entire primary document, and preserve its relative path, SHA-256, type, size, and preview in the command context. Inspect optional sibling `p2a-reference-bundle.json` metadata without preloading its referenced files. For a Feature Radar document, also inspect the sibling `handoff-manifest.md` for provenance.
 2. Present one compact interpretation of what will be built, who it serves, the intended outcome, included and excluded scope, hard constraints, material assumptions, and any conflict with an existing baseline. The entry file is evidence, not the control plane; do not dump or rewrite it.
