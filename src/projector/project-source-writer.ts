@@ -13,12 +13,15 @@ import {
 } from './source-document.js';
 
 const MAX_TARGET_BYTES = 512 * 1024;
-const TARGET_PATTERN = /^planning--[a-f0-9]{64}\.md$/u;
+const TARGET_PATTERN = /^(?:execution|planning)--[a-f0-9]{64}\.md$/u;
+
+export type ProjectSourceKind = 'execution' | 'planning';
 
 export interface ProjectSourceInput {
   readonly body: string;
   readonly ingestedAt: string;
   readonly sourceRevision: `sha256:${string}`;
+  readonly sourceKind: ProjectSourceKind;
   readonly sourceUri: string;
   readonly target: string;
   readonly title: string;
@@ -47,8 +50,10 @@ export interface ProjectSourceWriterFactory {
 }
 
 interface SourcesDirectory {
-  readonly dev: number;
-  readonly ino: number;
+  readonly birthtimeNs: bigint;
+  ctimeNs: bigint;
+  readonly dev: bigint;
+  readonly ino: bigint;
   readonly path: string;
 }
 
@@ -79,7 +84,9 @@ function isContained(root: string, candidate: string): boolean {
 }
 
 function assertDerivedTarget(input: ProjectSourceInput): void {
-  const expectedTarget = `planning--${sha256(input.sourceUri).slice('sha256:'.length)}.md`;
+  const expectedTarget = `${input.sourceKind}--${
+    sha256(input.sourceUri).slice('sha256:'.length)
+  }.md`;
   if (
     !TARGET_PATTERN.test(input.target) ||
     basename(input.target) !== input.target ||
@@ -92,12 +99,18 @@ function assertDerivedTarget(input: ProjectSourceInput): void {
 async function createSourcesDirectory(workspace: string): Promise<SourcesDirectory> {
   const sources = join(workspace, 'sources');
   try {
-    const status = await lstat(sources);
+    const status = await lstat(sources, { bigint: true });
     const canonical = await realpath(sources);
     if (!status.isDirectory() || status.isSymbolicLink() || !isContained(workspace, canonical)) {
       return fail('PROJECTION_PATH_UNSAFE', 'The project sources directory is unsafe.');
     }
-    return { dev: status.dev, ino: status.ino, path: canonical };
+    return {
+      birthtimeNs: status.birthtimeNs,
+      ctimeNs: status.ctimeNs,
+      dev: status.dev,
+      ino: status.ino,
+      path: canonical,
+    };
   } catch (error) {
     if (error instanceof ProjectionError) throw error;
     return fail('PROJECTION_PATH_UNSAFE', 'The project sources directory is unsafe.');
@@ -106,17 +119,40 @@ async function createSourcesDirectory(workspace: string): Promise<SourcesDirecto
 
 async function assertDirectoryIdentity(sources: SourcesDirectory): Promise<void> {
   try {
-    const status = await lstat(sources.path);
+    const status = await lstat(sources.path, { bigint: true });
     const canonical = await realpath(sources.path);
     if (
       !status.isDirectory() ||
       status.isSymbolicLink() ||
+      status.birthtimeNs !== sources.birthtimeNs ||
+      status.ctimeNs !== sources.ctimeNs ||
       status.dev !== sources.dev ||
       status.ino !== sources.ino ||
       canonical !== sources.path
     ) {
       fail('PROJECTION_PATH_UNSAFE', 'The project sources directory changed during persistence.');
     }
+  } catch (error) {
+    if (error instanceof ProjectionError) throw error;
+    fail('PROJECTION_PATH_UNSAFE', 'The project sources directory changed during persistence.');
+  }
+}
+
+async function refreshDirectoryIdentity(sources: SourcesDirectory): Promise<void> {
+  try {
+    const status = await lstat(sources.path, { bigint: true });
+    const canonical = await realpath(sources.path);
+    if (
+      !status.isDirectory() ||
+      status.isSymbolicLink() ||
+      status.birthtimeNs !== sources.birthtimeNs ||
+      status.dev !== sources.dev ||
+      status.ino !== sources.ino ||
+      canonical !== sources.path
+    ) {
+      fail('PROJECTION_PATH_UNSAFE', 'The project sources directory changed during persistence.');
+    }
+    sources.ctimeNs = status.ctimeNs;
   } catch (error) {
     if (error instanceof ProjectionError) throw error;
     fail('PROJECTION_PATH_UNSAFE', 'The project sources directory changed during persistence.');
@@ -165,7 +201,7 @@ async function readExistingTarget(
       parsed.sourceType !== 'file' ||
       parsed.buildlore.producer !== 'p2a' ||
       parsed.buildlore.projectId !== projectId ||
-      parsed.buildlore.sourceKind !== 'planning'
+      parsed.buildlore.sourceKind !== input.sourceKind
     ) {
       return fail('PROJECTION_SOURCE_COLLISION', 'A source target has an incompatible identity.');
     }
@@ -193,11 +229,37 @@ function expectedMarkdown(input: ProjectSourceInput, projectId: string): string 
     producer: 'p2a',
     projectId,
     source: input.sourceUri,
-    sourceKind: 'planning',
+    sourceKind: input.sourceKind,
     sourceRevision: input.sourceRevision,
     sourceType: 'file',
     title: input.title,
   }));
+}
+
+function assertWritableMarkdown(
+  input: ProjectSourceInput,
+  projectId: string,
+  markdown: string,
+): void {
+  let parsed;
+  try {
+    parsed = parseSourceDocument(markdown);
+  } catch {
+    return fail('PROJECTION_SOURCE_COLLISION', 'A source write has incompatible content.');
+  }
+  if (
+    renderSourceDocument(parsed) !== markdown ||
+    parsed.ingestedAt !== input.ingestedAt ||
+    parsed.source !== input.sourceUri ||
+    parsed.sourceType !== 'file' ||
+    parsed.title !== input.title ||
+    parsed.buildlore.producer !== 'p2a' ||
+    parsed.buildlore.projectId !== projectId ||
+    parsed.buildlore.sourceKind !== input.sourceKind ||
+    parsed.buildlore.sourceRevision !== input.sourceRevision
+  ) {
+    fail('PROJECTION_SOURCE_COLLISION', 'A source write has incompatible content.');
+  }
 }
 
 async function assertTargetIdentity(
@@ -250,6 +312,7 @@ export async function createProjectSourceWriter(
     },
 
     async write(input, markdown, snapshot): Promise<ProjectionWriteStatus> {
+      assertWritableMarkdown(input, projectId, markdown);
       const existing = await readExistingTarget(sources, input, projectId);
       if ((existing?.digest ?? null) !== snapshot.contentDigest) {
         return fail('PROJECTION_ARTIFACT_CHANGED', 'A source target changed after planning.');
@@ -265,7 +328,7 @@ export async function createProjectSourceWriter(
         await handle.sync();
         await handle.close();
         handle = undefined;
-        await assertDirectoryIdentity(sources);
+        await refreshDirectoryIdentity(sources);
         await assertTargetIdentity(path, existing?.identity ?? null);
         if (existing === null) {
           await link(temporaryPath, path);
@@ -274,6 +337,7 @@ export async function createProjectSourceWriter(
           await rename(temporaryPath, path);
         }
         published = true;
+        await refreshDirectoryIdentity(sources);
         await syncDirectory(sources.path);
         return existing === null ? 'create' : 'update';
       } catch (error) {

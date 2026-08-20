@@ -280,6 +280,7 @@ function createCandidate(
     ingestedAt: timestamp.value,
     sourceArtifact: artifact.relativePath,
     sourceRevision: artifact.digest,
+    sourceKind: 'planning',
     sourceUri,
     target: `planning--${sha256(sourceUri).slice('sha256:'.length)}.md`,
     timestampSource: timestamp.source,
