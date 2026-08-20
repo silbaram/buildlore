@@ -45,7 +45,7 @@ function containsUnsafeCharacter(value: string, allowBodyLayout = false): boolea
     ) return true;
     if (code >= 0xd800 && code <= 0xdbff) {
       const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) return true;
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
       index += 1;
     } else if (code >= 0xdc00 && code <= 0xdfff) {
       return true;

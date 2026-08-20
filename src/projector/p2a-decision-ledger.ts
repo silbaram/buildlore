@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isAbsolute, posix } from 'node:path';
+import { TextDecoder } from 'node:util';
 
 import { ProjectionError } from './errors.js';
 
@@ -191,7 +192,8 @@ function validatePreviousReference(
 
 export function parseP2aDecisionLedger(bytes: Buffer): readonly P2aScopeDecision[] {
   try {
-    const lines = bytes.toString('utf8').replace(/\r\n?/gu, '\n').split('\n');
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    const lines = text.replace(/\r\n?/gu, '\n').split('\n');
     if (lines.at(-1) === '') lines.pop();
     if (lines.length === 0) return fail();
     const records: ValidatedDecisionRecord[] = [];

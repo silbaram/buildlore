@@ -3,12 +3,9 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  createCompilerEgressAuthorizer,
-  createProjectCompiler,
-  type CompilerBackend,
-} from '../src/compiler/index.js';
+import { createProjectCompiler, type CompilerBackend } from '../src/compiler/index.js';
 import { addProject } from '../src/knowledge/index.js';
+import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const temporaryRoots: string[] = [];
 
@@ -29,6 +26,7 @@ describe('compiler project isolation', () => {
         sourceRepository: `https://example.test/${projectId}.git`,
       });
     }
+    await writeSecurityPolicy(knowledgeRoot, 'alpha');
     const betaSentinel = join(knowledgeRoot, 'projects', 'beta', 'sources', 'decision--beta.md');
     await writeFile(betaSentinel, 'BETA-SOURCE-SENTINEL\n', 'utf8');
     const run = vi.fn((workspaceRoot: string) => {
@@ -42,7 +40,6 @@ describe('compiler project isolation', () => {
     const backend: CompilerBackend = { run };
     const compiler = createProjectCompiler({
       backend,
-      egressAuthorizer: createCompilerEgressAuthorizer(() => true),
       knowledgeRoot,
     });
 
@@ -58,16 +55,13 @@ describe('compiler project isolation', () => {
     temporaryRoots.push(knowledgeRoot);
     const run = vi.fn();
     const backend: CompilerBackend = { run };
-    const authorize = vi.fn(() => true);
     const compiler = createProjectCompiler({
       backend,
-      egressAuthorizer: createCompilerEgressAuthorizer(authorize),
       knowledgeRoot,
     });
     await expect(
       compiler.execute({ capability: 'compile', projectId: 'missing' }),
     ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND' });
-    expect(authorize).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -85,17 +79,14 @@ describe('compiler project isolation', () => {
     await rm(sources, { recursive: true });
     await symlink(outside, sources, 'dir');
     const run = vi.fn();
-    const authorize = vi.fn(() => true);
     const compiler = createProjectCompiler({
       backend: { run },
-      egressAuthorizer: createCompilerEgressAuthorizer(authorize),
       knowledgeRoot,
     });
 
     await expect(
       compiler.execute({ capability: 'compile', projectId: 'alpha' }),
     ).rejects.toMatchObject({ code: 'PATH_OUTSIDE_KNOWLEDGE' });
-    expect(authorize).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
   });
 });

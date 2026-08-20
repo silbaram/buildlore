@@ -1,4 +1,4 @@
-import type { SourceSanitizerPort } from '../sanitizer/index.js';
+import type { SanitizationReport } from '../sanitizer/index.js';
 import type { ProjectSourceWriterFactory } from './project-source-writer.js';
 
 export const EXECUTION_PROJECTION_PLAN_SCHEMA_VERSION =
@@ -8,7 +8,7 @@ export const EXECUTION_INCLUSION_POLICY_VERSION =
 
 export type ExecutionRunStatus = 'blocked' | 'failed' | 'finished' | 'started';
 export type ExecutionSourceLayout = 'graph' | 'iteration';
-export type ExecutionDecision = 'exclude' | 'include' | 'quarantine';
+export type ExecutionDecision = 'blocked' | 'exclude' | 'include' | 'quarantine';
 export type ExecutionIncludeReason =
   | 'failed_or_blocked'
   | 'retry_succeeded'
@@ -29,7 +29,9 @@ export type ExecutionQuarantineReason =
 export type ExecutionReasonCode =
   | ExecutionExcludeReason
   | ExecutionIncludeReason
-  | ExecutionQuarantineReason;
+  | ExecutionQuarantineReason
+  | 'security_blocked'
+  | 'security_quarantine';
 
 export interface ExecutionVerificationSummary {
   readonly command: string;
@@ -128,6 +130,7 @@ export interface ExecutionProjectionPlanEntry {
   readonly decision: ExecutionDecision;
   readonly lineage?: CanonicalTaskLineage;
   readonly reasonCode: ExecutionReasonCode;
+  readonly security?: SanitizationReport;
   readonly sourceRevision?: `sha256:${string}`;
   readonly sourceUri?: string;
   readonly target?: string;
@@ -202,9 +205,6 @@ export interface CreateP2aExecutionProjectorOptions {
 }
 
 export interface ExecutionKnowledgeProjectorPort {
-  apply(
-    plan: ExecutionProjectionPlan,
-    sanitizer: SourceSanitizerPort,
-  ): Promise<ExecutionProjectionApplyResult>;
+  apply(plan: ExecutionProjectionPlan): Promise<ExecutionProjectionApplyResult>;
   plan(input: ExecutionProjectionInput): Promise<ExecutionProjectionPlan>;
 }

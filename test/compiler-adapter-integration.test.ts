@@ -4,12 +4,11 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  createCompilerEgressAuthorizer,
-  createProjectCompiler,
-} from '../src/compiler/index.js';
+import { createProjectCompiler } from '../src/compiler/index.js';
 import { addProject } from '../src/knowledge/index.js';
+import { createSourceDocument, renderSourceDocument } from '../src/projector/index.js';
 import { startFakeOpenAiServer, type FakeOpenAiServer } from './fixtures/fake-openai.js';
+import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const temporaryRoots: string[] = [];
 const servers: FakeOpenAiServer[] = [];
@@ -86,10 +85,30 @@ async function createProjectSource(
     projectId,
     sourceRepository: `https://example.test/${projectId}.git`,
   });
+  await writeSecurityPolicy(knowledgeRoot, projectId);
   const marker = projectId === 'alpha' ? 'ALPHA-MARKER' : 'BETA-MARKER';
+  const source = [
+    'buildlore+p2a:',
+    encodeURIComponent(`https://example.test/${projectId}.git`),
+    projectId,
+    'v1-compiler-fixture',
+    'product-spec',
+    encodeURIComponent('iterations/v1-compiler-fixture/gate-b-spec/spec.json'),
+  ].join('/');
+  const target = `planning--${createHash('sha256').update(source).digest('hex')}.md`;
   await writeFile(
-    join(knowledgeRoot, 'projects', projectId, 'sources', 'decision--shared.md'),
-    `---\ntitle: Shared decision\nsource: repo@aaaaaaaa:docs/shared.md\ningestedAt: 2026-08-19T00:00:00.000Z\nbuildlore.sourceKind: decision\n---\n\n${marker} says each BuildLore project compiles an isolated Shared Topic page.\n`,
+    join(knowledgeRoot, 'projects', projectId, 'sources', target),
+    renderSourceDocument(createSourceDocument({
+      body: `${marker} says each BuildLore project compiles an isolated Shared Topic page.`,
+      ingestedAt: '2026-08-19T00:00:00.000Z',
+      producer: 'p2a',
+      projectId,
+      source,
+      sourceKind: 'planning',
+      sourceRevision: `sha256:${createHash('sha256').update(`${projectId}-source`).digest('hex')}`,
+      sourceType: 'file',
+      title: 'Shared decision',
+    })),
     'utf8',
   );
 }
@@ -117,10 +136,7 @@ describe('llm-wiki-compiler offline SDK integration', () => {
     temporaryRoots.push(knowledgeRoot);
     await createProjectSource(knowledgeRoot, 'alpha');
     await createProjectSource(knowledgeRoot, 'beta');
-    const compiler = createProjectCompiler({
-      egressAuthorizer: createCompilerEgressAuthorizer(() => true),
-      knowledgeRoot,
-    });
+    const compiler = createProjectCompiler({ knowledgeRoot });
 
     const alphaFirst = await compiler.execute({ capability: 'compile', projectId: 'alpha' });
     expect(alphaFirst).toMatchObject({

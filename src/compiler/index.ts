@@ -8,9 +8,7 @@ export {
 } from './errors.js';
 export { normalizeCompilerStatus } from './normalizers.js';
 export {
-  createCompilerEgressAuthorizer,
   createProjectCompiler,
-  type CompilerEgressDecision,
   type CreateProjectCompilerOptions,
 } from './service.js';
 export type {
@@ -19,9 +17,6 @@ export type {
   CompilerBackend,
   CompilerCapabilityDescriptor,
   CompilerCapabilityName,
-  CompilerEgressAuthorizer,
-  CompilerEgressContext,
-  CompilerEgressPermit,
   CompilerExecutionControl,
   CompilerOperationResult,
   CompilerRequest,

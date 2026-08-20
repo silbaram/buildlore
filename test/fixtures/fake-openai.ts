@@ -50,6 +50,11 @@ function markerFrom(body: string): 'alpha' | 'beta' | 'unknown' {
   return 'unknown';
 }
 
+function sourceFileFrom(body: string): string {
+  return /\b(?:execution|planning)--[a-f0-9]{64}\.md\b/u.exec(body)?.[0] ??
+    'decision--shared.md';
+}
+
 function toolArguments(name: string, body: string): Readonly<Record<string, unknown>> {
   switch (name) {
     case 'extract_concepts':
@@ -94,8 +99,10 @@ function chatResponse(body: string): Readonly<Record<string, unknown>> {
           ],
         }
       : {
-          content:
-            '## Shared Topic\n\nShared Topic is isolated to its selected BuildLore project workspace and remains independently compiled. ^[decision--shared.md:8-8]\n\n## Sources\n\n- decision--shared.md\n',
+          content: (() => {
+            const sourceFile = sourceFileFrom(body);
+            return `## Shared Topic\n\nShared Topic is isolated to its selected BuildLore project workspace and remains independently compiled. ^[${sourceFile}:8-8]\n\n## Sources\n\n- ${sourceFile}\n`;
+          })(),
           role: 'assistant',
         };
   return {

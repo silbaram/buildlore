@@ -1,4 +1,4 @@
-import type { SourceSanitizerPort } from '../sanitizer/index.js';
+import type { SanitizationReport } from '../sanitizer/index.js';
 import type { P2aArtifactAdapter } from './p2a-artifacts.js';
 import type { ProjectSourceWriterFactory } from './project-source-writer.js';
 
@@ -10,7 +10,7 @@ export type PlanningDocumentKind =
   | 'intake'
   | 'product-spec';
 
-export type ProjectionDecision = 'error' | 'exclude' | 'include';
+export type ProjectionDecision = 'blocked' | 'error' | 'exclude' | 'include' | 'quarantine';
 export type ProjectionWriteStatus = 'create' | 'unchanged' | 'update';
 export type TimestampSource = 'approval' | 'close' | 'explicit' | 'promotion' | 'revision';
 
@@ -29,6 +29,8 @@ export type ProjectionReasonCode =
   | 'path_unsafe'
   | 'pending_iteration'
   | 'project_mismatch'
+  | 'security_blocked'
+  | 'security_quarantine'
   | 'source_collision'
   | 'task_or_run'
   | 'timestamp_unavailable'
@@ -38,6 +40,7 @@ export interface ProjectionPlanEntry {
   readonly decision: ProjectionDecision;
   readonly documentKind?: PlanningDocumentKind;
   readonly reasonCode: ProjectionReasonCode;
+  readonly security?: SanitizationReport;
   readonly sourceArtifact: string;
   readonly ingestedAt?: string;
   readonly sourceRevision?: `sha256:${string}`;
@@ -99,6 +102,6 @@ export interface ProjectionApplyResult {
 }
 
 export interface PlanningProjectorPort {
-  apply(plan: ProjectionPlan, sanitizer: SourceSanitizerPort): Promise<ProjectionApplyResult>;
+  apply(plan: ProjectionPlan): Promise<ProjectionApplyResult>;
   plan(input: PlanningProjectionInput): Promise<ProjectionPlan>;
 }

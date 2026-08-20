@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, posix, relative, sep } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
+import { isDeepStrictEqual, TextDecoder } from 'node:util';
 
 import { ProjectionError } from './errors.js';
 import {
@@ -224,7 +224,8 @@ async function readArtifact(
 
 function parseJson(artifact: SafeArtifact): Record<string, unknown> {
   try {
-    return asP2aRecord(JSON.parse(artifact.bytes.toString('utf8')) as unknown);
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(artifact.bytes);
+    return asP2aRecord(JSON.parse(text) as unknown);
   } catch (error) {
     if (error instanceof ProjectionError) throw error;
     return fail('PROJECTION_ARTIFACT_INVALID', 'A planning artifact is not valid JSON.');

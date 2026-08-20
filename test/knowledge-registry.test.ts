@@ -342,6 +342,7 @@ describe('knowledge registry', () => {
       /unsupported transport/u,
     );
     expect(() => validateRepositoryLocator('C:private-repo')).toThrow(/credential-free/u);
+    expect(() => validateRepositoryLocator(`repo-${'\ud800'}`)).toThrow(/credential-free/u);
     expect(validateRepositoryLocator('example.test:repo.git')).toBe('example.test:repo.git');
   });
 

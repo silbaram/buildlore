@@ -4,10 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  createCompilerEgressAuthorizer,
-  createProjectCompiler,
-} from '../src/compiler/index.js';
+import { createProjectCompiler } from '../src/compiler/index.js';
 import { addProject } from '../src/knowledge/index.js';
 import type {
   ExecutionAttempt,
@@ -15,11 +12,8 @@ import type {
   P2aExecutionSelection,
 } from '../src/projector/execution-types.js';
 import { createP2aExecutionKnowledgeProjector } from '../src/projector/index.js';
-import {
-  issueSanitizationApproval,
-  type SourceSanitizerPort,
-} from '../src/sanitizer/index.js';
 import { startFakeOpenAiServer, type FakeOpenAiServer } from './fixtures/fake-openai.js';
+import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const temporaryRoots: string[] = [];
 const servers: FakeOpenAiServer[] = [];
@@ -48,7 +42,6 @@ async function treeDigest(root: string): Promise<string> {
 }
 
 function executionSelection(root: string): P2aExecutionSelection {
-  const sourceUri = 'buildlore+p2a:/alpha/v1-execution/task-001';
   const revision = `sha256:${digest('execution-integration-v1')}` as const;
   const lineage = {
     graphRef: 'iterations/v1-execution/gate-c-task-graph/task-graph.json',
@@ -61,6 +54,16 @@ function executionSelection(root: string): P2aExecutionSelection {
     taskId: 'task-001',
     taskTitle: 'Project execution knowledge',
   };
+  const sourceUri = [
+    'buildlore+p2a:',
+    encodeURIComponent('https://example.test/alpha.git'),
+    'alpha',
+    lineage.iterationId,
+    'execution-task',
+    encodeURIComponent(lineage.graphRef),
+    lineage.taskId,
+    lineage.taskContractSha256,
+  ].join('/');
   const attempt: ExecutionAttempt = {
     changedFiles: ['src/projector/p2a-execution-projector.ts'],
     finishedAt: '2026-08-20T01:03:00.000Z',
@@ -128,18 +131,6 @@ function executionSelection(root: string): P2aExecutionSelection {
   };
 }
 
-const sanitizer: SourceSanitizerPort = {
-  sanitize(request) {
-    return Promise.resolve(issueSanitizationApproval({
-      approvedBody: request.body,
-      approvedBodyDigest: `sha256:${digest(request.body)}`,
-      inputBodyDigest: request.bodyDigest,
-      projectId: request.projectId,
-      source: request.source,
-    }));
-  },
-};
-
 afterEach(async () => {
   await Promise.all(servers.splice(0).map(async (server) => server.close()));
   await Promise.all(
@@ -179,14 +170,12 @@ describe('P2A execution projector compiler integration', () => {
     };
 
     const firstPlan = await projector.plan(input);
-    await expect(projector.apply(firstPlan, sanitizer)).resolves.toMatchObject({
+    await expect(projector.apply(firstPlan)).resolves.toMatchObject({
       projectId: 'alpha',
       writes: [{ writeStatus: 'create' }],
     });
-    const compiler = createProjectCompiler({
-      egressAuthorizer: createCompilerEgressAuthorizer(() => true),
-      knowledgeRoot,
-    });
+    await writeSecurityPolicy(knowledgeRoot, 'alpha');
+    const compiler = createProjectCompiler({ knowledgeRoot });
     await expect(compiler.status('alpha')).resolves.toMatchObject({
       pendingChangesCount: 1,
       stateStatus: 'missing',
@@ -194,7 +183,7 @@ describe('P2A execution projector compiler integration', () => {
 
     const secondPlan = await projector.plan(input);
     expect(secondPlan.entries).toContainEqual(expect.objectContaining({ writeStatus: 'unchanged' }));
-    await expect(projector.apply(secondPlan, sanitizer)).resolves.toMatchObject({
+    await expect(projector.apply(secondPlan)).resolves.toMatchObject({
       writes: [{ writeStatus: 'unchanged' }],
     });
 

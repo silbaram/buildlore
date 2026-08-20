@@ -5,11 +5,13 @@ import { requiresEgress } from './capabilities.js';
 import { createLlmWikiCompilerBackend } from './backend.js';
 import { CompilerBackendError, CompilerOperationError } from './errors.js';
 import { normalizeCompilerResult, validateCompilerRequest } from './normalizers.js';
+import {
+  prepareCompilerEgress,
+  verifyAndConsumeCompilerEgress,
+  type CompilerSecurityPermit,
+} from './security.js';
 import type {
   CompilerBackend,
-  CompilerEgressAuthorizer,
-  CompilerEgressContext,
-  CompilerEgressPermit,
   CompilerExecutionControl,
   CompilerOperationResult,
   CompilerRequest,
@@ -18,7 +20,6 @@ import type {
 
 const TIMEOUT_ENV_NAMES = ['LLMWIKI_REQUEST_TIMEOUT_MS', 'OLLAMA_TIMEOUT_MS'] as const;
 const MAX_TIMER_MS = 2_147_483_647;
-const issuedPermits = new WeakMap<object, CompilerEgressContext & { consumed: boolean }>();
 
 function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
@@ -26,56 +27,6 @@ function isAborted(signal: AbortSignal | undefined): boolean {
 
 function mayWriteWorkspace(capability: CompilerRequest['capability']): boolean {
   return capability === 'compile' || capability === 'eval-full' || capability === 'query';
-}
-
-export type CompilerEgressDecision = (
-  context: CompilerEgressContext,
-) => boolean | Promise<boolean>;
-
-export function createCompilerEgressAuthorizer(
-  decide: CompilerEgressDecision,
-): CompilerEgressAuthorizer {
-  return {
-    async authorize(context) {
-      const immutableContext = Object.freeze({ ...context });
-      if ((await decide(immutableContext)) !== true) {
-        throw new CompilerOperationError('COMPILER_EGRESS_DENIED', 'Compiler egress is not authorized.', {
-          capability: immutableContext.capability,
-          projectId: immutableContext.projectId,
-          recoveryAction: 'check-config',
-          retryable: false,
-          sideEffectsPossible: false,
-        });
-      }
-      const permit = Object.freeze({ opaque: true as const });
-      issuedPermits.set(permit, { ...immutableContext, consumed: false });
-      return permit;
-    },
-  };
-}
-
-const denyEgress = createCompilerEgressAuthorizer(() => false);
-
-function consumePermit(
-  permit: CompilerEgressPermit,
-  expected: CompilerEgressContext,
-): void {
-  const binding = issuedPermits.get(permit);
-  if (
-    binding === undefined ||
-    binding.consumed ||
-    binding.capability !== expected.capability ||
-    binding.projectId !== expected.projectId
-  ) {
-    throw new CompilerOperationError('COMPILER_EGRESS_DENIED', 'Compiler egress is not authorized.', {
-      capability: expected.capability,
-      projectId: expected.projectId,
-      recoveryAction: 'check-config',
-      retryable: false,
-      sideEffectsPossible: false,
-    });
-  }
-  binding.consumed = true;
 }
 
 function configError(request: CompilerRequest): CompilerOperationError {
@@ -219,106 +170,149 @@ const projectOperations = new ProjectOperationCoordinator();
 
 export interface CreateProjectCompilerOptions {
   readonly backend?: CompilerBackend;
-  readonly egressAuthorizer?: CompilerEgressAuthorizer;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly knowledgeRoot: string;
 }
 
 export function createProjectCompiler(options: CreateProjectCompilerOptions): ProjectCompilerPort {
   const backend = options.backend ?? createLlmWikiCompilerBackend();
-  const egressAuthorizer = options.egressAuthorizer ?? denyEgress;
   const environment = options.environment ?? process.env;
+  const knowledgeRoot = options.knowledgeRoot;
+  const requestOrdering = new ProjectOperationCoordinator();
 
   async function resolveWorkspace(projectId: string): Promise<string> {
-    const record = await showProject(options.knowledgeRoot, projectId);
-    return resolveProjectWorkspace(options.knowledgeRoot, record.entry.projectId, {
+    const record = await showProject(knowledgeRoot, projectId);
+    return resolveProjectWorkspace(knowledgeRoot, record.entry.projectId, {
       mustExist: true,
     });
   }
 
   async function execute(
-    request: CompilerRequest,
-    control: CompilerExecutionControl = {},
+    inputRequest: CompilerRequest,
+    inputControl: CompilerExecutionControl = {},
   ): Promise<CompilerOperationResult> {
-    validateCompilerRequest(request);
+    let requestSnapshot: Readonly<Record<string, unknown>>;
+    let controlCandidate: unknown;
+    try {
+      requestSnapshot = { ...inputRequest };
+      controlCandidate = typeof inputControl === 'object' && inputControl !== null &&
+        !Array.isArray(inputControl)
+        ? Object.freeze({ ...inputControl })
+        : inputControl;
+    } catch {
+      throw new CompilerOperationError('COMPILER_CONFIG_INVALID', 'Compiler input is invalid.', {
+        capability: 'unknown',
+        projectId: 'unknown',
+        recoveryAction: 'check-config',
+        retryable: false,
+        sideEffectsPossible: false,
+      });
+    }
+    validateCompilerRequest(requestSnapshot);
+    const request = Object.freeze(
+      requestSnapshot.capability === 'context'
+        ? { ...requestSnapshot, prompt: requestSnapshot.prompt.normalize('NFC') }
+        : requestSnapshot.capability === 'query' || requestSnapshot.capability === 'search'
+          ? { ...requestSnapshot, question: requestSnapshot.question.normalize('NFC') }
+          : requestSnapshot,
+    ) as CompilerRequest;
     validateProjectId(request.projectId);
-    validateExecutionControl(request, control);
-    const selectedWorkspace = await resolveWorkspace(request.projectId);
-    return projectOperations.run(selectedWorkspace, async () => {
-      const workspace = await resolveWorkspace(request.projectId);
-      if (isAborted(control.signal)) {
-        throw cancellationError(request, false);
-      }
-      if (requiresEgress(request)) {
-        validateProviderTimeouts(request, environment);
-        const context = Object.freeze({
-          capability: request.capability,
-          projectId: request.projectId,
-        });
-        try {
-          consumePermit(await egressAuthorizer.authorize(context), context);
-        } catch (error) {
-          if (error instanceof CompilerOperationError) {
-            throw error;
-          }
-          throw new CompilerOperationError(
-            'COMPILER_EGRESS_DENIED',
-            'Compiler egress is not authorized.',
-            {
-              capability: request.capability,
-              projectId: request.projectId,
-              recoveryAction: 'check-config',
-              retryable: false,
-              sideEffectsPossible: false,
-            },
-          );
-        }
+    validateExecutionControl(request, controlCandidate);
+    const control = controlCandidate;
+    return requestOrdering.run(request.projectId, async () => {
+      const selectedWorkspace = await resolveWorkspace(request.projectId);
+      return projectOperations.run(selectedWorkspace, async () => {
+        const workspace = await resolveWorkspace(request.projectId);
         if (isAborted(control.signal)) {
           throw cancellationError(request, false);
         }
-      }
+        let egressPermit: CompilerSecurityPermit | undefined;
+        if (requiresEgress(request)) {
+          validateProviderTimeouts(request, environment);
+          try {
+            egressPermit = await prepareCompilerEgress(knowledgeRoot, workspace, request);
+          } catch {
+            throw new CompilerOperationError(
+              'COMPILER_EGRESS_DENIED',
+              'Compiler egress is not authorized.',
+              {
+                capability: request.capability,
+                projectId: request.projectId,
+                recoveryAction: 'check-config',
+                retryable: false,
+                sideEffectsPossible: false,
+              },
+            );
+          }
+          if (isAborted(control.signal)) {
+            throw cancellationError(request, false);
+          }
+          try {
+            await verifyAndConsumeCompilerEgress(
+              egressPermit,
+              knowledgeRoot,
+              workspace,
+              request,
+            );
+          } catch {
+            throw new CompilerOperationError(
+              'COMPILER_EGRESS_DENIED',
+              'Compiler egress is not authorized.',
+              {
+                capability: request.capability,
+                projectId: request.projectId,
+                recoveryAction: 'check-config',
+                retryable: false,
+                sideEffectsPossible: false,
+              },
+            );
+          }
+        }
 
-      let cancelRequested = false;
-      const onAbort = (): void => {
-        cancelRequested = true;
-      };
-      control.signal?.addEventListener('abort', onAbort, { once: true });
-      try {
-        let raw: unknown;
+        let cancelRequested = false;
+        const onAbort = (): void => {
+          cancelRequested = true;
+        };
+        control.signal?.addEventListener('abort', onAbort, { once: true });
+        if (isAborted(control.signal)) cancelRequested = true;
         try {
-          raw = await backend.run(workspace, request);
-        } catch (error) {
+          if (cancelRequested) throw cancellationError(request, false);
+          let raw: unknown;
+          try {
+            raw = await backend.run(workspace, request);
+          } catch (error) {
+            if (cancelRequested) {
+              throw cancellationError(request, true);
+            }
+            if (error instanceof CompilerOperationError) {
+              throw error;
+            }
+            if (error instanceof CompilerBackendError) {
+              throw mapBackendError(request, error);
+            }
+            throw new CompilerOperationError('COMPILER_FAILED', 'Compiler operation failed.', {
+              capability: request.capability,
+              projectId: request.projectId,
+              recoveryAction: 'status',
+              retryable: false,
+              sideEffectsPossible: mayWriteWorkspace(request.capability),
+            });
+          }
           if (cancelRequested) {
             throw cancellationError(request, true);
           }
-          if (error instanceof CompilerOperationError) {
-            throw error;
+          try {
+            return normalizeCompilerResult(request, raw);
+          } catch (error) {
+            if (error instanceof CompilerOperationError) {
+              throw error;
+            }
+            throw contractError(request);
           }
-          if (error instanceof CompilerBackendError) {
-            throw mapBackendError(request, error);
-          }
-          throw new CompilerOperationError('COMPILER_FAILED', 'Compiler operation failed.', {
-            capability: request.capability,
-            projectId: request.projectId,
-            recoveryAction: 'status',
-            retryable: false,
-            sideEffectsPossible: mayWriteWorkspace(request.capability),
-          });
+        } finally {
+          control.signal?.removeEventListener('abort', onAbort);
         }
-        if (cancelRequested) {
-          throw cancellationError(request, true);
-        }
-        try {
-          return normalizeCompilerResult(request, raw);
-        } catch (error) {
-          if (error instanceof CompilerOperationError) {
-            throw error;
-          }
-          throw contractError(request);
-        }
-      } finally {
-        control.signal?.removeEventListener('abort', onAbort);
-      }
+      });
     });
   }
 
