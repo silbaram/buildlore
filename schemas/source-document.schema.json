@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/source-document.schema.json",
+  "title": "BuildLore SourceDocument",
+  "type": "object",
+  "required": ["schemaVersion", "title", "source", "ingestedAt", "body", "buildlore"],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": { "const": "buildlore.source.v1" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "source": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "ingestedAt": { "type": "string", "format": "date-time" },
+    "sourceType": { "enum": ["web", "file", "image", "pdf", "transcript"] },
+    "truncated": { "const": true },
+    "originalChars": {
+      "type": "integer",
+      "minimum": 100001,
+      "maximum": 9007199254740991
+    },
+    "body": { "type": "string", "minLength": 1 },
+    "buildlore": {
+      "type": "object",
+      "required": ["schemaVersion", "sourceKind", "producer", "projectId", "sourceRevision", "contentHash"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "const": "buildlore.source.v1" },
+        "sourceKind": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "producer": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "projectId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "sourceRevision": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "contentHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    }
+  },
+  "dependentRequired": {
+    "truncated": ["originalChars"],
+    "originalChars": ["truncated"]
+  }
+}

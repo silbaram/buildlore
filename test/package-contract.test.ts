@@ -7,6 +7,8 @@ interface PackageContract {
   readonly dependencies?: Readonly<Record<string, string>>;
   readonly devDependencies: Readonly<Record<string, string>>;
   readonly engines: Readonly<Record<string, string>>;
+  readonly exports: Readonly<Record<string, unknown>>;
+  readonly files: readonly string[];
   readonly packageManager: string;
   readonly scripts: Readonly<Record<string, string>>;
 }
@@ -34,6 +36,7 @@ const approvedDevDependencies = {
 
 const approvedRuntimeDependencies = {
   'llm-wiki-compiler': '1.1.0',
+  yaml: '2.9.0',
 } as const;
 
 describe('package contract', () => {
@@ -44,6 +47,10 @@ describe('package contract', () => {
 
     expect(packageJson.packageManager).toBe('npm@11.19.0');
     expect(packageJson.bin).toEqual({ buildlore: './dist/cli/bin.js' });
+    expect(packageJson.exports['./schemas/source-document.schema.json']).toBe(
+      './schemas/source-document.schema.json',
+    );
+    expect(packageJson.files).toEqual(['dist', 'schemas']);
     expect(packageJson.dependencies).toEqual(approvedRuntimeDependencies);
     expect(packageJson.engines).toEqual({ node: '>=24', npm: '>=11 <12' });
     expect(packageJson.devDependencies).toEqual(approvedDevDependencies);
@@ -67,6 +74,11 @@ describe('package contract', () => {
     expect(packageLock.packages['node_modules/llm-wiki-compiler']?.integrity).toBe(
       compilerIntegrity,
     );
+    expect(packageLock.packages['node_modules/yaml']).toMatchObject({
+      integrity:
+        'sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==',
+      version: '2.9.0',
+    });
 
     const adapterSource = await readFile(
       new URL('../src/compiler/backend.ts', import.meta.url),
@@ -113,5 +125,28 @@ describe('package contract', () => {
     expect([...new Set(externalImports)]).toEqual(['llm-wiki-compiler']);
     expect(compilerSource).not.toMatch(/node:child_process|Promise\.race|process\.(?:on|once)\(/u);
 
+    const projectionSource = (
+      await Promise.all(
+        sourcePaths
+          .filter((path) => path.startsWith('projector/') || path.startsWith('sanitizer/'))
+          .map(async (path) =>
+            readFile(new URL(path.replaceAll('\\', '/'), sourceRoot), 'utf8'),
+          ),
+      )
+    ).join('\n');
+    const projectionExternalImports = [
+      ...projectionSource.matchAll(/\bfrom\s+['"]([^'"]+)['"]/gu),
+    ]
+      .map((match) => match[1])
+      .filter(
+        (specifier): specifier is string =>
+          specifier !== undefined &&
+          !specifier.startsWith('.') &&
+          !specifier.startsWith('node:'),
+      );
+    expect([...new Set(projectionExternalImports)]).toEqual(['yaml']);
+    expect(projectionSource).not.toMatch(
+      /node:child_process|from\s+['"]plan2agent(?:\/|['"])|Date\.now\s*\(|new\s+Date\s*\(\s*\)|\bmtime(?:Ms|Ns)?\b|\b(?:YAML|yaml)\.stringify\b|\bstringifyDocument\b/u,
+    );
   });
 });
