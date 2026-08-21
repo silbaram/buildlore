@@ -20,11 +20,15 @@ const temporaryRoots: string[] = [];
 
 const STATUS_RESULT = {
   lastCompiledAt: null,
+  orphanedCount: 0,
+  orphanedPages: [],
   pages: { concepts: 0, queries: 0, total: 0 },
   pendingCandidates: 0,
   pendingChanges: [],
   pendingChangesCount: 0,
   sources: 0,
+  staleCount: 0,
+  stalePages: [],
   stateStatus: 'missing',
 };
 
@@ -133,7 +137,11 @@ describe('compiler capability contract', () => {
         version: 1,
         warnings: [{ code: 'embedding-store-missing', message: 'raw warning' }],
       },
-      'eval-fast': evalResult('fast'),
+      'eval-fast': {
+        ...evalResult('fast'),
+        health: { pendingReviews: 2, score: 90 },
+        stats: { embeddingsAvailable: false, pageCount: 2, sourceCount: 1 },
+      },
       'eval-full': {
         ...evalResult('full'),
         citationSupport: {
@@ -176,7 +184,13 @@ describe('compiler capability contract', () => {
         refs: [{ kind: 'page', pageId: 'concepts/alpha', slug: 'alpha', title: 'Alpha' }],
         warnings: [{ code: 'embedding-index-outdated', message: 'raw warning' }],
       },
-      status: STATUS_RESULT,
+      status: {
+        ...STATUS_RESULT,
+        orphanedCount: 2,
+        orphanedPages: ['orphaned-alpha'],
+        staleCount: 3,
+        stalePages: ['stale-alpha'],
+      },
     };
     const calls: Array<{ capability: string; root: string }> = [];
     const backend: CompilerBackend = {
@@ -206,9 +220,20 @@ describe('compiler capability contract', () => {
       data: { compiled: 1, pageIds: ['concepts/alpha-concept'] },
       outcome: 'succeeded',
     });
-    expect(results[1]).toMatchObject({ data: { pendingChangesCount: 0 } });
+    expect(results[1]).toMatchObject({
+      data: {
+        orphanedCount: 2,
+        orphanedPages: ['orphaned-alpha'],
+        pendingChangesCount: 0,
+        staleCount: 3,
+        stalePages: ['stale-alpha'],
+      },
+    });
     expect(results[2]).toMatchObject({
       data: { findings: [{ file: 'wiki/concepts/alpha.md', rule: 'citation-required' }] },
+    });
+    expect(results[3]).toMatchObject({
+      data: { embeddingsAvailable: false, pendingReviews: 2, suite: 'fast' },
     });
     expect(results[4]).toMatchObject({ data: { citationSupportMean: 1.5, suite: 'full' } });
     expect(results[5]).toMatchObject({
@@ -289,7 +314,7 @@ describe('compiler capability contract', () => {
     expect(factory).toHaveBeenCalledTimes(8);
     expect(factory).toHaveBeenCalledWith(root);
     expect(compile).toHaveBeenCalledWith();
-    expect(status).toHaveBeenCalledTimes(2);
+    expect(status).toHaveBeenCalledTimes(1);
     expect(status).toHaveBeenCalledWith();
     expect(lint).toHaveBeenCalledWith();
     expect(lintResult).toMatchObject({
@@ -308,8 +333,111 @@ describe('compiler capability contract', () => {
     });
   });
 
-  it('preserves a clean compile as a true SDK-backed no-op', async () => {
+  it('forwards only an explicit true review flag through the public compile SDK option', async () => {
     const compile = vi.fn(() => Promise.resolve({}));
+    const status = vi.fn(() => Promise.resolve({
+      pendingChanges: [{ file: 'decision--alpha.md', status: 'new' }],
+      pendingChangesCount: 1,
+      sources: 1,
+      stateStatus: 'missing',
+    }));
+    const backend = createLlmWikiCompilerBackend(
+      () => ({ compile, status }) as unknown as ReturnType<
+        NonNullable<Parameters<typeof createLlmWikiCompilerBackend>[0]>
+      >,
+    );
+
+    await backend.run('/safe/project', { capability: 'compile', projectId: 'alpha' });
+    await backend.run('/safe/project', {
+      capability: 'compile',
+      projectId: 'alpha',
+      review: false,
+    });
+    await backend.run('/safe/project', {
+      capability: 'compile',
+      projectId: 'alpha',
+      review: true,
+    });
+
+    expect(compile).toHaveBeenNthCalledWith(1);
+    expect(compile).toHaveBeenNthCalledWith(2);
+    expect(compile).toHaveBeenNthCalledWith(3, { review: true });
+  });
+
+  it('uses the package-root JSON export with an explicit project identity', async () => {
+    const exportJson = vi.fn(() => Promise.resolve({ projectId: 'alpha' }));
+    const backend = createLlmWikiCompilerBackend(
+      () => ({ exportJson }) as unknown as ReturnType<
+        NonNullable<Parameters<typeof createLlmWikiCompilerBackend>[0]>
+      >,
+    );
+
+    await expect(backend.exportProject('/safe/project', 'alpha')).resolves.toEqual({
+      projectId: 'alpha',
+    });
+    expect(exportJson).toHaveBeenCalledOnce();
+    expect(exportJson).toHaveBeenCalledWith({ projectId: 'alpha' });
+  });
+
+  it('normalizes the review split without exposing candidate bodies or unknown reasons', async () => {
+    let reason = 'low-confidence';
+    const backend: CompilerBackend = {
+      run: () => Promise.resolve({
+        candidates: ['alpha-decision-a1b2c3d4'],
+        compiled: 0,
+        concepts: [],
+        deleted: 0,
+        errors: [],
+        pages: [],
+        review: {
+          forced: [],
+          held: [{
+            body: 'SOURCE-SENTINEL',
+            id: 'alpha-decision-a1b2c3d4',
+            reasons: [reason],
+            slug: 'alpha-decision',
+          }],
+        },
+        skipped: 0,
+      }),
+    };
+    const { compiler } = await createFixture(backend);
+    const result = await compiler.execute({
+      capability: 'compile',
+      projectId: 'alpha',
+      review: true,
+    });
+    expect(result).toMatchObject({
+      data: {
+        candidateCount: 1,
+        candidates: [{
+          disposition: 'held',
+          id: 'alpha-decision-a1b2c3d4',
+          reasons: ['low-confidence'],
+          slug: 'alpha-decision',
+        }],
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('SOURCE-SENTINEL');
+
+    reason = 'future-upstream-reason';
+    await expect(compiler.execute({
+      capability: 'compile',
+      projectId: 'alpha',
+      review: true,
+    })).rejects.toMatchObject({ code: 'COMPILER_CONTRACT_VIOLATION' });
+  });
+
+  it('delegates an unchanged compile to the SDK so its local no-op contract remains authoritative', async () => {
+    const compile = vi.fn(() => Promise.resolve({
+      candidates: [],
+      compiled: 0,
+      concepts: [],
+      deleted: 0,
+      errors: [],
+      pages: [],
+      skipped: 3,
+    }));
     const status = vi.fn(() =>
       Promise.resolve({
         pendingChanges: [],
@@ -339,8 +467,8 @@ describe('compiler capability contract', () => {
       pages: [],
       skipped: 3,
     });
-    expect(status).toHaveBeenCalledOnce();
-    expect(compile).not.toHaveBeenCalled();
+    expect(status).not.toHaveBeenCalled();
+    expect(compile).toHaveBeenCalledOnce();
   });
 
   it('classifies the native provider abort timeout without exposing its detail', async () => {
@@ -368,7 +496,7 @@ describe('compiler capability contract', () => {
     expect(JSON.stringify(error)).not.toContain('raw timeout detail');
   });
 
-  it('denies provider capabilities by default before the backend', async () => {
+  it('denies every provider egress class by default before the backend spy', async () => {
     const run = vi.fn();
     const backend: CompilerBackend = { run };
     const knowledgeRoot = await mkdtemp(join(process.cwd(), '.test-tmp-compiler-capabilities-'));
@@ -456,6 +584,7 @@ describe('compiler capability contract', () => {
       { capability: 'context', projectId: 'alpha', prompt: 'safe', topChunks: 51 },
       { capability: 'context', projectId: 'alpha', prompt: 'safe', topPages: 21 },
       { capability: 'status', extra: true, projectId: 'alpha' },
+      { capability: 'compile', projectId: 'alpha', review: 'yes' },
     ]) {
       await expect(compiler.execute(request as CompilerRequest)).rejects.toMatchObject({
         code: 'COMPILER_CONFIG_INVALID',
@@ -563,6 +692,24 @@ describe('compiler capability contract', () => {
         ...(request.capability === 'query' ? { sideEffectsPossible: true } : {}),
       });
     }
+  });
+
+  it('rejects contradictory freshness counts and unsafe review evaluation counts', async () => {
+    let response: unknown = {
+      ...STATUS_RESULT,
+      staleCount: 0,
+      stalePages: ['alpha'],
+    };
+    const { compiler } = await createFixture({ run: () => Promise.resolve(response) });
+    await expect(compiler.execute({ capability: 'status', projectId: 'alpha' }))
+      .rejects.toMatchObject({ code: 'COMPILER_CONTRACT_VIOLATION' });
+
+    response = {
+      ...evalResult('fast'),
+      health: { pendingReviews: -1, score: 90 },
+    };
+    await expect(compiler.execute({ capability: 'eval-fast', projectId: 'alpha' }))
+      .rejects.toMatchObject({ code: 'COMPILER_CONTRACT_VIOLATION' });
   });
 
   it('treats resolved compile errors as failure with possible side effects', async () => {
@@ -935,7 +1082,7 @@ describe('compiler capability contract', () => {
 function evalResult(suite: 'fast' | 'full'): Readonly<Record<string, unknown>> {
   return {
     citationCoverage: { coveragePercent: 75, precisionPercent: 80 },
-    health: { score: 90 },
+    health: { pendingReviews: 0, score: 90 },
     stats: { pageCount: 2, sourceCount: 1 },
     suite,
     thresholdViolations: [],

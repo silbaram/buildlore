@@ -14,6 +14,22 @@ export {
 export { createP2aPlanningProjector } from './p2a-planning-projector.js';
 export { createP2aExecutionKnowledgeProjector } from './p2a-execution-projector.js';
 export {
+  createProjectSyncService,
+  PROJECT_SYNC_SCHEMA_VERSION,
+  ProjectSyncError,
+  type CreateProjectSyncServiceOptions,
+  type ProjectSyncDecisionCounts,
+  type ProjectSyncErrorCode,
+  type ProjectSyncFailurePhase,
+  type ProjectSyncInput,
+  type ProjectSyncPlanEntrySummary,
+  type ProjectSyncPlanSummary,
+  type ProjectSyncPort,
+  type ProjectSyncRecoveryAction,
+  type ProjectSyncSummary,
+  type ProjectSyncWriteSummary,
+} from './sync.js';
+export {
   EXECUTION_INCLUSION_POLICY_VERSION,
   EXECUTION_PROJECTION_PLAN_SCHEMA_VERSION,
   type CanonicalTaskLineage,

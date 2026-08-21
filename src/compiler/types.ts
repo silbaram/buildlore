@@ -35,6 +35,7 @@ export interface CompilerCapabilityDescriptor {
 export interface CompileRequest {
   readonly capability: 'compile';
   readonly projectId: string;
+  readonly review?: boolean;
 }
 
 export interface StatusRequest {
@@ -95,17 +96,40 @@ export interface CompilerWarning {
 
 export interface CompileSummary {
   readonly candidateCount: number;
+  readonly candidates: readonly CompileReviewCandidate[];
   readonly compiled: number;
   readonly deleted: number;
   readonly pageIds: readonly string[];
   readonly skipped: number;
 }
 
+export type CompileReviewDisposition = 'forced' | 'held';
+export type CompileReviewReason =
+  | 'all'
+  | 'connector-fetched'
+  | 'contradicted'
+  | 'imported-okf'
+  | 'low-confidence'
+  | 'manual-review-requested'
+  | 'provenance-violating'
+  | 'schema-violating';
+
+export interface CompileReviewCandidate {
+  readonly disposition: CompileReviewDisposition;
+  readonly id: string;
+  readonly reasons: readonly CompileReviewReason[];
+  readonly slug: string;
+}
+
 export interface StatusSummary extends CompilerChangeStatus {
   readonly lastCompiledAt: string | null;
+  readonly orphanedCount: number;
+  readonly orphanedPages: readonly string[];
   readonly pageCount: number;
   readonly pendingCandidates: number;
   readonly sourceCount: number;
+  readonly staleCount: number;
+  readonly stalePages: readonly string[];
 }
 
 export interface LintFinding {
@@ -126,8 +150,10 @@ export interface EvalSummary {
   readonly citationCoveragePercent: number;
   readonly citationPrecisionPercent: number;
   readonly citationSupportMean?: number;
+  readonly embeddingsAvailable: boolean;
   readonly healthScore: number;
   readonly pageCount: number;
+  readonly pendingReviews: number;
   readonly sourceCount: number;
   readonly suite: 'fast' | 'full';
   readonly thresholdViolationCount: number;
@@ -199,6 +225,10 @@ export interface CompilerExecutionControl {
 
 export interface CompilerBackend {
   run(workspaceRoot: string, request: CompilerRequest): Promise<unknown>;
+}
+
+export interface CompilerCorpusBackend {
+  exportProject(workspaceRoot: string, projectId: string): Promise<unknown>;
 }
 
 export type EgressCapability = 'compile' | 'context' | 'eval-full' | 'query' | 'search';

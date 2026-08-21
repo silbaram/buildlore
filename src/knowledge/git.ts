@@ -61,6 +61,31 @@ function runGit(
   });
 }
 
+export async function resolveGitWorktreeRoot(repositoryRoot: string): Promise<string | null> {
+  const result = await runGit(repositoryRoot, ['rev-parse', '--show-toplevel'], {
+    allowFailure: true,
+  });
+  if (result.exitCode !== 0) return null;
+  const rawRoot = result.stdout.trim();
+  if (rawRoot.length === 0 || rawRoot.includes('\n') || rawRoot.includes('\r')) {
+    throw new KnowledgeError('SUBMODULE_MISMATCH', 'Git returned an invalid worktree root.', {
+      recoveryCommand: ['knowledge', 'status'],
+    });
+  }
+  try {
+    return await realpath(rawRoot);
+  } catch (error) {
+    throw new KnowledgeError('SUBMODULE_MISMATCH', 'Unable to resolve the Git worktree root.', {
+      cause: error,
+      recoveryCommand: ['knowledge', 'status'],
+    });
+  }
+}
+
+export async function initializeGitSuperproject(repositoryRoot: string): Promise<void> {
+  await runGit(repositoryRoot, ['init', '--initial-branch=main']);
+}
+
 function isContained(root: string, candidate: string): boolean {
   const difference = relative(root, candidate);
   return difference === '' || (!difference.startsWith('..') && !isAbsolute(difference));
@@ -205,7 +230,7 @@ function isRelativeLocalLocator(locator: string): boolean {
   );
 }
 
-function validateBranch(branch: string): string {
+export function validateKnowledgeBranch(branch: string): string {
   const components = branch.split('/');
   if (
     branch.length < 1 ||
@@ -316,7 +341,7 @@ export async function getSubmoduleStatus(repositoryRoot: string): Promise<Submod
   let branch: string | null;
   let branchInvalid = false;
   try {
-    branch = rawBranch === null ? null : validateBranch(rawBranch);
+    branch = rawBranch === null ? null : validateKnowledgeBranch(rawBranch);
   } catch {
     branch = null;
     branchInvalid = true;
@@ -454,7 +479,7 @@ export async function cloneKnowledge(
   },
 ): Promise<SubmoduleStatus> {
   const repository = validateRepositoryLocator(input.repository);
-  const branch = input.branch === undefined ? undefined : validateBranch(input.branch);
+  const branch = input.branch === undefined ? undefined : validateKnowledgeBranch(input.branch);
   const revision = input.revision === undefined ? undefined : validateRevision(input.revision);
   if ((await getSubmoduleStatus(repositoryRoot)).state !== 'unconfigured') {
     throw new KnowledgeError('SUBMODULE_MISMATCH', 'Knowledge submodule is already configured.', {

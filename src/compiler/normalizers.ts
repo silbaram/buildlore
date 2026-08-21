@@ -5,6 +5,9 @@ import type { CompilerChangeStatus, CompilerPendingChange } from '../knowledge/t
 import { CompilerOperationError } from './errors.js';
 import type {
   CompileSummary,
+  CompileReviewCandidate,
+  CompileReviewDisposition,
+  CompileReviewReason,
   CompilerCapabilityName,
   CompilerOperationResult,
   CompilerRequest,
@@ -28,6 +31,16 @@ const SAFE_CODE = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
 const ALLOWED_PENDING_STATUS = new Set(['changed', 'deleted', 'new']);
 const ALLOWED_STATE_STATUS = new Set(['corrupt', 'missing', 'ok', 'too-new']);
 const ALLOWED_SEVERITY = new Set(['error', 'info', 'warning']);
+const ALLOWED_REVIEW_REASONS = new Set<CompileReviewReason>([
+  'all',
+  'connector-fetched',
+  'contradicted',
+  'imported-okf',
+  'low-confidence',
+  'manual-review-requested',
+  'provenance-violating',
+  'schema-violating',
+]);
 const CAPABILITIES = new Set<CompilerCapabilityName>([
   'compile',
   'context',
@@ -39,7 +52,7 @@ const CAPABILITIES = new Set<CompilerCapabilityName>([
   'status',
 ]);
 const REQUEST_FIELDS: Readonly<Record<CompilerCapabilityName, ReadonlySet<string>>> = {
-  compile: new Set(['capability', 'projectId']),
+  compile: new Set(['capability', 'projectId', 'review']),
   context: new Set(['budget', 'capability', 'depth', 'projectId', 'prompt', 'topChunks', 'topPages']),
   'eval-fast': new Set(['capability', 'projectId']),
   'eval-full': new Set(['capability', 'projectId']),
@@ -310,15 +323,96 @@ function normalizeCompile(raw: unknown, projectId: string): {
   if (new Set(pageIds).size !== pageIds.length) {
     throw contractError(projectId, capability);
   }
-  const candidateCount =
-    value.candidates === undefined
-      ? 0
-      : requireArray(value.candidates, projectId, capability).length;
+  const candidateIds = value.candidates === undefined
+    ? []
+    : requireArray(value.candidates, projectId, capability).map((candidate) =>
+      requireCandidateId(candidate, undefined, projectId),
+    );
+  if (new Set(candidateIds).size !== candidateIds.length) {
+    throw contractError(projectId, capability);
+  }
+  const candidates = normalizeCompileReview(value.review, candidateIds, projectId);
   return {
-    data: { candidateCount, compiled, deleted, pageIds, skipped },
+    data: {
+      candidateCount: candidates.length,
+      candidates,
+      compiled,
+      deleted,
+      pageIds,
+      skipped,
+    },
     outcome: compiled === 0 && deleted === 0 ? 'unchanged' : 'succeeded',
     warnings: [],
   };
+}
+
+function requireCandidateSlug(value: unknown, projectId: string): string {
+  const slug = requirePagePart(value, projectId, 'compile');
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(slug)) {
+    throw contractError(projectId, 'compile');
+  }
+  return slug;
+}
+
+function requireCandidateId(value: unknown, slug: string | undefined, projectId: string): string {
+  const id = requireText(value, 320, projectId, 'compile');
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{8}$/u.test(id)) {
+    throw contractError(projectId, 'compile');
+  }
+  if (slug !== undefined && id !== `${slug}-${id.slice(-8)}`) {
+    throw contractError(projectId, 'compile');
+  }
+  return id;
+}
+
+function normalizeReviewCandidate(
+  value: unknown,
+  disposition: CompileReviewDisposition,
+  projectId: string,
+): CompileReviewCandidate {
+  const candidate = requireRecord(value, projectId, 'compile');
+  const slug = requireCandidateSlug(candidate.slug, projectId);
+  const id = requireCandidateId(candidate.id, slug, projectId);
+  const reasons = requireArray(candidate.reasons, projectId, 'compile').map((reason) => {
+    const normalized = requireCode(reason, projectId, 'compile') as CompileReviewReason;
+    if (!ALLOWED_REVIEW_REASONS.has(normalized)) {
+      throw contractError(projectId, 'compile');
+    }
+    return normalized;
+  }).sort();
+  if (reasons.length === 0 || new Set(reasons).size !== reasons.length) {
+    throw contractError(projectId, 'compile');
+  }
+  return { disposition, id, reasons, slug };
+}
+
+function normalizeCompileReview(
+  raw: unknown,
+  candidateIds: readonly string[],
+  projectId: string,
+): readonly CompileReviewCandidate[] {
+  if (raw === undefined) {
+    if (candidateIds.length !== 0) throw contractError(projectId, 'compile');
+    return [];
+  }
+  const review = requireRecord(raw, projectId, 'compile');
+  const candidates = [
+    ...requireArray(review.held, projectId, 'compile').map((candidate) =>
+      normalizeReviewCandidate(candidate, 'held', projectId),
+    ),
+    ...requireArray(review.forced, projectId, 'compile').map((candidate) =>
+      normalizeReviewCandidate(candidate, 'forced', projectId),
+    ),
+  ].sort((left, right) => left.id.localeCompare(right.id));
+  const normalizedIds = candidates.map((candidate) => candidate.id);
+  if (
+    new Set(normalizedIds).size !== normalizedIds.length ||
+    normalizedIds.length !== candidateIds.length ||
+    [...candidateIds].sort().some((id, index) => id !== normalizedIds[index])
+  ) {
+    throw contractError(projectId, 'compile');
+  }
+  return candidates;
 }
 
 function normalizePendingChange(
@@ -391,6 +485,14 @@ function normalizeStatus(raw: unknown, projectId: string): {
   const value = requireRecord(raw, projectId, capability);
   const changes = normalizeCompilerChangeStatus(raw, projectId);
   const pages = requireRecord(value.pages, projectId, capability);
+  const stalePages = requireArray(value.stalePages, projectId, capability)
+    .map((page) => requirePagePart(page, projectId, capability))
+    .sort();
+  const orphanedPages = requireArray(value.orphanedPages, projectId, capability)
+    .map((page) => requirePagePart(page, projectId, capability))
+    .sort();
+  const staleCount = requireCount(value.staleCount, projectId, capability);
+  const orphanedCount = requireCount(value.orphanedCount, projectId, capability);
   const lastCompiledAt =
     value.lastCompiledAt === null
       ? null
@@ -398,13 +500,25 @@ function normalizeStatus(raw: unknown, projectId: string): {
   if (lastCompiledAt !== null && !isCanonicalIsoTimestamp(lastCompiledAt)) {
     throw contractError(projectId, capability);
   }
+  if (
+    staleCount < stalePages.length ||
+    orphanedCount < orphanedPages.length ||
+    new Set(stalePages).size !== stalePages.length ||
+    new Set(orphanedPages).size !== orphanedPages.length
+  ) {
+    throw contractError(projectId, capability);
+  }
   return {
     data: {
       ...changes,
       lastCompiledAt,
+      orphanedCount,
+      orphanedPages,
       pageCount: requireCount(pages.total, projectId, capability),
       pendingCandidates: requireCount(value.pendingCandidates, projectId, capability),
       sourceCount: requireCount(value.sources, projectId, capability),
+      staleCount,
+      stalePages,
     },
     outcome: 'succeeded',
     warnings: warningsFrom(value.warnings, projectId, capability),
@@ -515,8 +629,12 @@ function normalizeEval(
         capability,
       ),
       ...(citationSupportMean === undefined ? {} : { citationSupportMean }),
+      embeddingsAvailable: stats.embeddingsAvailable === undefined
+        ? true
+        : requireBoolean(stats.embeddingsAvailable, projectId, capability),
       healthScore: requireRange(health.score, 0, 100, projectId, capability),
       pageCount: requireCount(stats.pageCount, projectId, capability),
+      pendingReviews: requireCount(health.pendingReviews, projectId, capability),
       sourceCount: requireCount(stats.sourceCount, projectId, capability),
       suite: suite as EvalSummary['suite'],
       thresholdViolationCount: requireArray(
@@ -746,6 +864,9 @@ export function validateCompilerRequest(request: unknown): asserts request is Co
   }
   if (capability === 'context') {
     validateContextOptions(request as unknown as ContextRequest);
+  }
+  if (capability === 'compile' && request.review !== undefined && typeof request.review !== 'boolean') {
+    throw configInputError(request);
   }
 }
 

@@ -155,4 +155,20 @@ describe('package contract', () => {
       /node:child_process|from\s+['"]plan2agent(?:\/|['"])|Date\.now\s*\(|new\s+Date\s*\(\s*\)|\bmtime(?:Ms|Ns)?\b|\b(?:YAML|yaml)\.stringify\b|\bstringifyDocument\b/u,
     );
   });
+
+  it('keeps the CLI on domain ports without upstream CLI fallback or stdout scraping', async () => {
+    const cliRoot = new URL('../src/cli/', import.meta.url);
+    const cliPaths = (await readdir(cliRoot, { recursive: true }))
+      .filter((path) => path.endsWith('.ts'));
+    const cliSource = (
+      await Promise.all(
+        cliPaths.map(async (path) =>
+          readFile(new URL(path.replaceAll('\\', '/'), cliRoot), 'utf8')),
+      )
+    ).join('\n');
+
+    expect(cliSource).not.toMatch(/from\s+['"]llm-wiki-compiler(?:\/|['"])/u);
+    expect(cliSource).not.toMatch(/node:child_process|\b(?:exec|execFile|spawn|fork)\s*\(/u);
+    expect(cliSource).not.toMatch(/JSON\.parse\s*\([^)]*\.stdout|\.stdout\s*\.\s*(?:match|split|trim)\s*\(/u);
+  });
 });

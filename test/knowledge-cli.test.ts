@@ -111,6 +111,7 @@ describe('knowledge and project CLI', () => {
         'Alpha',
         '--source-repository',
         'https://example.test/alpha.git',
+        '--json',
       ],
       root,
     );
@@ -121,8 +122,8 @@ describe('knowledge and project CLI', () => {
       ok: true,
     });
 
-    const listed = await capture(['project', 'list'], root);
-    expect(JSON.parse(listed.stdout)).toEqual({
+    const listed = await capture(['project', 'list', '--json'], root);
+    expect(JSON.parse(listed.stdout)).toMatchObject({
       data: [
         {
           displayName: 'Alpha',
@@ -140,7 +141,10 @@ describe('knowledge and project CLI', () => {
     await expect(
       capture(['project', 'validate', '--project-id', 'alpha'], root),
     ).resolves.toMatchObject({ exitCode: 0, stderr: '' });
-    const status = await capture(['knowledge', 'status', '--project-id', 'alpha'], root);
+    const status = await capture(
+      ['knowledge', 'status', '--project-id', 'alpha', '--json'],
+      root,
+    );
     expect(JSON.parse(status.stdout)).toMatchObject({
       data: {
         compiler: { pendingChangesCount: 0, stateStatus: 'missing' },
@@ -154,25 +158,31 @@ describe('knowledge and project CLI', () => {
 
   it('returns a structured recovery result for an unconfigured submodule', async () => {
     const root = await createUnconfiguredRepository();
-    const result = await capture(['knowledge', 'status'], root);
-    expect(result.exitCode).toBe(1);
+    const result = await capture(['knowledge', 'status', '--json'], root);
+    expect(result.exitCode).toBe(6);
     expect(result.stdout).toBe('');
     expect(JSON.parse(result.stderr)).toMatchObject({
       data: { knowledge: { state: 'unconfigured' }, ok: false },
-      error: {
-        code: 'KNOWLEDGE_NOT_CONFIGURED',
-        recoveryCommand: ['knowledge', 'clone'],
-      },
+      errors: [
+        {
+          code: 'KNOWLEDGE_NOT_CONFIGURED',
+          recoveryCommand: ['knowledge', 'clone'],
+        },
+      ],
       ok: false,
+      partial: true,
     });
   });
 
   it('reports an unregistered project when a ready repository has no manifest', async () => {
     const root = await createConfiguredRepository();
-    const shown = await capture(['project', 'show', '--project-id', 'missing'], root);
-    expect(shown.exitCode).toBe(1);
+    const shown = await capture(
+      ['project', 'show', '--project-id', 'missing', '--json'],
+      root,
+    );
+    expect(shown.exitCode).toBe(2);
     expect(JSON.parse(shown.stderr)).toMatchObject({
-      error: { code: 'PROJECT_NOT_FOUND', recoveryCommand: ['project', 'list'] },
+      errors: [{ code: 'PROJECT_NOT_FOUND', recoveryCommand: ['project', 'list'] }],
       ok: false,
     });
   });
@@ -180,11 +190,15 @@ describe('knowledge and project CLI', () => {
   it('validates a selected project id before reflecting status data', async () => {
     const root = await createUnconfiguredRepository();
     const secret = 'TOKEN=do-not-reflect';
-    const result = await capture(['knowledge', 'status', '--project-id', secret], root);
-    expect(result.exitCode).toBe(1);
+    const result = await capture(
+      ['knowledge', 'status', '--project-id', secret, '--json'],
+      root,
+    );
+    expect(result.exitCode).toBe(2);
     expect(result.stderr).not.toContain(secret);
     expect(JSON.parse(result.stderr)).toMatchObject({
-      error: { code: 'MANIFEST_INVALID' },
+      errors: [{ code: 'CLI_ARGUMENT_INVALID' }],
+      projectId: null,
       ok: false,
     });
   });
@@ -205,13 +219,16 @@ describe('knowledge and project CLI', () => {
       ],
       root,
     );
-    expect(rejected.exitCode).toBe(1);
+    expect(rejected.exitCode).toBe(3);
     expect(rejected.stderr).not.toContain('do-not-reflect');
     expect(rejected.stdout).toBe('');
 
     const unsupported = await capture(['token=do-not-reflect'], root);
     expect(unsupported.exitCode).toBe(2);
-    expect(unsupported.stderr).toBe('Unsupported command. Run buildlore --help for usage.\n');
+    expect(unsupported.stderr).toBe(
+      'unknown: failed\n' +
+      'error CLI_COMMAND_UNSUPPORTED: Command usage is invalid. Run buildlore --help for usage.\n',
+    );
   });
 
   it('blocks project writes until the knowledge submodule is ready', async () => {
@@ -226,12 +243,13 @@ describe('knowledge and project CLI', () => {
         'Alpha',
         '--source-repository',
         'https://example.test/alpha.git',
+        '--json',
       ],
       root,
     );
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(6);
     expect(JSON.parse(result.stderr)).toMatchObject({
-      error: { code: 'KNOWLEDGE_NOT_CONFIGURED' },
+      errors: [{ code: 'KNOWLEDGE_NOT_CONFIGURED' }],
       ok: false,
     });
   });
@@ -255,14 +273,16 @@ describe('knowledge and project CLI', () => {
     );
     expect(result).toEqual({
       exitCode: 2,
-      stderr: 'Unsupported command. Run buildlore --help for usage.\n',
+      stderr:
+        'project.add: failed\n' +
+        'error CLI_OPTION_UNSUPPORTED: Command usage is invalid. Run buildlore --help for usage.\n',
       stdout: '',
     });
   });
 
   it('returns the approved flat status fields and restores an uninitialized submodule', async () => {
     const root = await createConfiguredRepository();
-    const ready = await capture(['knowledge', 'status'], root);
+    const ready = await capture(['knowledge', 'status', '--json'], root);
     const readyPayload = JSON.parse(ready.stdout) as {
       readonly data: {
         readonly currentCommit: string;
@@ -283,10 +303,10 @@ describe('knowledge and project CLI', () => {
     expect(readyPayload.data.pinnedCommit).toMatch(/^[0-9a-f]{40}$/u);
 
     await git(root, ['submodule', 'deinit', '-f', '--', 'knowledge']);
-    const uninitialized = await capture(['knowledge', 'status'], root);
+    const uninitialized = await capture(['knowledge', 'status', '--json'], root);
     expect(JSON.parse(uninitialized.stderr)).toMatchObject({
       data: { initialized: false, pinState: 'uninitialized' },
-      error: { code: 'SUBMODULE_UNINITIALIZED' },
+      errors: [{ code: 'SUBMODULE_UNINITIALIZED' }],
       ok: false,
     });
     await expect(capture(['knowledge', 'init'], root)).resolves.toMatchObject({
@@ -311,10 +331,13 @@ describe('knowledge and project CLI', () => {
       root,
     );
     await rm(join(root, 'knowledge', 'projects', 'alpha', 'sources'), { recursive: true });
-    const shown = await capture(['project', 'show', '--project-id', 'alpha'], root);
-    expect(shown.exitCode).toBe(1);
+    const shown = await capture(
+      ['project', 'show', '--project-id', 'alpha', '--json'],
+      root,
+    );
+    expect(shown.exitCode).toBe(3);
     expect(JSON.parse(shown.stderr)).toMatchObject({
-      error: { code: 'MANIFEST_INVALID', recoveryCommand: ['project', 'validate'] },
+      errors: [{ code: 'MANIFEST_INVALID', recoveryCommand: ['project', 'validate'] }],
       ok: false,
     });
   });

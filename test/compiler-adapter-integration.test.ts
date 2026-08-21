@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectCompiler } from '../src/compiler/index.js';
 import { addProject } from '../src/knowledge/index.js';
 import { createSourceDocument, renderSourceDocument } from '../src/projector/index.js';
+import { createProjectRetrieval } from '../src/retrieval/index.js';
 import { startFakeOpenAiServer, type FakeOpenAiServer } from './fixtures/fake-openai.js';
 import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
@@ -122,6 +123,49 @@ afterEach(async () => {
 });
 
 describe('llm-wiki-compiler offline SDK integration', () => {
+  it('stages an explicit review compile without writing the live wiki', async () => {
+    const provider = await startFakeOpenAiServer();
+    servers.push(provider);
+    setEnvironment('LLMWIKI_PROVIDER', 'openai');
+    setEnvironment('OPENAI_API_KEY', 'fixture-key-not-a-secret');
+    setEnvironment('OPENAI_BASE_URL', provider.baseUrl);
+    setEnvironment('OPENAI_EMBEDDINGS_BASE_URL', provider.baseUrl);
+    setEnvironment('LLMWIKI_MODEL', 'fixture-model');
+    setEnvironment('LLMWIKI_EMBEDDING_MODEL', 'fixture-embedding-model');
+
+    const knowledgeRoot = await mkdtemp(join(process.cwd(), '.test-tmp-compiler-review-'));
+    temporaryRoots.push(knowledgeRoot);
+    await createProjectSource(knowledgeRoot, 'alpha');
+    const workspace = join(knowledgeRoot, 'projects', 'alpha');
+    const wikiBefore = await treeDigest(join(workspace, 'wiki'));
+    const compiler = createProjectCompiler({ knowledgeRoot });
+
+    const result = await compiler.execute({
+      capability: 'compile',
+      projectId: 'alpha',
+      review: true,
+    });
+
+    expect(result).toMatchObject({
+      data: {
+        candidateCount: 1,
+        candidates: [{
+          disposition: 'forced',
+          reasons: ['manual-review-requested'],
+          slug: 'shared-topic',
+        }],
+        compiled: 1,
+      },
+      projectId: 'alpha',
+    });
+    await expect(treeDigest(join(workspace, 'wiki'))).resolves.toBe(wikiBefore);
+    const candidateFiles = await readdir(join(workspace, '.llmwiki', 'candidates'));
+    expect(candidateFiles).toHaveLength(1);
+    expect(candidateFiles[0]).toMatch(/^shared-topic-[a-f0-9]{8}\.json$/u);
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toMatch(/ALPHA-MARKER|fixture-key-not-a-secret/u);
+  });
+
   it('compiles isolated same-slug projects and makes the second identical compile a provider no-op', async () => {
     const provider = await startFakeOpenAiServer();
     servers.push(provider);
@@ -145,12 +189,34 @@ describe('llm-wiki-compiler offline SDK integration', () => {
       projectId: 'alpha',
     });
     const callsAfterFirst = provider.chatCalls + provider.embeddingCalls;
+    const lexical = createProjectRetrieval({ knowledgeRoot });
+    const lexicalResult = await lexical.search({
+      mode: 'lexical',
+      projectId: 'alpha',
+      query: 'shared topic',
+    });
+    expect(lexicalResult).toMatchObject({
+      effectiveMode: 'lexical',
+      hits: [{ pageId: 'concepts/shared-topic', score: 1 }],
+      projectId: 'alpha',
+    });
+    expect(provider.chatCalls + provider.embeddingCalls).toBe(callsAfterFirst);
+    expect(JSON.stringify(lexicalResult)).not.toMatch(/ALPHA-MARKER|BETA-MARKER/u);
+    setEnvironment('OPENAI_API_KEY', '');
+    const unconfigured = createProjectRetrieval({ knowledgeRoot });
+    await expect(unconfigured.search({
+      mode: 'semantic',
+      projectId: 'alpha',
+      query: 'shared topic',
+    })).resolves.toMatchObject({
+      effectiveMode: 'lexical',
+      fallback: { reasonCode: 'provider-unconfigured' },
+      partial: true,
+    });
+    expect(provider.chatCalls + provider.embeddingCalls).toBe(callsAfterFirst);
+    setEnvironment('OPENAI_API_KEY', 'fixture-key-not-a-secret');
     const alphaWikiBefore = await readFile(
       join(knowledgeRoot, 'projects', 'alpha', 'wiki', 'concepts', 'shared-topic.md'),
-      'utf8',
-    );
-    const alphaIndexBefore = await readFile(
-      join(knowledgeRoot, 'projects', 'alpha', 'wiki', 'index.md'),
       'utf8',
     );
     const alphaStateBefore = await readFile(
@@ -167,16 +233,13 @@ describe('llm-wiki-compiler offline SDK integration', () => {
       readFile(join(knowledgeRoot, 'projects', 'alpha', 'wiki', 'concepts', 'shared-topic.md'), 'utf8'),
     ).resolves.toBe(alphaWikiBefore);
     await expect(
-      readFile(join(knowledgeRoot, 'projects', 'alpha', 'wiki', 'index.md'), 'utf8'),
-    ).resolves.toBe(alphaIndexBefore);
-    await expect(
       readFile(join(knowledgeRoot, 'projects', 'alpha', '.llmwiki', 'state.json'), 'utf8'),
     ).resolves.toBe(alphaStateBefore);
     const alphaFilesAfter = await fileDigests(join(knowledgeRoot, 'projects', 'alpha'));
     const changedPaths = [...new Set([...Object.keys(alphaFilesBefore), ...Object.keys(alphaFilesAfter)])]
       .filter((path) => alphaFilesBefore[path] !== alphaFilesAfter[path])
       .sort();
-    expect(changedPaths).toEqual([]);
+    expect(changedPaths).toEqual(['wiki/index.md']);
     await expect(treeDigest(join(knowledgeRoot, 'projects', 'beta'))).resolves.toBe(betaBefore);
     const alphaBeforeSearch = await treeDigest(join(knowledgeRoot, 'projects', 'alpha'));
 

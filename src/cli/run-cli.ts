@@ -1,12 +1,33 @@
 import { join } from 'node:path';
 
-import { createProjectCompiler } from '../compiler/index.js';
+import {
+  createProjectCheck,
+  createProjectCompiler,
+  type ProjectCheckPort,
+  type ProjectCompilerPort,
+} from '../compiler/index.js';
 import { KnowledgeError, type KnowledgeErrorCode } from '../knowledge/errors.js';
 import { cloneKnowledge, initKnowledge } from '../knowledge/git.js';
+import { initializeModeAWorkspace } from '../knowledge/initialization.js';
 import { getKnowledgeStatus } from '../knowledge/status.js';
 import type { CompilerStatusPort } from '../knowledge/types.js';
 import { addProject, listProjects, showProject, validateProjectRegistry } from '../knowledge/workspace.js';
+import { createProjectSyncService, type ProjectSyncPort } from '../projector/index.js';
+import {
+  createProjectRetrieval,
+  type ProjectRetrievalPort,
+  type RetrievalMode,
+} from '../retrieval/index.js';
+import { CliQualityGateError, mapCliError } from './error-map.js';
 import { HELP_TEXT } from './help.js';
+import { CliUsageError, inferCliCommand, parseCliArguments } from './parser.js';
+import { renderCliResult, writeRenderedCliResult } from './presentation.js';
+import type {
+  CliOutputMode,
+  CliPresentationContext,
+  CliSuccessResult,
+  ParsedCliCommand,
+} from './types.js';
 
 export interface CliIo {
   stdout(message: string): void;
@@ -14,54 +35,24 @@ export interface CliIo {
 }
 
 export interface CliRuntime {
+  readonly artifactRoot?: string;
+  readonly check?: ProjectCheckPort;
   readonly cwd: string;
   readonly compiler?: CompilerStatusPort;
+  readonly projectCompiler?: ProjectCompilerPort;
+  readonly retrieval?: ProjectRetrievalPort;
+  readonly sync?: ProjectSyncPort;
 }
 
-class CliUsageError extends Error {}
-
-function optionsFrom(
-  args: readonly string[],
-  allowed: readonly string[],
-  required: readonly string[] = [],
-): Readonly<Record<string, string>> {
-  const values: Record<string, string> = {};
-  for (let index = 0; index < args.length; index += 2) {
-    const key = args[index];
-    const value = args[index + 1];
-    if (
-      key === undefined ||
-      value === undefined ||
-      !key.startsWith('--') ||
-      value.startsWith('--') ||
-      !allowed.includes(key) ||
-      key in values
-    ) {
-      throw new CliUsageError('Invalid command arguments.');
-    }
-    values[key] = value;
-  }
-  if (required.some((key) => !(key in values))) {
-    throw new CliUsageError('A required command argument is missing.');
-  }
-  return values;
+function stringOption(command: ParsedCliCommand, option: string): string | undefined {
+  const value = command.options[option];
+  return typeof value === 'string' ? value : undefined;
 }
 
-function requiredOption(options: Readonly<Record<string, string>>, key: string): string {
-  const value = options[key];
-  if (value === undefined) {
-    throw new CliUsageError('A required command argument is missing.');
-  }
+function requiredStringOption(command: ParsedCliCommand, option: string): string {
+  const value = stringOption(command, option);
+  if (value === undefined) throw new CliUsageError('CLI_OPTION_MISSING');
   return value;
-}
-
-function writeJson(io: CliIo, value: unknown, error = false): void {
-  const message = `${JSON.stringify(value)}\n`;
-  if (error) {
-    io.stderr(message);
-  } else {
-    io.stdout(message);
-  }
 }
 
 function unhealthyKnowledgeStatus(value: unknown): {
@@ -95,7 +86,10 @@ function statusErrorCode(state: string): KnowledgeErrorCode {
   }
 }
 
-async function assertProjectCommandsReady(runtime: CliRuntime): Promise<void> {
+async function assertProjectCommandsReady(
+  runtime: CliRuntime,
+  projectId?: string,
+): Promise<void> {
   const status = await getKnowledgeStatus(runtime.cwd);
   if (!status.ok) {
     throw new KnowledgeError(
@@ -104,67 +98,206 @@ async function assertProjectCommandsReady(runtime: CliRuntime): Promise<void> {
       status.recoveryCommand === undefined
         ? {}
         : { recoveryCommand: status.recoveryCommand },
-    );
+      );
+  }
+  if (projectId !== undefined) {
+    await showProject(join(runtime.cwd, 'knowledge'), projectId);
+  }
+}
+
+function retrievalMode(command: ParsedCliCommand): RetrievalMode {
+  switch (stringOption(command, '--mode')) {
+    case 'lexical':
+      return 'lexical';
+    case 'semantic':
+      return 'semantic';
+    case 'hybrid':
+    case undefined:
+      return 'hybrid';
+    default:
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
   }
 }
 
 async function executeCommand(
-  args: readonly string[],
+  command: ParsedCliCommand,
   runtime: CliRuntime,
 ): Promise<unknown> {
-  const [group, operation, ...rest] = args;
-  if (group === 'knowledge' && operation === 'clone') {
-    const options = optionsFrom(rest, ['--branch', '--repository', '--revision'], ['--repository']);
-    return cloneKnowledge(runtime.cwd, {
-      ...(options['--branch'] === undefined ? {} : { branch: options['--branch'] }),
-      repository: requiredOption(options, '--repository'),
-      ...(options['--revision'] === undefined ? {} : { revision: options['--revision'] }),
-    });
+  switch (command.operation) {
+    case 'init': {
+      const branch = stringOption(command, '--branch');
+      return initializeModeAWorkspace(runtime.cwd, {
+        ...(branch === undefined ? {} : { branch }),
+        repository: requiredStringOption(command, '--knowledge-repo'),
+      });
+    }
+    case 'knowledge.clone': {
+      const branch = stringOption(command, '--branch');
+      const revision = stringOption(command, '--revision');
+      return cloneKnowledge(runtime.cwd, {
+        ...(branch === undefined ? {} : { branch }),
+        repository: requiredStringOption(command, '--knowledge-repo'),
+        ...(revision === undefined ? {} : { revision }),
+      });
+    }
+    case 'knowledge.init':
+      return initKnowledge(runtime.cwd);
+    case 'knowledge.status': {
+      const compiler = runtime.compiler ??
+        createProjectCompiler({ knowledgeRoot: join(runtime.cwd, 'knowledge') });
+      return getKnowledgeStatus(runtime.cwd, {
+        compiler,
+        ...(command.projectId === null ? {} : { projectId: command.projectId }),
+      });
+    }
+    case 'project.add': {
+      const projectId = requiredStringOption(command, '--id');
+      await assertProjectCommandsReady(runtime);
+      return addProject(join(runtime.cwd, 'knowledge'), {
+        displayName: stringOption(command, '--name') ?? projectId,
+        projectId,
+        sourceRepository: requiredStringOption(command, '--source-repo'),
+      });
+    }
+    case 'project.list':
+      await assertProjectCommandsReady(runtime);
+      return listProjects(join(runtime.cwd, 'knowledge'));
+    case 'project.show':
+      await assertProjectCommandsReady(runtime);
+      return showProject(join(runtime.cwd, 'knowledge'), requiredStringOption(command, '--project'));
+    case 'project.validate':
+      await assertProjectCommandsReady(runtime);
+      return validateProjectRegistry(
+        join(runtime.cwd, 'knowledge'),
+        command.projectId ?? undefined,
+      );
+    case 'sync': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const service = runtime.sync ?? createProjectSyncService();
+      return service.sync({
+        artifactRoot: runtime.artifactRoot ??
+          join(runtime.cwd, '.plan2agent', 'artifacts', projectId),
+        dryRun: command.options['--dry-run'] === true,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        projectId,
+      });
+    }
+    case 'compile': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const compiler = runtime.projectCompiler ?? createProjectCompiler({
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      return compiler.execute({
+        capability: 'compile',
+        projectId,
+        ...(command.options['--review'] === true ? { review: true } : {}),
+      });
+    }
+    case 'check': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const compiler = runtime.projectCompiler ?? createProjectCompiler({
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      const check = runtime.check ?? createProjectCheck(compiler);
+      return check.check(projectId);
+    }
+    case 'search': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const retrieval = runtime.retrieval ?? createProjectRetrieval({
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      return retrieval.search({
+        mode: retrievalMode(command),
+        projectId,
+        query: requiredStringOption(command, '--query'),
+      });
+    }
+    case 'query': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const compiler = runtime.projectCompiler ?? createProjectCompiler({
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      return compiler.execute({
+        capability: 'query',
+        projectId,
+        question: requiredStringOption(command, '--question'),
+      });
+    }
+    case 'context': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const retrieval = runtime.retrieval ?? createProjectRetrieval({
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      return retrieval.context({
+        projectId,
+        prompt: requiredStringOption(command, '--prompt'),
+      });
+    }
   }
-  if (group === 'knowledge' && operation === 'init') {
-    optionsFrom(rest, []);
-    return initKnowledge(runtime.cwd);
-  }
-  if (group === 'knowledge' && operation === 'status') {
-    const options = optionsFrom(rest, ['--project-id']);
-    const compiler =
-      runtime.compiler ?? createProjectCompiler({ knowledgeRoot: join(runtime.cwd, 'knowledge') });
-    return getKnowledgeStatus(runtime.cwd, {
-      compiler,
-      ...(options['--project-id'] === undefined ? {} : { projectId: options['--project-id'] }),
-    });
-  }
+}
 
-  const knowledgeRoot = join(runtime.cwd, 'knowledge');
-  if (group === 'project' && operation === 'add') {
-    const options = optionsFrom(
-      rest,
-      ['--display-name', '--project-id', '--source-repository'],
-      ['--display-name', '--project-id', '--source-repository'],
-    );
-    await assertProjectCommandsReady(runtime);
-    return addProject(knowledgeRoot, {
-      displayName: requiredOption(options, '--display-name'),
-      projectId: requiredOption(options, '--project-id'),
-      sourceRepository: requiredOption(options, '--source-repository'),
-    });
-  }
-  if (group === 'project' && operation === 'list') {
-    optionsFrom(rest, []);
-    await assertProjectCommandsReady(runtime);
-    return listProjects(knowledgeRoot);
-  }
-  if (group === 'project' && operation === 'show') {
-    const options = optionsFrom(rest, ['--project-id'], ['--project-id']);
-    await assertProjectCommandsReady(runtime);
-    return showProject(knowledgeRoot, requiredOption(options, '--project-id'));
-  }
-  if (group === 'project' && operation === 'validate') {
-    const options = optionsFrom(rest, ['--project-id']);
-    await assertProjectCommandsReady(runtime);
-    return validateProjectRegistry(knowledgeRoot, options['--project-id']);
-  }
-  throw new CliUsageError('Unsupported command.');
+function safeStringField(value: unknown, key: string): string | null {
+  if (typeof value !== 'object' || value === null || !(key in value)) return null;
+  const field = value[key as keyof typeof value];
+  return typeof field === 'string' ? field : null;
+}
+
+function safeKnowledgeRevision(value: unknown): string | null {
+  const direct = safeStringField(value, 'currentCommit');
+  if (direct !== null) return direct;
+  if (typeof value !== 'object' || value === null || !('knowledge' in value)) return null;
+  return safeStringField(value.knowledge, 'checkedOutCommit');
+}
+
+function safeWarnings(data: unknown): readonly { readonly code: string; readonly message: string }[] {
+  if (typeof data !== 'object' || data === null || !('warnings' in data) ||
+      !Array.isArray(data.warnings)) return [];
+  const codes = data.warnings.map((warning: unknown) => {
+    if (typeof warning !== 'object' || warning === null || !('code' in warning) ||
+        typeof warning.code !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(warning.code)) {
+      return null;
+    }
+    return warning.code;
+  });
+  if (codes.some((code) => code === null)) return [];
+  return [...new Set(codes as string[])].sort().map((code) => Object.freeze({
+    code,
+    message: 'The command completed with a structured warning.',
+  }));
+}
+
+function dataIsPartial(data: unknown): boolean {
+  return typeof data === 'object' && data !== null && 'partial' in data && data.partial === true;
+}
+
+function qualityFailed(command: ParsedCliCommand, data: unknown): boolean {
+  return command.command === 'check' && typeof data === 'object' && data !== null &&
+    'passed' in data && data.passed === false;
+}
+
+function successResult(command: ParsedCliCommand, data: unknown): CliSuccessResult {
+  return Object.freeze({
+    command: command.command,
+    data,
+    errors: Object.freeze([]),
+    exitCode: 0,
+    knowledgeRevision: safeKnowledgeRevision(data),
+    ok: true,
+    partial: dataIsPartial(data),
+    projectId: command.projectId,
+    warnings: Object.freeze(safeWarnings(data)),
+    workspacePath: safeStringField(data, 'workspacePath'),
+  });
+}
+
+function requestedOutputMode(args: readonly string[]): CliOutputMode {
+  return args.includes('--json') ? 'json' : 'human';
 }
 
 export async function runCli(
@@ -172,61 +305,55 @@ export async function runCli(
   io: CliIo,
   runtime: CliRuntime = { cwd: process.cwd() },
 ): Promise<number> {
-  if (args.length === 0 || args.every((argument) => argument === '--help' || argument === '-h')) {
-    io.stdout(HELP_TEXT);
-    return 0;
-  }
-
+  let outputMode = requestedOutputMode(args);
+  let context: CliPresentationContext = { command: inferCliCommand(args) };
   try {
-    const data = await executeCommand(args, runtime);
+    const invocation = parseCliArguments(args);
+    if (invocation.kind === 'help') {
+      io.stdout(HELP_TEXT);
+      return 0;
+    }
+    outputMode = invocation.outputMode;
+    context = { command: invocation.command, projectId: invocation.projectId };
+    const data = await executeCommand(invocation, runtime);
     const unhealthyStatus = unhealthyKnowledgeStatus(data);
     if (unhealthyStatus !== null) {
-      writeJson(
-        io,
-        {
-          data,
-          error: {
-            code: statusErrorCode(unhealthyStatus.knowledge.state),
-            message: 'Knowledge repository requires recovery before project access.',
-            ...(unhealthyStatus.recoveryCommand === undefined
-              ? {}
-              : { recoveryCommand: unhealthyStatus.recoveryCommand }),
-          },
-          ok: false,
-        },
-        true,
+      const error = new KnowledgeError(
+        statusErrorCode(unhealthyStatus.knowledge.state),
+        'Knowledge repository requires recovery before project access.',
+        unhealthyStatus.recoveryCommand === undefined
+          ? {}
+          : { recoveryCommand: unhealthyStatus.recoveryCommand },
       );
-      return 1;
+      const failure = mapCliError(error, {
+        ...context,
+        knowledgeRevision: safeStringField(data, 'currentCommit'),
+        workspacePath: safeStringField(data, 'workspacePath'),
+      });
+      const rendered = renderCliResult(
+        Object.freeze({ ...failure, data, partial: true }),
+        outputMode,
+      );
+      writeRenderedCliResult(io, rendered);
+      return rendered.exitCode;
     }
-    writeJson(io, { data, ok: true });
-    return 0;
+    if (qualityFailed(invocation, data)) {
+      const failure = mapCliError(new CliQualityGateError(), context);
+      const rendered = renderCliResult(Object.freeze({
+        ...failure,
+        data,
+        partial: dataIsPartial(data),
+        warnings: Object.freeze(safeWarnings(data)),
+      }), outputMode);
+      writeRenderedCliResult(io, rendered);
+      return rendered.exitCode;
+    }
+    const rendered = renderCliResult(successResult(invocation, data), outputMode);
+    writeRenderedCliResult(io, rendered);
+    return rendered.exitCode;
   } catch (error) {
-    if (error instanceof CliUsageError) {
-      io.stderr('Unsupported command. Run buildlore --help for usage.\n');
-      return 2;
-    }
-    if (error instanceof KnowledgeError) {
-      writeJson(
-        io,
-        {
-          error: {
-            code: error.code,
-            message: error.message,
-            ...(error.recoveryCommand === undefined
-              ? {}
-              : { recoveryCommand: error.recoveryCommand }),
-          },
-          ok: false,
-        },
-        true,
-      );
-      return 1;
-    }
-    writeJson(
-      io,
-      { error: { code: 'INTERNAL_ERROR', message: 'BuildLore could not complete the command.' }, ok: false },
-      true,
-    );
-    return 1;
+    const rendered = renderCliResult(mapCliError(error, context), outputMode);
+    writeRenderedCliResult(io, rendered);
+    return rendered.exitCode;
   }
 }

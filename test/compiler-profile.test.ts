@@ -17,11 +17,15 @@ import {
 const temporaryRoots: string[] = [];
 const STATUS_RESULT = {
   lastCompiledAt: null,
+  orphanedCount: 0,
+  orphanedPages: [],
   pages: { concepts: 0, queries: 0, total: 0 },
   pendingCandidates: 0,
   pendingChanges: [],
   pendingChangesCount: 0,
   sources: 0,
+  staleCount: 0,
+  stalePages: [],
   stateStatus: 'missing',
 };
 
