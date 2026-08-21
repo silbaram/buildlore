@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/retrieval-evaluation.schema.json",
+  "title": "BuildLore retrieval evaluation report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "inputHashes", "selectedStrategy", "embeddingFixtureIdentity",
+    "semanticFixtureId", "morphologyFixtureIdentity", "candidateComparisonPassed",
+    "candidates", "metrics", "regression", "performance", "overallPassed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.retrieval-eval.v1" },
+    "inputHashes": { "$ref": "#/$defs/inputHashes" },
+    "selectedStrategy": { "$ref": "#/$defs/strategy" },
+    "embeddingFixtureIdentity": { "$ref": "#/$defs/embeddingIdentity" },
+    "semanticFixtureId": { "$ref": "#/$defs/id" },
+    "morphologyFixtureIdentity": { "$ref": "#/$defs/morphologyIdentity" },
+    "candidateComparisonPassed": { "type": "boolean" },
+    "candidates": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/candidate" }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 15,
+      "maxItems": 15,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/metric" }
+    },
+    "regression": { "$ref": "#/$defs/regression" },
+    "performance": { "$ref": "#/$defs/performance" },
+    "overallPassed": { "type": "boolean" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "reasonCodes": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "inputHashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpusSha256", "querySha256", "judgementSha256"],
+      "properties": {
+        "corpusSha256": { "$ref": "#/$defs/digest" },
+        "querySha256": { "$ref": "#/$defs/digest" },
+        "judgementSha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseFold", "indexSchemaVersion", "ngramSizes", "normalization", "scoringVersion",
+        "strategyDigest", "tokenizerId", "tokenizerVersion"
+      ],
+      "properties": {
+        "caseFold": { "const": "unicode-lowercase" },
+        "indexSchemaVersion": { "const": 1 },
+        "ngramSizes": {
+          "type": "array",
+          "prefixItems": [{ "const": 2 }, { "const": 3 }],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "normalization": { "const": "NFC" },
+        "scoringVersion": { "const": 1 },
+        "strategyDigest": { "$ref": "#/$defs/digest" },
+        "tokenizerId": { "const": "buildlore-unicode-hangul-ngram" },
+        "tokenizerVersion": { "const": 1 }
+      }
+    },
+    "embeddingIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compatibilityDigest", "compilerVersion", "modelId", "providerId"],
+      "properties": {
+        "compatibilityDigest": { "$ref": "#/$defs/digest" },
+        "compilerVersion": { "const": "1.1.0" },
+        "dimensions": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "modelId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$",
+          "allOf": [
+            { "not": { "pattern": "(?:^|[-_.])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])(?:$|[-_.])" } },
+            { "not": { "pattern": "(?:^|[^A-Za-z0-9])(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|npm_[A-Za-z0-9]{20,255}|sk-(?:ant-)?[A-Za-z0-9_-]{20,255}|AIza[A-Za-z0-9_-]{32,64}|xox[baprs]-[A-Za-z0-9-]{10,255})(?:$|[^A-Za-z0-9])" } }
+          ]
+        },
+        "modelRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$",
+          "allOf": [
+            { "not": { "pattern": "(?:^|[-_.])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])(?:$|[-_.])" } },
+            { "not": { "pattern": "(?:^|[^A-Za-z0-9])(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|npm_[A-Za-z0-9]{20,255}|sk-(?:ant-)?[A-Za-z0-9_-]{20,255}|AIza[A-Za-z0-9_-]{32,64}|xox[baprs]-[A-Za-z0-9-]{10,255})(?:$|[^A-Za-z0-9])" } }
+          ]
+        },
+        "providerId": { "enum": ["ollama", "openai", "voyage"] }
+      }
+    },
+    "morphologyIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixtureId", "modelVersion", "packageVersion"],
+      "properties": {
+        "fixtureId": { "$ref": "#/$defs/id" },
+        "modelVersion": { "$ref": "#/$defs/id" },
+        "packageVersion": { "$ref": "#/$defs/id" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId", "dependencyImpact", "decision", "deterministicOffline", "identity",
+        "indexBytes", "indexBytesUnavailableReason", "licenseId", "metrics", "reasonCodes",
+        "sourceEvidenceIds"
+      ],
+      "properties": {
+        "candidateId": { "$ref": "#/$defs/id" },
+        "dependencyImpact": { "enum": ["none", "deferred-wasm-model"] },
+        "decision": { "enum": ["selected", "rejected", "recorded-only"] },
+        "deterministicOffline": { "type": "boolean" },
+        "identity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "allOf": [
+            { "not": { "pattern": "(?:[Hh][Tt][Tt][Pp][Ss]?|[Ff][Ii][Ll][Ee])://" } },
+            { "not": { "pattern": "(?:^|[\\s\"'(=])(?:/(?:[^/\\s]+/)*[^/\\s]+|[A-Za-z]:[\\\\/]|\\\\\\\\[^\\\\\\s]+\\\\[^\\\\\\s]+)" } },
+            { "not": { "pattern": "(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]\\s*:|[Bb][Ee][Aa][Rr][Ee][Rr]\\s+|(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])\\s*[=:])" } },
+            { "not": { "pattern": "(?:^|[^A-Za-z0-9])(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|npm_[A-Za-z0-9]{20,255}|sk-(?:ant-)?[A-Za-z0-9_-]{20,255}|AIza[A-Za-z0-9_-]{32,64}|xox[baprs]-[A-Za-z0-9-]{10,255})(?:$|[^A-Za-z0-9])" } }
+          ]
+        },
+        "indexBytes": { "type": ["integer", "null"], "minimum": 0 },
+        "indexBytesUnavailableReason": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }]
+        },
+        "licenseId": { "enum": ["BuildLore-internal", "MIT"] },
+        "metrics": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/metric" }
+        },
+        "reasonCodes": { "$ref": "#/$defs/reasonCodes" },
+        "sourceEvidenceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^(?:LOCAL|WEB)-[0-9]+$" }
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "metricVersion", "mode", "mrr", "passed", "queryCount", "recallAt5", "thresholds"],
+      "properties": {
+        "category": { "$ref": "#/$defs/category" },
+        "metricVersion": { "const": 1 },
+        "mode": { "$ref": "#/$defs/mode" },
+        "mrr": { "type": "number", "minimum": 0, "maximum": 1 },
+        "passed": { "type": "boolean" },
+        "queryCount": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "recallAt5": { "type": "number", "minimum": 0, "maximum": 1 },
+        "thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minimumMrr", "minimumRecallAt5"],
+          "properties": {
+            "minimumMrr": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "minimumRecallAt5": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "regression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compatible", "passed", "reasonCodes"],
+      "properties": {
+        "compatible": { "type": "boolean" },
+        "passed": { "type": "boolean" },
+        "reasonCodes": { "$ref": "#/$defs/reasonCodes" }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "architecture", "comparable", "cpuModelClass", "indexBytes", "latencyMilliseconds",
+        "logicalCpuCount", "nodeVersion", "operatingSystem", "reasonCodes", "sampleCount",
+        "timerKind", "warmupCount"
+      ],
+      "properties": {
+        "architecture": { "$ref": "#/$defs/safeRunnerText" },
+        "comparable": { "type": "boolean" },
+        "cpuModelClass": { "$ref": "#/$defs/digest" },
+        "indexBytes": { "type": "integer", "minimum": 0 },
+        "latencyMilliseconds": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["maximum", "median", "minimum"],
+              "properties": {
+                "maximum": { "type": "number", "minimum": 0 },
+                "median": { "type": "number", "minimum": 0 },
+                "minimum": { "type": "number", "minimum": 0 }
+              }
+            }
+          ]
+        },
+        "logicalCpuCount": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "nodeVersion": { "$ref": "#/$defs/safeRunnerText" },
+        "operatingSystem": { "$ref": "#/$defs/safeRunnerText" },
+        "reasonCodes": { "$ref": "#/$defs/reasonCodes" },
+        "sampleCount": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "timerKind": { "enum": ["injected", "performance-now"] },
+        "warmupCount": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "safeRunnerText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._+-]+$",
+      "allOf": [
+        { "not": { "pattern": "(?:^|[-_.])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])(?:$|[-_.])" } },
+        { "not": { "pattern": "(?:^|[^A-Za-z0-9])(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|npm_[A-Za-z0-9]{20,255}|sk-(?:ant-)?[A-Za-z0-9_-]{20,255}|AIza[A-Za-z0-9_-]{32,64}|xox[baprs]-[A-Za-z0-9-]{10,255})(?:$|[^A-Za-z0-9])" } }
+      ]
+    },
+    "category": {
+      "enum": ["korean-exact", "korean-spacing-morphology", "korean-synonym", "korean-to-english", "code-symbol-korean"]
+    },
+    "mode": { "enum": ["lexical", "semantic", "hybrid"] }
+  }
+}

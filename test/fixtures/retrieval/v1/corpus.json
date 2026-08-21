@@ -1,0 +1,223 @@
+{
+  "schemaVersion": "buildlore.retrieval-corpus.v1",
+  "corpusVersion": "issue-10-v1",
+  "documents": [
+    {
+      "evidenceId": "doc-auth",
+      "language": "ko",
+      "pageId": "guides/auth-recovery",
+      "sourceRefs": [
+        "repo@v1:docs/auth-recovery.md"
+      ],
+      "title": "인증 오류 복구",
+      "summary": "로그인 실패 해결 절차",
+      "body": "토큰 갱신과 인증 오류를 안전하게 복구한다"
+    },
+    {
+      "evidenceId": "doc-cache",
+      "language": "ko",
+      "pageId": "guides/cache-invalidation",
+      "sourceRefs": [
+        "repo@v1:docs/cache-invalidation.md"
+      ],
+      "title": "캐시 무효화 전략",
+      "summary": "오래된 데이터를 갱신하는 방법",
+      "body": "캐시를 무효화하여 최신 상태를 유지한다"
+    },
+    {
+      "evidenceId": "doc-deploy",
+      "language": "ko",
+      "pageId": "guides/deployment",
+      "sourceRefs": [
+        "repo@v1:docs/deployment.md"
+      ],
+      "title": "배포 자동화",
+      "summary": "서비스 릴리스 절차",
+      "body": "안전한 배포 절차와 롤백 단계를 설명한다"
+    },
+    {
+      "evidenceId": "doc-observability",
+      "language": "en",
+      "pageId": "concepts/observability",
+      "sourceRefs": [
+        "repo@v1:docs/observability.md"
+      ],
+      "title": "Service observability",
+      "summary": "Tracing metrics and logging",
+      "body": "Production services use distributed tracing metrics and structured logging"
+    },
+    {
+      "evidenceId": "doc-retry",
+      "language": "en",
+      "pageId": "concepts/retry-policy",
+      "sourceRefs": [
+        "repo@v1:docs/retry-policy.md"
+      ],
+      "title": "Request retry policy",
+      "summary": "Exponential backoff guidance",
+      "body": "Retry failed requests with bounded exponential backoff and jitter"
+    },
+    {
+      "evidenceId": "doc-hook",
+      "language": "ko",
+      "pageId": "code/react-state",
+      "sourceRefs": [
+        "repo@v1:docs/react-state.md"
+      ],
+      "title": "useState 상태 관리",
+      "summary": "React 훅 사용법",
+      "body": "useState 훅으로 컴포넌트 상태를 관리한다"
+    },
+    {
+      "evidenceId": "doc-api",
+      "language": "ko",
+      "pageId": "code/get-user",
+      "sourceRefs": [
+        "repo@v1:docs/get-user.md"
+      ],
+      "title": "getUser API 오류 처리",
+      "summary": "사용자 조회 실패 대응",
+      "body": "getUser 함수의 네트워크 오류를 구조화해 처리한다"
+    },
+    {
+      "evidenceId": "doc-security",
+      "language": "ko",
+      "pageId": "concepts/security",
+      "sourceRefs": [
+        "repo@v1:docs/security.md"
+      ],
+      "title": "보안 경계",
+      "summary": "입력 검증과 권한 분리",
+      "body": "외부 입력을 검증하고 최소 권한을 적용한다"
+    }
+  ],
+  "queries": [
+    {
+      "queryId": "q-exact-auth",
+      "category": "korean-exact",
+      "language": "ko",
+      "text": "인증 오류",
+      "requestedMode": "lexical"
+    },
+    {
+      "queryId": "q-exact-cache",
+      "category": "korean-exact",
+      "language": "ko",
+      "text": "캐시 무효화",
+      "requestedMode": "lexical"
+    },
+    {
+      "queryId": "q-spacing-auth",
+      "category": "korean-spacing-morphology",
+      "language": "ko",
+      "text": "인증오류복구",
+      "requestedMode": "lexical"
+    },
+    {
+      "queryId": "q-morph-deploy",
+      "category": "korean-spacing-morphology",
+      "language": "ko",
+      "text": "배포하기",
+      "requestedMode": "lexical"
+    },
+    {
+      "queryId": "q-syn-login",
+      "category": "korean-synonym",
+      "language": "ko",
+      "text": "로그인 문제 해결",
+      "requestedMode": "semantic"
+    },
+    {
+      "queryId": "q-syn-cache",
+      "category": "korean-synonym",
+      "language": "ko",
+      "text": "오래된 데이터 새로 고침",
+      "requestedMode": "semantic"
+    },
+    {
+      "queryId": "q-cross-observe",
+      "category": "korean-to-english",
+      "language": "ko",
+      "text": "서비스 관측성과 추적",
+      "requestedMode": "semantic"
+    },
+    {
+      "queryId": "q-cross-retry",
+      "category": "korean-to-english",
+      "language": "ko",
+      "text": "요청 재시도 정책",
+      "requestedMode": "semantic"
+    },
+    {
+      "queryId": "q-code-state",
+      "category": "code-symbol-korean",
+      "language": "ko",
+      "text": "useState 상태",
+      "requestedMode": "lexical"
+    },
+    {
+      "queryId": "q-code-user",
+      "category": "code-symbol-korean",
+      "language": "ko",
+      "text": "getUser 오류",
+      "requestedMode": "lexical"
+    }
+  ],
+  "judgements": [
+    {
+      "queryId": "q-exact-auth",
+      "evidenceId": "doc-auth",
+      "relevance": 3
+    },
+    {
+      "queryId": "q-exact-cache",
+      "evidenceId": "doc-cache",
+      "relevance": 3
+    },
+    {
+      "queryId": "q-spacing-auth",
+      "evidenceId": "doc-auth",
+      "relevance": 3
+    },
+    {
+      "queryId": "q-morph-deploy",
+      "evidenceId": "doc-deploy",
+      "relevance": 3
+    },
+    {
+      "queryId": "q-syn-login",
+      "evidenceId": "doc-auth",
+      "relevance": 3
+    },
+    {
+      "queryId": "q-syn-cache",
+      "evidenceId": "doc-cache",
+      "relevance": 3
+    },
+    {
+      "queryId": "q-cross-observe",
+      "evidenceId": "doc-observability",
+      "relevance": 3
+    },
+    {
+      "queryId": "q-cross-retry",
+      "evidenceId": "doc-retry",
+      "relevance": 3
+    },
+    {
+      "queryId": "q-code-state",
+      "evidenceId": "doc-hook",
+      "relevance": 3
+    },
+    {
+      "queryId": "q-code-user",
+      "evidenceId": "doc-api",
+      "relevance": 3
+    }
+  ],
+  "hashes": {
+    "corpusSha256": "sha256:4c656f7a1ee332097542ae084ba77e48014e82206df7204b92dbcf4ca0e37012",
+    "querySha256": "sha256:056ed130e87a6eaf16130ad483bf1612827c03be41d193f964ea8e023143fe6c",
+    "judgementSha256": "sha256:a0d8767ce717b4d86d8813e92d63c14fad2e11bf761f0243daaae7ca1b6851b3"
+  }
+}

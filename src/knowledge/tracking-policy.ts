@@ -39,6 +39,7 @@ export const LLWIKI_TRACKING_MATRIX = {
     '.llmwiki/candidates/',
     '.llmwiki/workflows/',
     '.llmwiki/eval/',
+    '.llmwiki/buildlore-embedding-identity.json',
   ],
   tracked: [
     'manifest.json',

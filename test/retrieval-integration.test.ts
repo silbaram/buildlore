@@ -40,7 +40,7 @@ afterEach(async () => {
 });
 
 describe('provider-free project retrieval integration', () => {
-  it('reads only the selected confined corpus and never invokes compiler/provider work', async () => {
+  it('[V9-V-19][V10-V-11] reads only the selected confined corpus without provider work', async () => {
     const knowledgeRoot = await mkdtemp(join(process.cwd(), '.test-tmp-retrieval-integration-'));
     temporaryRoots.push(knowledgeRoot);
     for (const projectId of ['alpha', 'beta'] as const) {

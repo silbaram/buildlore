@@ -1,0 +1,513 @@
+{
+  "candidateComparisonPassed": true,
+  "candidates": [
+    {
+      "candidateId": "v8-unicode-word",
+      "dependencyImpact": "none",
+      "decision": "rejected",
+      "deterministicOffline": true,
+      "identity": "buildlore-v8-unicode-word-v1",
+      "indexBytes": 7648,
+      "indexBytesUnavailableReason": null,
+      "licenseId": "BuildLore-internal",
+      "metrics": [
+        {
+          "category": "korean-exact",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": 0.75,
+            "minimumRecallAt5": 0.9
+          }
+        },
+        {
+          "category": "korean-spacing-morphology",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 0,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 0,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        },
+        {
+          "category": "korean-synonym",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        },
+        {
+          "category": "korean-to-english",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 0,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 0,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        },
+        {
+          "category": "code-symbol-korean",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        }
+      ],
+      "reasonCodes": [
+        "spacing-morphology-recall-lower"
+      ],
+      "sourceEvidenceIds": [
+        "LOCAL-2"
+      ]
+    },
+    {
+      "candidateId": "buildlore-unicode-hangul-ngram",
+      "dependencyImpact": "none",
+      "decision": "selected",
+      "deterministicOffline": true,
+      "identity": "sha256:2a24df974ac503506ab9ecfd89bbd088e66a59cf4fef92228f1d6c474d90834c",
+      "indexBytes": 23892,
+      "indexBytesUnavailableReason": null,
+      "licenseId": "BuildLore-internal",
+      "metrics": [
+        {
+          "category": "korean-exact",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": 0.75,
+            "minimumRecallAt5": 0.9
+          }
+        },
+        {
+          "category": "korean-spacing-morphology",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        },
+        {
+          "category": "korean-synonym",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        },
+        {
+          "category": "korean-to-english",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 0,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 0,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        },
+        {
+          "category": "code-symbol-korean",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        }
+      ],
+      "reasonCodes": [
+        "deterministic",
+        "offline",
+        "no-new-dependency",
+        "quality-gates-passed"
+      ],
+      "sourceEvidenceIds": [
+        "LOCAL-4",
+        "WEB-3"
+      ]
+    },
+    {
+      "candidateId": "garu-ko",
+      "dependencyImpact": "deferred-wasm-model",
+      "decision": "recorded-only",
+      "deterministicOffline": true,
+      "identity": "0.1.0/recorded.2026.08",
+      "indexBytes": null,
+      "indexBytesUnavailableReason": "recorded-ranking-has-no-index-artifact",
+      "licenseId": "MIT",
+      "metrics": [
+        {
+          "category": "korean-exact",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": 0.75,
+            "minimumRecallAt5": 0.9
+          }
+        },
+        {
+          "category": "korean-spacing-morphology",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        },
+        {
+          "category": "korean-synonym",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        },
+        {
+          "category": "korean-to-english",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        },
+        {
+          "category": "code-symbol-korean",
+          "metricVersion": 1,
+          "mode": "lexical",
+          "mrr": 1,
+          "passed": true,
+          "queryCount": 2,
+          "recallAt5": 1,
+          "thresholds": {
+            "minimumMrr": null,
+            "minimumRecallAt5": null
+          }
+        }
+      ],
+      "reasonCodes": [
+        "runtime-dependency-deferred",
+        "recorded-candidate-only"
+      ],
+      "sourceEvidenceIds": [
+        "WEB-5"
+      ]
+    }
+  ],
+  "embeddingFixtureIdentity": {
+    "compilerVersion": "1.1.0",
+    "dimensions": 1024,
+    "modelId": "voyage-3-lite",
+    "modelRevision": "recorded-v1",
+    "providerId": "voyage",
+    "compatibilityDigest": "sha256:5233cca854a6ecc4ec8ddb36ef1637ca06e53276b89200db5d2d2e2eccdc785a"
+  },
+  "inputHashes": {
+    "corpusSha256": "sha256:4c656f7a1ee332097542ae084ba77e48014e82206df7204b92dbcf4ca0e37012",
+    "judgementSha256": "sha256:a0d8767ce717b4d86d8813e92d63c14fad2e11bf761f0243daaae7ca1b6851b3",
+    "querySha256": "sha256:056ed130e87a6eaf16130ad483bf1612827c03be41d193f964ea8e023143fe6c"
+  },
+  "metrics": [
+    {
+      "category": "korean-exact",
+      "metricVersion": 1,
+      "mode": "lexical",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": 0.75,
+        "minimumRecallAt5": 0.9
+      }
+    },
+    {
+      "category": "korean-spacing-morphology",
+      "metricVersion": 1,
+      "mode": "lexical",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "korean-synonym",
+      "metricVersion": 1,
+      "mode": "lexical",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "korean-to-english",
+      "metricVersion": 1,
+      "mode": "lexical",
+      "mrr": 0,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 0,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "code-symbol-korean",
+      "metricVersion": 1,
+      "mode": "lexical",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "korean-exact",
+      "metricVersion": 1,
+      "mode": "semantic",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "korean-spacing-morphology",
+      "metricVersion": 1,
+      "mode": "semantic",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "korean-synonym",
+      "metricVersion": 1,
+      "mode": "semantic",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": 0.8
+      }
+    },
+    {
+      "category": "korean-to-english",
+      "metricVersion": 1,
+      "mode": "semantic",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": 0.7
+      }
+    },
+    {
+      "category": "code-symbol-korean",
+      "metricVersion": 1,
+      "mode": "semantic",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "korean-exact",
+      "metricVersion": 1,
+      "mode": "hybrid",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "korean-spacing-morphology",
+      "metricVersion": 1,
+      "mode": "hybrid",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "korean-synonym",
+      "metricVersion": 1,
+      "mode": "hybrid",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "korean-to-english",
+      "metricVersion": 1,
+      "mode": "hybrid",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    },
+    {
+      "category": "code-symbol-korean",
+      "metricVersion": 1,
+      "mode": "hybrid",
+      "mrr": 1,
+      "passed": true,
+      "queryCount": 2,
+      "recallAt5": 1,
+      "thresholds": {
+        "minimumMrr": null,
+        "minimumRecallAt5": null
+      }
+    }
+  ],
+  "morphologyFixtureIdentity": {
+    "fixtureId": "recorded-garu-v1",
+    "modelVersion": "recorded.2026.08",
+    "packageVersion": "0.1.0"
+  },
+  "performance": {
+    "architecture": "fixture-arch",
+    "cpuModelClass": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "logicalCpuCount": 4,
+    "nodeVersion": "v24-fixture",
+    "operatingSystem": "fixture-os",
+    "sampleCount": 3,
+    "timerKind": "injected",
+    "warmupCount": 1,
+    "comparable": true,
+    "indexBytes": 23892,
+    "latencyMilliseconds": {
+      "maximum": 1,
+      "median": 1,
+      "minimum": 1
+    },
+    "reasonCodes": []
+  },
+  "schemaVersion": "buildlore.retrieval-eval.v1",
+  "semanticFixtureId": "recorded-semantic-v1",
+  "selectedStrategy": {
+    "caseFold": "unicode-lowercase",
+    "indexSchemaVersion": 1,
+    "ngramSizes": [
+      2,
+      3
+    ],
+    "normalization": "NFC",
+    "scoringVersion": 1,
+    "tokenizerId": "buildlore-unicode-hangul-ngram",
+    "tokenizerVersion": 1,
+    "strategyDigest": "sha256:2a24df974ac503506ab9ecfd89bbd088e66a59cf4fef92228f1d6c474d90834c"
+  },
+  "overallPassed": true,
+  "regression": {
+    "compatible": true,
+    "passed": true,
+    "reasonCodes": []
+  }
+}

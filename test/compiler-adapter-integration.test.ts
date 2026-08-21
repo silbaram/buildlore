@@ -4,7 +4,10 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createProjectCompiler } from '../src/compiler/index.js';
+import {
+  createProjectCompiler,
+  EMBEDDING_MARKER_FILENAME,
+} from '../src/compiler/index.js';
 import { addProject } from '../src/knowledge/index.js';
 import { createSourceDocument, renderSourceDocument } from '../src/projector/index.js';
 import { createProjectRetrieval } from '../src/retrieval/index.js';
@@ -166,7 +169,7 @@ describe('llm-wiki-compiler offline SDK integration', () => {
     expect(serialized).not.toMatch(/ALPHA-MARKER|fixture-key-not-a-secret/u);
   });
 
-  it('compiles isolated same-slug projects and makes the second identical compile a provider no-op', async () => {
+  it('[V9-V-13][V9-V-15][V9-V-19][V10-V-11] keeps markers and same-slug projects isolated and stable', async () => {
     const provider = await startFakeOpenAiServer();
     servers.push(provider);
     setEnvironment('LLMWIKI_PROVIDER', 'openai');
@@ -187,6 +190,23 @@ describe('llm-wiki-compiler offline SDK integration', () => {
       data: { compiled: 1, pageIds: ['concepts/shared-topic'] },
       outcome: 'succeeded',
       projectId: 'alpha',
+    });
+    const embeddingMarkerPath = join(
+      knowledgeRoot,
+      'projects',
+      'alpha',
+      '.llmwiki',
+      EMBEDDING_MARKER_FILENAME,
+    );
+    const embeddingMarkerBefore = await readFile(embeddingMarkerPath, 'utf8');
+    expect(JSON.parse(embeddingMarkerBefore)).toMatchObject({
+      embeddingIdentity: {
+        compilerVersion: '1.1.0',
+        modelId: 'fixture-embedding-model',
+        providerId: 'openai',
+      },
+      projectId: 'alpha',
+      schemaVersion: 'buildlore.embedding-index-identity.v1',
     });
     const callsAfterFirst = provider.chatCalls + provider.embeddingCalls;
     const lexical = createProjectRetrieval({ knowledgeRoot });
@@ -229,6 +249,7 @@ describe('llm-wiki-compiler offline SDK integration', () => {
     const alphaSecond = await compiler.execute({ capability: 'compile', projectId: 'alpha' });
     expect(alphaSecond).toMatchObject({ data: { compiled: 0 }, outcome: 'unchanged' });
     expect(provider.chatCalls + provider.embeddingCalls).toBe(callsAfterFirst);
+    await expect(readFile(embeddingMarkerPath, 'utf8')).resolves.toBe(embeddingMarkerBefore);
     await expect(
       readFile(join(knowledgeRoot, 'projects', 'alpha', 'wiki', 'concepts', 'shared-topic.md'), 'utf8'),
     ).resolves.toBe(alphaWikiBefore);

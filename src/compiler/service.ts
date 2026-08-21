@@ -8,6 +8,11 @@ import {
 import { requiresEgress } from './capabilities.js';
 import { createLlmWikiCompilerBackend } from './backend.js';
 import { CompilerBackendError, CompilerOperationError } from './errors.js';
+import {
+  createProjectEmbeddingIdentityStore,
+  resolveConfiguredEmbeddingIdentity,
+  type ProjectEmbeddingIdentityPort,
+} from './embedding-identity.js';
 import { normalizeCompilerResult, validateCompilerRequest } from './normalizers.js';
 import {
   processOutputLanguageCoordinator,
@@ -179,6 +184,7 @@ const projectOperations = new ProjectOperationCoordinator();
 
 export interface CreateProjectCompilerOptions {
   readonly backend?: CompilerBackend;
+  readonly embeddingIdentityPort?: ProjectEmbeddingIdentityPort;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly knowledgeRoot: string;
   readonly outputLanguageCoordinator?: OutputLanguageCoordinator;
@@ -188,6 +194,8 @@ export interface CreateProjectCompilerOptions {
 export function createProjectCompiler(options: CreateProjectCompilerOptions): ProjectCompilerPort {
   const backend = options.backend ?? createLlmWikiCompilerBackend();
   const environment = options.environment ?? process.env;
+  const embeddingIdentityPort = options.embeddingIdentityPort ??
+    createProjectEmbeddingIdentityStore(options.knowledgeRoot);
   const knowledgeRoot = options.knowledgeRoot;
   const outputLanguageCoordinator = options.outputLanguageCoordinator ??
     processOutputLanguageCoordinator;
@@ -232,6 +240,9 @@ export function createProjectCompiler(options: CreateProjectCompilerOptions): Pr
     ) as CompilerRequest;
     validateProjectId(request.projectId);
     validateExecutionControl(request, controlCandidate);
+    const startingEmbeddingIdentity = request.capability === 'compile' && request.review !== true
+      ? resolveConfiguredEmbeddingIdentity(environment)
+      : null;
     const control = controlCandidate;
     return requestOrdering.run(request.projectId, async () => {
       const selectedWorkspace = await resolveWorkspace(request.projectId);
@@ -321,7 +332,41 @@ export function createProjectCompiler(options: CreateProjectCompilerOptions): Pr
             }
             if (cancelRequested) throw cancellationError(request, true);
             try {
-              return normalizeCompilerResult(request, raw);
+              const normalized = normalizeCompilerResult(request, raw);
+              if (request.capability === 'compile' && request.review !== true &&
+                  startingEmbeddingIdentity !== null) {
+                const settledIdentity = resolveConfiguredEmbeddingIdentity(environment);
+                if (settledIdentity === null || settledIdentity.compatibilityDigest !==
+                    startingEmbeddingIdentity.compatibilityDigest) {
+                  throw new CompilerOperationError(
+                    'COMPILER_FAILED',
+                    'Compiler embedding identity changed during execution.',
+                    {
+                      capability: request.capability,
+                      projectId: request.projectId,
+                      recoveryAction: 'status',
+                      retryable: false,
+                      sideEffectsPossible: true,
+                    },
+                  );
+                }
+                try {
+                  await embeddingIdentityPort.record(request.projectId, settledIdentity);
+                } catch {
+                  throw new CompilerOperationError(
+                    'COMPILER_FAILED',
+                    'Compiler identity state could not be recorded.',
+                    {
+                      capability: request.capability,
+                      projectId: request.projectId,
+                      recoveryAction: 'status',
+                      retryable: false,
+                      sideEffectsPossible: true,
+                    },
+                  );
+                }
+              }
+              return normalized;
             } catch (error) {
               if (error instanceof CompilerOperationError) throw error;
               throw contractError(request);

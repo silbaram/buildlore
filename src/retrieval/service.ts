@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type {
   CompilerOperationResult,
   CompilerWarning,
@@ -5,17 +7,29 @@ import type {
   EvalSummary,
   SearchSummary,
 } from '../compiler/index.js';
-import { createProjectCompiler, type ProjectCompilerPort } from '../compiler/index.js';
+import {
+  createProjectCompiler,
+  type ProjectCompilerPort,
+} from '../compiler/index.js';
+import {
+  createProjectEmbeddingIdentityStore,
+  resolveConfiguredEmbeddingIdentity,
+  type EmbeddingIdentity,
+  type ProjectEmbeddingCompatibilityPort,
+} from '../compiler/embedding-identity.js';
 import {
   createProjectCorpus,
   type ProjectCorpusPort,
   type SearchCorpus,
   type SearchCorpusPage,
 } from '../compiler/corpus.js';
+import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import { queryTokens, rankLexical, roundSix, type LexicalRankedPage } from './lexical.js';
+import { buildLexicalIndex, fuseReciprocalRanks, RETRIEVAL_STRATEGY } from './strategy.js';
 import {
   RetrievalOperationError,
   type CreateProjectRetrievalOptions,
+  type EmbeddingCompatibility,
   type ProjectContextRequest,
   type ProjectContextResult,
   type ProjectRetrievalPort,
@@ -24,6 +38,7 @@ import {
   type RetrievalFallback,
   type RetrievalFallbackReason,
   type RetrievalMode,
+  type RetrievalRecoveryAction,
   type RetrievalWarning,
   type RetrievalWarningCode,
   type SearchHit,
@@ -32,6 +47,8 @@ import {
 export interface CreateProjectRetrievalWithPortsOptions {
   readonly compiler: ProjectCompilerPort;
   readonly corpus: ProjectCorpusPort;
+  readonly embeddingCompatibility?: ProjectEmbeddingCompatibilityPort;
+  readonly embeddingIdentity?: () => EmbeddingIdentity | null;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly providerConfigured?: () => boolean;
 }
@@ -197,13 +214,16 @@ function pageHit(
   score: number,
   scoreKind: SearchHit['scoreKind'],
   ranks: { readonly lexicalRank?: number; readonly semanticRank?: number },
+  details: Pick<SearchHit, 'matchedEvidence' | 'scoreComponents'>,
 ): SearchHit {
   return {
     freshness: 'fresh',
     ...(ranks.lexicalRank === undefined ? {} : { lexicalRank: ranks.lexicalRank }),
+    matchedEvidence: details.matchedEvidence,
     pageId: page.pageId,
     rank,
     score,
+    scoreComponents: details.scoreComponents,
     scoreKind,
     ...(ranks.semanticRank === undefined ? {} : { semanticRank: ranks.semanticRank }),
     sourceRefs: page.sourceRefs,
@@ -214,8 +234,14 @@ function pageHit(
 
 function lexicalHits(ranked: readonly LexicalRankedPage[]): readonly SearchHit[] {
   return ranked.slice(0, MAX_HITS).map((item, index) =>
-    pageHit(item.page, index + 1, item.score, 'lexical-coverage', {
+    pageHit(item.page, index + 1, item.score, 'lexical-weighted-coverage', {
       lexicalRank: item.lexicalRank,
+    }, {
+      matchedEvidence: item.matchedEvidence,
+      scoreComponents: {
+        combinedScore: item.score,
+        lexical: item.scoreComponents,
+      },
     }),
   );
 }
@@ -226,13 +252,50 @@ function semanticRanks(
   projectId: string,
 ): ReadonlyMap<string, number> {
   const ranks = new Map<string, number>();
-  result.pages.forEach((reference, index) => {
-    if (!pages.has(reference.pageId) || ranks.has(reference.pageId)) {
+  result.pages.forEach((reference) => {
+    if (!pages.has(reference.pageId)) {
       throw new RetrievalOperationError('RETRIEVAL_SEMANTIC_DRIFT', projectId);
     }
-    ranks.set(reference.pageId, index + 1);
+    if (!ranks.has(reference.pageId)) ranks.set(reference.pageId, ranks.size + 1);
   });
   return ranks;
+}
+
+function validatedCorpus(corpus: SearchCorpus, projectId: string): SearchCorpus {
+  if (!isRecord(corpus) || corpus.projectId !== projectId || !Array.isArray(corpus.pages) ||
+      !Array.isArray(corpus.warnings) || corpus.warnings.length > 20 ||
+      corpus.warnings.some((warning) => !isRecord(warning) ||
+        Object.keys(warning).length !== 1 || typeof warning.code !== 'string' ||
+        warning.code.length < 1 || warning.code.length > 128) ||
+      !isRecord(corpus.excluded) || Object.keys(corpus.excluded).sort().join(',') !==
+        'archived,orphaned,stale,unverified' ||
+      Object.values(corpus.excluded).some((count) => typeof count !== 'number' ||
+        !Number.isSafeInteger(count) || count < 0)) {
+    throw new RetrievalOperationError('RETRIEVAL_CONTRACT_VIOLATION', projectId);
+  }
+  try {
+    buildLexicalIndex(corpus.pages);
+  } catch {
+    throw new RetrievalOperationError('RETRIEVAL_CONTRACT_VIOLATION', projectId);
+  }
+  return corpus;
+}
+
+function corpusSnapshotToken(corpus: SearchCorpus): `sha256:${string}` {
+  const value = {
+    excluded: corpus.excluded,
+    pages: corpus.pages.map((page) => ({
+      body: page.body,
+      freshness: page.freshness,
+      pageId: page.pageId,
+      sourceRefs: [...page.sourceRefs],
+      summary: page.summary,
+      title: page.title,
+    })),
+    projectId: corpus.projectId,
+    warnings: corpus.warnings.map((warning) => ({ code: warning.code })),
+  };
+  return `sha256:${createHash('sha256').update(serializeCanonicalJson(value)).digest('hex')}`;
 }
 
 function semanticHits(
@@ -241,7 +304,13 @@ function semanticHits(
 ): readonly SearchHit[] {
   return [...ranks].slice(0, MAX_HITS).map(([pageId, semanticRank], index) =>
     pageHit(pages.get(pageId) as SearchCorpusPage, index + 1, roundSix(1 / semanticRank),
-      'semantic-rank', { semanticRank }),
+      'semantic-rank', { semanticRank }, {
+        matchedEvidence: [],
+        scoreComponents: {
+          combinedScore: roundSix(1 / semanticRank),
+          semantic: { rank: semanticRank, reciprocalRank: roundSix(1 / semanticRank) },
+        },
+      }),
   );
 }
 
@@ -250,24 +319,55 @@ function hybridHits(
   semantic: ReadonlyMap<string, number>,
   pages: ReadonlyMap<string, SearchCorpusPage>,
 ): readonly SearchHit[] {
-  const lexicalRanks = new Map(lexical.map((item) => [item.page.pageId, item.lexicalRank]));
-  const ids = new Set([...lexicalRanks.keys(), ...semantic.keys()]);
-  const ranked = [...ids].map((pageId) => {
-    const lexicalRank = lexicalRanks.get(pageId);
-    const semanticRank = semantic.get(pageId);
-    const score = roundSix(
-      0.5 * (lexicalRank === undefined ? 0 : 1 / lexicalRank) +
-      0.5 * (semanticRank === undefined ? 0 : 1 / semanticRank),
-    );
-    return { lexicalRank, pageId, score, semanticRank };
-  }).sort((left, right) => right.score - left.score || left.pageId.localeCompare(right.pageId));
+  const lexicalDetails = new Map(lexical.map((item) => [item.page.pageId, item]));
+  const ranked = fuseReciprocalRanks(
+    lexical.map((item) => item.page.pageId),
+    [...semantic.keys()],
+  );
   return ranked.slice(0, MAX_HITS).map((item, index) =>
-    pageHit(pages.get(item.pageId) as SearchCorpusPage, index + 1, item.score,
+    pageHit(pages.get(item.pageId) as SearchCorpusPage, index + 1, item.combinedScore,
       'hybrid-reciprocal-rank', {
         ...(item.lexicalRank === undefined ? {} : { lexicalRank: item.lexicalRank }),
         ...(item.semanticRank === undefined ? {} : { semanticRank: item.semanticRank }),
+      }, {
+        matchedEvidence: lexicalDetails.get(item.pageId)?.matchedEvidence ?? [],
+        scoreComponents: {
+          combinedScore: item.combinedScore,
+          fusion: {
+            lexicalContribution: item.lexicalContribution,
+            semanticContribution: item.semanticContribution,
+          },
+          ...(lexicalDetails.get(item.pageId) === undefined
+            ? {}
+            : { lexical: (lexicalDetails.get(item.pageId) as LexicalRankedPage).scoreComponents }),
+          ...(item.semanticRank === undefined ? {} : {
+            semantic: {
+              rank: item.semanticRank,
+              reciprocalRank: roundSix(1 / item.semanticRank),
+            },
+          }),
+        },
       }),
   );
+}
+
+function recoveryAction(projectId: string, rebuildRequired: boolean): RetrievalRecoveryAction {
+  return {
+    command: ['compile', '--project', projectId],
+    rebuildRequired,
+  };
+}
+
+function unavailableCompatibility(
+  reasonCode: RetrievalFallbackReason,
+  currentIdentity: EmbeddingIdentity | null,
+): EmbeddingCompatibility {
+  return {
+    currentIdentity,
+    reasonCode,
+    rebuildRequired: reasonCode !== 'provider-unconfigured',
+    state: 'unavailable',
+  };
 }
 
 function fallbackResult(
@@ -275,16 +375,20 @@ function fallbackResult(
   lexical: readonly LexicalRankedPage[],
   requestedMode: 'hybrid' | 'semantic',
   reasonCode: RetrievalFallbackReason,
+  compatibility: EmbeddingCompatibility,
 ): ProjectSearchResult {
   const fallback: RetrievalFallback = { fromMode: requestedMode, reasonCode, toMode: 'lexical' };
   return {
+    embeddingCompatibility: compatibility,
     effectiveMode: 'lexical',
     excluded: corpus.excluded,
     fallback,
     hits: lexicalHits(lexical),
     partial: true,
     projectId: corpus.projectId,
+    recoveryAction: recoveryAction(corpus.projectId, compatibility.rebuildRequired),
     requestedMode,
+    retrievalStrategy: RETRIEVAL_STRATEGY,
     warnings: normalizeWarnings(corpus.warnings, [{ code: reasonCode }]),
   };
 }
@@ -307,6 +411,16 @@ export function createProjectRetrievalWithPorts(
   const environment = options.environment ?? process.env;
   const providerConfigured = options.providerConfigured ?? (() =>
     defaultProviderConfigured(environment));
+  const embeddingIdentity = options.embeddingIdentity ?? (() =>
+    resolveConfiguredEmbeddingIdentity(environment));
+  const embeddingCompatibility = options.embeddingCompatibility ?? {
+    inspect: (_projectId: string, currentIdentity: EmbeddingIdentity) => Promise.resolve({
+      currentIdentity,
+      reasonCode: null,
+      rebuildRequired: false,
+      state: 'compatible' as const,
+    }),
+  };
 
   return {
     async context(inputRequest): Promise<ProjectContextResult> {
@@ -354,18 +468,30 @@ export function createProjectRetrievalWithPorts(
 
     async search(inputRequest): Promise<ProjectSearchResult> {
       const request = validateSearchRequest(inputRequest);
-      const corpus = await options.corpus.snapshot(request.projectId);
-      const lexical = rankLexical(corpus.pages, queryTokens(request.query));
+      const corpus = validatedCorpus(
+        await options.corpus.snapshot(request.projectId),
+        request.projectId,
+      );
+      const initialSnapshot = corpusSnapshotToken(corpus);
+      const lexical = rankLexical(corpus.pages, queryTokens(request.query), request.query);
       if (request.mode === 'lexical') {
         const warnings = normalizeWarnings(corpus.warnings);
         return {
+          embeddingCompatibility: {
+            currentIdentity: null,
+            reasonCode: null,
+            rebuildRequired: false,
+            state: 'not-applicable',
+          },
           effectiveMode: 'lexical',
           excluded: corpus.excluded,
           fallback: null,
           hits: lexicalHits(lexical),
           partial: isPartial(warnings),
           projectId: request.projectId,
+          recoveryAction: null,
           requestedMode: 'lexical',
+          retrievalStrategy: RETRIEVAL_STRATEGY,
           warnings,
         };
       }
@@ -373,23 +499,72 @@ export function createProjectRetrievalWithPorts(
         capability: 'eval-fast',
         projectId: request.projectId,
       });
+      const currentIdentity = embeddingIdentity();
       if (!evalData(evaluation, request.projectId).embeddingsAvailable) {
-        return fallbackResult(corpus, lexical, request.mode, 'embedding-store-unavailable');
+        return fallbackResult(
+          corpus,
+          lexical,
+          request.mode,
+          'embedding-store-unavailable',
+          unavailableCompatibility('embedding-store-unavailable', currentIdentity),
+        );
       }
-      if (!providerConfigured()) {
-        return fallbackResult(corpus, lexical, request.mode, 'provider-unconfigured');
+      if (!providerConfigured() || currentIdentity === null) {
+        return fallbackResult(
+          corpus,
+          lexical,
+          request.mode,
+          'provider-unconfigured',
+          unavailableCompatibility('provider-unconfigured', currentIdentity),
+        );
+      }
+      const compatibility = await embeddingCompatibility.inspect(request.projectId, currentIdentity);
+      if (compatibility.state !== 'compatible') {
+        return fallbackResult(corpus, lexical, request.mode, 'embedding-index-outdated', {
+          currentIdentity: compatibility.currentIdentity,
+          reasonCode: compatibility.reasonCode,
+          rebuildRequired: compatibility.rebuildRequired,
+          state: compatibility.state,
+        });
       }
       const semantic = await options.compiler.execute({
         capability: 'search',
         projectId: request.projectId,
         question: request.query,
       });
+      let freshCorpus: SearchCorpus;
+      try {
+        freshCorpus = validatedCorpus(
+          await options.corpus.snapshot(request.projectId),
+          request.projectId,
+        );
+      } catch (error) {
+        if (error instanceof RetrievalOperationError &&
+            error.code === 'RETRIEVAL_CONTRACT_VIOLATION') {
+          throw new RetrievalOperationError('RETRIEVAL_SEMANTIC_DRIFT', request.projectId);
+        }
+        throw error;
+      }
+      if (corpusSnapshotToken(freshCorpus) !== initialSnapshot) {
+        throw new RetrievalOperationError('RETRIEVAL_SEMANTIC_DRIFT', request.projectId);
+      }
       const fallback = fallbackWarning(semantic.warnings);
-      if (fallback !== null) return fallbackResult(corpus, lexical, request.mode, fallback);
+      if (fallback !== null) return fallbackResult(corpus, lexical, request.mode, fallback, {
+        currentIdentity,
+        reasonCode: fallback,
+        rebuildRequired: true,
+        state: 'outdated',
+      });
       const pages = new Map(corpus.pages.map((page) => [page.pageId, page]));
       const ranks = semanticRanks(searchData(semantic, request.projectId), pages, request.projectId);
       const warnings = normalizeWarnings(corpus.warnings, semantic.warnings);
       return {
+        embeddingCompatibility: {
+          currentIdentity,
+          reasonCode: null,
+          rebuildRequired: false,
+          state: 'compatible',
+        },
         effectiveMode: request.mode,
         excluded: corpus.excluded,
         fallback: null,
@@ -398,7 +573,9 @@ export function createProjectRetrievalWithPorts(
           : hybridHits(lexical, ranks, pages),
         partial: isPartial(warnings),
         projectId: request.projectId,
+        recoveryAction: null,
         requestedMode: request.mode,
+        retrievalStrategy: RETRIEVAL_STRATEGY,
         warnings,
       };
     },
@@ -410,8 +587,10 @@ export function createProjectRetrieval(options: CreateProjectRetrievalOptions): 
     knowledgeRoot: options.knowledgeRoot,
   });
   const corpus = createProjectCorpus({ knowledgeRoot: options.knowledgeRoot });
+  const embeddingCompatibility = createProjectEmbeddingIdentityStore(options.knowledgeRoot);
   return createProjectRetrievalWithPorts({
     compiler,
     corpus,
+    embeddingCompatibility,
   });
 }

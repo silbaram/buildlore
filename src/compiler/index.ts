@@ -8,6 +8,15 @@ export {
 } from './errors.js';
 export { normalizeCompilerStatus } from './normalizers.js';
 export {
+  EMBEDDING_MARKER_FILENAME,
+  EMBEDDING_MARKER_SCHEMA_VERSION,
+  resolveConfiguredEmbeddingIdentity,
+  type EmbeddingCompatibilityInspection,
+  type EmbeddingIdentity,
+  type EmbeddingIdentityOverrides,
+  type ProjectEmbeddingCompatibilityPort,
+} from './embedding-identity.js';
+export {
   createProjectCheck,
   ProjectCheckError,
   type ProjectCheckComponent,

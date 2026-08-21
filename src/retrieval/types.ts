@@ -1,7 +1,16 @@
 import type { ContextSummary } from '../compiler/index.js';
+import type { EmbeddingIdentity } from '../compiler/embedding-identity.js';
+import type {
+  LexicalScoreComponents,
+  MatchedRetrievalEvidence,
+  RetrievalStrategyIdentity,
+} from './strategy.js';
 
 export type RetrievalMode = 'hybrid' | 'lexical' | 'semantic';
-export type RetrievalScoreKind = 'hybrid-reciprocal-rank' | 'lexical-coverage' | 'semantic-rank';
+export type RetrievalScoreKind =
+  | 'hybrid-reciprocal-rank'
+  | 'lexical-weighted-coverage'
+  | 'semantic-rank';
 export type RetrievalFallbackReason =
   | 'embedding-index-outdated'
   | 'embedding-store-unavailable'
@@ -24,12 +33,50 @@ export interface RetrievalFallback {
   readonly toMode: 'lexical';
 }
 
+export type EmbeddingCompatibilityState =
+  | 'compatible'
+  | 'missing'
+  | 'not-applicable'
+  | 'outdated'
+  | 'unavailable';
+
+export interface EmbeddingCompatibility {
+  readonly currentIdentity: EmbeddingIdentity | null;
+  readonly reasonCode: string | null;
+  readonly rebuildRequired: boolean;
+  readonly state: EmbeddingCompatibilityState;
+}
+
+export interface RetrievalRecoveryAction {
+  readonly command: readonly ['compile', '--project', string];
+  readonly rebuildRequired: boolean;
+}
+
+export interface SearchSemanticScoreComponent {
+  readonly rank: number;
+  readonly reciprocalRank: number;
+}
+
+export interface SearchFusionScoreComponent {
+  readonly lexicalContribution: number;
+  readonly semanticContribution: number;
+}
+
+export interface SearchScoreComponents {
+  readonly combinedScore: number;
+  readonly fusion?: SearchFusionScoreComponent;
+  readonly lexical?: LexicalScoreComponents;
+  readonly semantic?: SearchSemanticScoreComponent;
+}
+
 export interface SearchHit {
   readonly freshness: 'fresh';
   readonly lexicalRank?: number;
+  readonly matchedEvidence: readonly MatchedRetrievalEvidence[];
   readonly pageId: string;
   readonly rank: number;
   readonly score: number;
+  readonly scoreComponents: SearchScoreComponents;
   readonly scoreKind: RetrievalScoreKind;
   readonly semanticRank?: number;
   readonly sourceRefs: readonly string[];
@@ -44,13 +91,16 @@ export interface ProjectSearchRequest {
 }
 
 export interface ProjectSearchResult {
+  readonly embeddingCompatibility: EmbeddingCompatibility;
   readonly effectiveMode: RetrievalMode;
   readonly excluded: Readonly<Record<'archived' | 'orphaned' | 'stale' | 'unverified', number>>;
   readonly fallback: RetrievalFallback | null;
   readonly hits: readonly SearchHit[];
   readonly partial: boolean;
   readonly projectId: string;
+  readonly recoveryAction: RetrievalRecoveryAction | null;
   readonly requestedMode: RetrievalMode;
+  readonly retrievalStrategy: RetrievalStrategyIdentity;
   readonly warnings: readonly RetrievalWarning[];
 }
 

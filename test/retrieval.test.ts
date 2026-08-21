@@ -44,11 +44,11 @@ function page(
   options: { readonly body?: string; readonly summary?: string; readonly title?: string } = {},
 ): SearchCorpusPage {
   return {
-    body: options.body ?? '',
+    body: options.body ?? 'fixture body',
     freshness: 'fresh',
     pageId,
     sourceRefs: [`repo@revision:docs/${pageId.replace('/', '-')}.md`],
-    summary: options.summary ?? '',
+    summary: options.summary ?? 'fixture summary',
     title: options.title ?? pageId,
   };
 }
@@ -144,7 +144,7 @@ function fixture(options: {
 }
 
 describe('project retrieval orchestration', () => {
-  it('ranks lexical Unicode unique-token coverage deterministically without compiler/provider calls', async () => {
+  it('[V9-V-07][V9-V-26][V10-V-15] retrieves pure Korean/Unicode locally without provider work', async () => {
     const item = fixture({
       corpusValue: corpus([
         page('decisions/beta', { body: 'Recovery only.', title: 'Beta' }),
@@ -153,6 +153,7 @@ describe('project retrieval orchestration', () => {
           summary: 'Café architecture.',
           title: 'Alpha',
         }),
+        page('decisions/korean', { body: '인증 오류 복구', title: '한국어 복구' }),
       ], { warnings: [{ code: 'incomplete-compile' }] }),
     });
     const result = await item.retrieval.search({
@@ -162,22 +163,44 @@ describe('project retrieval orchestration', () => {
     });
 
     expect(result).toMatchObject({
+      embeddingCompatibility: { state: 'not-applicable' },
       effectiveMode: 'lexical',
       excluded: { archived: 1, orphaned: 2, stale: 3, unverified: 4 },
       fallback: null,
       hits: [
-        { lexicalRank: 1, pageId: 'decisions/alpha', rank: 1, score: 1 },
-        { lexicalRank: 2, pageId: 'decisions/beta', rank: 2, score: 0.5 },
+        {
+          lexicalRank: 1,
+          pageId: 'decisions/alpha',
+          rank: 1,
+          score: 1,
+          scoreKind: 'lexical-weighted-coverage',
+        },
+        {
+          lexicalRank: 2,
+          pageId: 'decisions/beta',
+          rank: 2,
+          score: 0.5,
+          scoreKind: 'lexical-weighted-coverage',
+        },
       ],
       partial: true,
       requestedMode: 'lexical',
+      retrievalStrategy: { tokenizerId: 'buildlore-unicode-hangul-ngram' },
       warnings: [{ code: 'incomplete-compile' }],
     });
     expect(item.calls).toEqual([]);
     expect(JSON.stringify(result)).not.toContain('Recovery guidance');
+    await expect(item.retrieval.search({
+      mode: 'lexical',
+      projectId: 'alpha',
+      query: '인증 오류',
+    })).resolves.toMatchObject({
+      hits: [{ pageId: 'decisions/korean' }],
+    });
+    expect(item.calls).toEqual([]);
   });
 
-  it('uses pageId tie-breaks, a top-20 bound, and normal empty results', async () => {
+  it('[V9-V-26] preserves pageId tie-breaks, top-20, and normal zero-match results', async () => {
     const pages = Array.from({ length: 25 }, (_, index) =>
       page(`decisions/page-${String(25 - index).padStart(2, '0')}`, { body: 'shared' }));
     const item = fixture({ corpusValue: corpus(pages) });
@@ -214,7 +237,7 @@ describe('project retrieval orchestration', () => {
     expect(item.snapshot).not.toHaveBeenCalled();
   });
 
-  it('converts semantic order to reciprocal rank using only local corpus metadata', async () => {
+  it('[V9-V-09][V9-V-18] converts recorded semantic order using local corpus metadata', async () => {
     const item = fixture({
       corpusValue: corpus([
         page('decisions/alpha', { summary: 'Local alpha', title: 'Alpha local' }),
@@ -230,18 +253,51 @@ describe('project retrieval orchestration', () => {
 
     expect(item.calls.map((call) => call.capability)).toEqual(['eval-fast', 'search']);
     expect(result).toMatchObject({
+      embeddingCompatibility: {
+        currentIdentity: { modelId: 'voyage-3-lite', providerId: 'voyage' },
+        state: 'compatible',
+      },
       effectiveMode: 'semantic',
       hits: [
         { pageId: 'decisions/beta', score: 1, semanticRank: 1, title: 'Beta local' },
         { pageId: 'decisions/alpha', score: 0.5, semanticRank: 2, title: 'Alpha local' },
       ],
       partial: false,
+      recoveryAction: null,
       requestedMode: 'semantic',
     });
     expect(JSON.stringify(result)).not.toContain('upstream title');
   });
 
-  it('fuses lexical and semantic ranks with the approved 0.5 reciprocal rule', async () => {
+  it('[V9-V-10][V9-V-18][V10-V-08] collapses duplicate semantic refs at first occurrence', async () => {
+    const item = fixture({
+      corpusValue: corpus([
+        page('decisions/alpha', { title: 'Alpha local' }),
+        page('decisions/beta', { title: 'Beta local' }),
+      ]),
+      search: searchData([
+        'decisions/beta',
+        'decisions/beta',
+        'decisions/alpha',
+        'decisions/beta',
+      ]),
+    });
+    const result = await item.retrieval.search({
+      mode: 'semantic',
+      projectId: 'alpha',
+      query: 'find architecture',
+    });
+    expect(result.hits.map((hit) => ({
+      pageId: hit.pageId,
+      score: hit.score,
+      semanticRank: hit.semanticRank,
+    }))).toEqual([
+      { pageId: 'decisions/beta', score: 1, semanticRank: 1 },
+      { pageId: 'decisions/alpha', score: 0.5, semanticRank: 2 },
+    ]);
+  });
+
+  it('[V9-V-10][V9-V-11][V10-V-15] exposes finite explainable fixed hybrid contributions', async () => {
     const item = fixture({
       corpusValue: corpus([
         page('decisions/alpha', { body: 'architecture design' }),
@@ -260,7 +316,16 @@ describe('project retrieval orchestration', () => {
     expect(result).toMatchObject({
       effectiveMode: 'hybrid',
       hits: [
-        { lexicalRank: 2, pageId: 'decisions/beta', score: 0.75, semanticRank: 1 },
+        {
+          lexicalRank: 2,
+          pageId: 'decisions/beta',
+          score: 0.75,
+          scoreComponents: {
+            combinedScore: 0.75,
+            fusion: { lexicalContribution: 0.25, semanticContribution: 0.5 },
+          },
+          semanticRank: 1,
+        },
         { lexicalRank: 1, pageId: 'decisions/alpha', score: 0.5 },
         { pageId: 'decisions/gamma', score: 0.25, semanticRank: 2 },
       ],
@@ -272,6 +337,22 @@ describe('project retrieval orchestration', () => {
       'decisions/alpha',
       'decisions/gamma',
     ]);
+    for (const hit of result.hits) {
+      expect(Number.isFinite(hit.score)).toBe(true);
+      expect(hit.score).toBeGreaterThanOrEqual(0);
+      expect(hit.score).toBeLessThanOrEqual(1);
+      expect(hit.scoreComponents.combinedScore).toBe(hit.score);
+      if (hit.scoreComponents.fusion !== undefined) {
+        expect(hit.score).toBe(
+          Math.round((hit.scoreComponents.fusion.lexicalContribution +
+            hit.scoreComponents.fusion.semanticContribution) * 1_000_000) / 1_000_000,
+        );
+      }
+      expect(hit.matchedEvidence.every((evidence) =>
+        evidence.count > 0 && ['title', 'summary', 'body'].includes(evidence.field) &&
+        ['unicode-word', 'hangul-bigram', 'hangul-trigram'].includes(evidence.matchKind),
+      )).toBe(true);
+    }
   });
 
   it.each([
@@ -296,7 +377,55 @@ describe('project retrieval orchestration', () => {
     expect(item.calls.map((call) => call.capability)).toEqual(['eval-fast']);
   });
 
-  it('falls back on documented SDK embedding degradation but not provider runtime failure', async () => {
+  it('[V9-V-14][V10-V-10] falls back before semantic work for incompatible marker identity', async () => {
+    const item = fixture({
+      corpusValue: corpus([page('decisions/alpha', { body: 'architecture' })]),
+    });
+    const inspect = vi.fn(() => Promise.resolve({
+      currentIdentity: {
+        compatibilityDigest: `sha256:${'a'.repeat(64)}` as const,
+        compilerVersion: '1.1.0' as const,
+        modelId: 'fixture-model',
+        providerId: 'openai' as const,
+      },
+      reasonCode: 'embedding-marker-missing' as const,
+      rebuildRequired: true,
+      state: 'missing' as const,
+    }));
+    const retrieval = createProjectRetrievalWithPorts({
+      compiler: item.compiler,
+      corpus: { snapshot: item.snapshot },
+      embeddingCompatibility: { inspect },
+      embeddingIdentity: () => ({
+        compatibilityDigest: `sha256:${'a'.repeat(64)}`,
+        compilerVersion: '1.1.0',
+        modelId: 'fixture-model',
+        providerId: 'openai',
+      }),
+      providerConfigured: () => true,
+    });
+    await expect(retrieval.search({
+      mode: 'hybrid',
+      projectId: 'alpha',
+      query: 'architecture',
+    })).resolves.toMatchObject({
+      effectiveMode: 'lexical',
+      embeddingCompatibility: {
+        reasonCode: 'embedding-marker-missing',
+        rebuildRequired: true,
+        state: 'missing',
+      },
+      fallback: { reasonCode: 'embedding-index-outdated' },
+      recoveryAction: {
+        command: ['compile', '--project', 'alpha'],
+        rebuildRequired: true,
+      },
+    });
+    expect(item.calls.map((call) => call.capability)).toEqual(['eval-fast']);
+    expect(inspect).toHaveBeenCalledOnce();
+  });
+
+  it('[V9-V-17][V10-V-10] preserves fallback precedence without hiding runtime failure', async () => {
     const degraded = fixture({
       corpusValue: corpus([page('decisions/alpha', { body: 'architecture' })]),
       search: searchData(['decisions/alpha']),
@@ -329,7 +458,7 @@ describe('project retrieval orchestration', () => {
     })).rejects.toBe(failure);
   });
 
-  it('rejects semantic refs outside the selected local corpus', async () => {
+  it('[V9-V-18][V10-V-12] rejects semantic refs outside the selected corpus', async () => {
     const item = fixture({
       corpusValue: corpus([page('decisions/alpha', { body: 'architecture' })]),
       search: searchData(['decisions/beta']),
@@ -339,6 +468,51 @@ describe('project retrieval orchestration', () => {
       projectId: 'alpha',
       query: 'architecture',
     })).rejects.toMatchObject({ code: 'RETRIEVAL_SEMANTIC_DRIFT', projectId: 'alpha' });
+  });
+
+  it('[V9-V-18][V10-V-09] rejects post-call content, source, eligibility, and project drift', async () => {
+    const initial = corpus([page('decisions/alpha', {
+      body: 'architecture',
+      summary: 'initial summary',
+    })]);
+    const changedSnapshots = [
+      corpus([page('decisions/alpha', {
+        body: 'changed architecture',
+        summary: 'initial summary',
+      })]),
+      corpus([{
+        ...page('decisions/alpha', { body: 'architecture', summary: 'initial summary' }),
+        sourceRefs: ['repo@revision:docs/changed.md'],
+      }]),
+      {
+        ...initial,
+        excluded: { ...initial.excluded, stale: initial.excluded.stale + 1 },
+      },
+      corpus([{
+        ...page('decisions/alpha', { body: 'architecture', summary: 'initial summary' }),
+        freshness: 'stale',
+      } as unknown as SearchCorpusPage]),
+      { ...initial, projectId: 'beta' },
+      corpus([]),
+    ];
+    for (const changed of changedSnapshots) {
+      let snapshotCount = 0;
+      const snapshot = vi.fn(() => Promise.resolve(snapshotCount++ === 0 ? initial : changed));
+      const item = fixture({
+        corpus: { snapshot },
+        search: searchData(['decisions/alpha']),
+      });
+      await expect(item.retrieval.search({
+        mode: 'hybrid',
+        projectId: 'alpha',
+        query: 'architecture',
+      })).rejects.toMatchObject({
+        code: 'RETRIEVAL_SEMANTIC_DRIFT',
+        projectId: 'alpha',
+      });
+      expect(snapshot).toHaveBeenCalledTimes(2);
+      expect(item.calls.map((call) => call.capability)).toEqual(['eval-fast', 'search']);
+    }
   });
 
   it('preserves corpus security refusal without invoking any compiler capability', async () => {
@@ -352,6 +526,42 @@ describe('project retrieval orchestration', () => {
       query: 'architecture',
     })).rejects.toMatchObject({ code: 'CORPUS_SECURITY_DENIED' });
     expect(item.calls).toEqual([]);
+  });
+
+  it('[V9-V-19][V10-V-07][V10-V-11] rejects the unsafe corpus matrix before compiler/provider work', async () => {
+    const invalidCorpora: SearchCorpus[] = [
+      { ...corpus([page('decisions/alpha')]), projectId: 'beta' },
+      corpus([{ ...page('decisions/alpha'), pageId: '../escape' }]),
+      corpus([{
+        ...page('decisions/alpha'),
+        sourceRefs: ['repo@revision:../../private'],
+      }]),
+      corpus([page('decisions/alpha'), page('decisions/alpha')]),
+      corpus([{
+        ...page('decisions/alpha'),
+        title: 'unsafe\u0000title',
+      }]),
+      corpus([{
+        ...page('decisions/alpha'),
+        sourceRefs: ['repo@revision:docs/shared.md', 'repo@revision:docs/shared.md'],
+      }]),
+      {
+        ...corpus([page('decisions/alpha')]),
+        excluded: { archived: -1, orphaned: 0, stale: 0, unverified: 0 },
+      },
+    ];
+    for (const corpusValue of invalidCorpora) {
+      const item = fixture({ corpusValue });
+      await expect(item.retrieval.search({
+        mode: 'hybrid',
+        projectId: 'alpha',
+        query: 'architecture',
+      })).rejects.toMatchObject({
+        code: 'RETRIEVAL_CONTRACT_VIOLATION',
+        projectId: 'alpha',
+      });
+      expect(item.calls).toEqual([]);
+    }
   });
 
   it('forces credential-free lexical context when embeddings or provider are unavailable', async () => {

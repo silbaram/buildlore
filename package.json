@@ -20,6 +20,8 @@
     },
     "./schemas/source-document.schema.json": "./schemas/source-document.schema.json",
     "./schemas/lifecycle-profile.schema.json": "./schemas/lifecycle-profile.schema.json",
+    "./schemas/retrieval-corpus.schema.json": "./schemas/retrieval-corpus.schema.json",
+    "./schemas/retrieval-evaluation.schema.json": "./schemas/retrieval-evaluation.schema.json",
     "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json"
   },
   "files": [
@@ -29,6 +31,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "eval:retrieval": "npm run build --silent && node dist/retrieval/evaluation/cli.js",
     "test": "vitest run",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
