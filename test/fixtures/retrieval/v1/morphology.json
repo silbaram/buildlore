@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "buildlore.recorded-morphology-candidate.v1",
+  "fixtureId": "recorded-garu-v1",
+  "candidateId": "garu-ko",
+  "packageVersion": "0.1.0",
+  "modelVersion": "recorded.2026.08",
+  "rankings": [
+    {
+      "queryId": "q-exact-auth",
+      "pageIds": [
+        "guides/auth-recovery"
+      ]
+    },
+    {
+      "queryId": "q-exact-cache",
+      "pageIds": [
+        "guides/cache-invalidation"
+      ]
+    },
+    {
+      "queryId": "q-spacing-auth",
+      "pageIds": [
+        "guides/auth-recovery"
+      ]
+    },
+    {
+      "queryId": "q-morph-deploy",
+      "pageIds": [
+        "guides/deployment"
+      ]
+    },
+    {
+      "queryId": "q-syn-login",
+      "pageIds": [
+        "guides/auth-recovery"
+      ]
+    },
+    {
+      "queryId": "q-syn-cache",
+      "pageIds": [
+        "guides/cache-invalidation"
+      ]
+    },
+    {
+      "queryId": "q-cross-observe",
+      "pageIds": [
+        "concepts/observability"
+      ]
+    },
+    {
+      "queryId": "q-cross-retry",
+      "pageIds": [
+        "concepts/retry-policy"
+      ]
+    },
+    {
+      "queryId": "q-code-state",
+      "pageIds": [
+        "code/react-state"
+      ]
+    },
+    {
+      "queryId": "q-code-user",
+      "pageIds": [
+        "code/get-user"
+      ]
+    }
+  ]
+}

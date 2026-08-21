@@ -97,7 +97,17 @@ npm run build
 npm test
 npm run lint
 npm run typecheck
+npm run eval:retrieval
 ```
+
+`eval:retrieval` runs the frozen Korean/English/code-symbol corpus without network
+or provider credentials. It emits a `buildlore.retrieval-eval.v1` report containing
+Recall@5, MRR, selected strategy identity, recorded semantic fixture identity,
+canonical input hashes, index bytes, and environment-qualified latency. Runtime
+search uses the same versioned Unicode word plus Hangul bigram/trigram strategy.
+Semantic and hybrid modes disclose embedding compatibility and fall back to local
+lexical results with an explicit compile recovery action when the project marker is
+missing or outdated.
 
 The initial module boundaries are:
 

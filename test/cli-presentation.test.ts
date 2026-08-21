@@ -59,6 +59,67 @@ describe('CLI presentation and exit taxonomy', () => {
     });
   });
 
+  it('[V9-V-12][V10-V-13] preserves the complete search verdict in human and JSON output', () => {
+    const data = {
+      embeddingCompatibility: {
+        currentIdentity: null,
+        reasonCode: 'provider-unconfigured',
+        rebuildRequired: false,
+        state: 'unavailable',
+      },
+      effectiveMode: 'lexical',
+      excluded: { archived: 1, orphaned: 2, stale: 3, unverified: 4 },
+      fallback: {
+        fromMode: 'hybrid',
+        reasonCode: 'provider-unconfigured',
+        toMode: 'lexical',
+      },
+      hits: [{
+        freshness: 'fresh',
+        matchedEvidence: [{ field: 'title', matchKind: 'word', matchedFeatureCount: 1 }],
+        pageId: 'decisions/page-01',
+        rank: 1,
+        score: 1,
+        scoreComponents: { combinedScore: 1 },
+        scoreKind: 'lexical-weighted-coverage',
+        sourceRefs: ['repo@v1:docs/page.md'],
+        summary: 'summary',
+        title: 'title',
+      }],
+      partial: true,
+      projectId: 'alpha',
+      recoveryAction: {
+        command: ['compile', '--project', 'alpha'],
+        rebuildRequired: false,
+      },
+      requestedMode: 'hybrid',
+      retrievalStrategy: {
+        normalization: 'NFC+Unicode-lowercase',
+        scoring: 'weighted-query-coverage-v1',
+        strategyDigest: `sha256:${'1'.repeat(64)}`,
+        tokenizerId: 'buildlore-unicode-hangul-ngram',
+        tokenizerVersion: 1,
+      },
+      warnings: [{ code: 'provider-unconfigured' }],
+    };
+    const result: CliSuccessResult = {
+      command: 'search',
+      data,
+      exitCode: 0,
+      ok: true,
+      partial: true,
+      projectId: 'alpha',
+    };
+
+    const human = renderCliResult(result, 'human').message;
+    const json = JSON.parse(renderCliResult(result, 'json').message) as { data: unknown };
+    const humanData = JSON.parse(
+      human.slice(human.indexOf('result:\n') + 'result:\n'.length),
+    ) as unknown;
+    expect(humanData).toEqual(json.data);
+    expect(json.data).toEqual(data);
+  });
+
   it.each([
     {
       error: new CliUsageError('CLI_OPTION_MISSING'),

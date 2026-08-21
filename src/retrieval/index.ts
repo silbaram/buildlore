@@ -1,7 +1,27 @@
 export { createProjectRetrieval } from './service.js';
+export * as evaluation from './evaluation/index.js';
+export {
+  buildLexicalIndex,
+  fuseReciprocalRanks,
+  hangulNgrams,
+  RETRIEVAL_STRATEGY,
+  RETRIEVAL_STRATEGY_SCHEMA_VERSION,
+  roundSix,
+  tokenizeLexical,
+  type LexicalIndex,
+  type LexicalRankedPage,
+  type LexicalScoreComponents,
+  type MatchedRetrievalEvidence,
+  type RetrievalMatchField,
+  type RetrievalMatchKind,
+  type ReciprocalRankFusionItem,
+  type RetrievalStrategyIdentity,
+} from './strategy.js';
 export {
   RetrievalOperationError,
   type CreateProjectRetrievalOptions,
+  type EmbeddingCompatibility,
+  type EmbeddingCompatibilityState,
   type ProjectContextRequest,
   type ProjectContextResult,
   type ProjectRetrievalPort,
@@ -11,8 +31,10 @@ export {
   type RetrievalFallbackReason,
   type RetrievalMode,
   type RetrievalOperationErrorCode,
+  type RetrievalRecoveryAction,
   type RetrievalScoreKind,
   type RetrievalWarning,
   type RetrievalWarningCode,
   type SearchHit,
+  type SearchScoreComponents,
 } from './types.js';

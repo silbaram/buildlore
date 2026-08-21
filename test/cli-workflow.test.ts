@@ -17,11 +17,13 @@ import {
   type ProjectSyncInput,
   type ProjectSyncSummary,
 } from '../src/projector/index.js';
-import type {
-  ProjectContextRequest,
-  ProjectContextResult,
-  ProjectSearchRequest,
-  ProjectSearchResult,
+import {
+  RETRIEVAL_STRATEGY,
+  type EmbeddingCompatibility,
+  type ProjectContextRequest,
+  type ProjectContextResult,
+  type ProjectSearchRequest,
+  type ProjectSearchResult,
 } from '../src/retrieval/index.js';
 
 const temporaryRoots: string[] = [];
@@ -241,7 +243,16 @@ function syncSummary(input: ProjectSyncInput): ProjectSyncSummary {
 
 function searchResult(request: ProjectSearchRequest): ProjectSearchResult {
   const requestedMode = request.mode ?? 'hybrid';
+  const embeddingCompatibility: EmbeddingCompatibility = requestedMode === 'lexical'
+    ? { currentIdentity: null, reasonCode: null, rebuildRequired: false, state: 'not-applicable' }
+    : {
+        currentIdentity: null,
+        reasonCode: 'provider-unconfigured',
+        rebuildRequired: false,
+        state: 'unavailable',
+      };
   return {
+    embeddingCompatibility,
     effectiveMode: requestedMode === 'lexical' ? 'lexical' : 'lexical',
     excluded: { archived: 0, orphaned: 0, stale: 0, unverified: 0 },
     fallback: requestedMode === 'lexical'
@@ -250,7 +261,11 @@ function searchResult(request: ProjectSearchRequest): ProjectSearchResult {
     hits: [],
     partial: requestedMode !== 'lexical',
     projectId: request.projectId,
+    recoveryAction: requestedMode === 'lexical'
+      ? null
+      : { command: ['compile', '--project', request.projectId], rebuildRequired: false },
     requestedMode,
+    retrievalStrategy: RETRIEVAL_STRATEGY,
     warnings: requestedMode === 'lexical' ? [] : [{ code: 'provider-unconfigured' }],
   };
 }

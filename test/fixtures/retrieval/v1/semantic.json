@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "buildlore.recorded-semantic-fixture.v1",
+  "fixtureId": "recorded-semantic-v1",
+  "embeddingIdentity": {
+    "compilerVersion": "1.1.0",
+    "dimensions": 1024,
+    "modelId": "voyage-3-lite",
+    "modelRevision": "recorded-v1",
+    "providerId": "voyage",
+    "compatibilityDigest": "sha256:5233cca854a6ecc4ec8ddb36ef1637ca06e53276b89200db5d2d2e2eccdc785a"
+  },
+  "rankings": [
+    {
+      "queryId": "q-exact-auth",
+      "pageIds": [
+        "guides/auth-recovery",
+        "concepts/security"
+      ]
+    },
+    {
+      "queryId": "q-exact-cache",
+      "pageIds": [
+        "guides/cache-invalidation",
+        "guides/deployment"
+      ]
+    },
+    {
+      "queryId": "q-spacing-auth",
+      "pageIds": [
+        "guides/auth-recovery",
+        "concepts/security"
+      ]
+    },
+    {
+      "queryId": "q-morph-deploy",
+      "pageIds": [
+        "guides/deployment",
+        "guides/cache-invalidation"
+      ]
+    },
+    {
+      "queryId": "q-syn-login",
+      "pageIds": [
+        "guides/auth-recovery",
+        "concepts/security"
+      ]
+    },
+    {
+      "queryId": "q-syn-cache",
+      "pageIds": [
+        "guides/cache-invalidation",
+        "guides/deployment"
+      ]
+    },
+    {
+      "queryId": "q-cross-observe",
+      "pageIds": [
+        "concepts/observability",
+        "concepts/retry-policy"
+      ]
+    },
+    {
+      "queryId": "q-cross-retry",
+      "pageIds": [
+        "concepts/retry-policy",
+        "concepts/observability"
+      ]
+    },
+    {
+      "queryId": "q-code-state",
+      "pageIds": [
+        "code/react-state",
+        "code/get-user"
+      ]
+    },
+    {
+      "queryId": "q-code-user",
+      "pageIds": [
+        "code/get-user",
+        "code/react-state"
+      ]
+    }
+  ]
+}

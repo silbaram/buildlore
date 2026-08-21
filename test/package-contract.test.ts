@@ -53,6 +53,12 @@ describe('package contract', () => {
     expect(packageJson.exports['./schemas/lifecycle-profile.schema.json']).toBe(
       './schemas/lifecycle-profile.schema.json',
     );
+    expect(packageJson.exports['./schemas/retrieval-corpus.schema.json']).toBe(
+      './schemas/retrieval-corpus.schema.json',
+    );
+    expect(packageJson.exports['./schemas/retrieval-evaluation.schema.json']).toBe(
+      './schemas/retrieval-evaluation.schema.json',
+    );
     expect(packageJson.exports['./profiles/buildlore.profile.v1.json']).toBe(
       './profiles/buildlore.profile.v1.json',
     );
@@ -62,6 +68,7 @@ describe('package contract', () => {
     expect(packageJson.devDependencies).toEqual(approvedDevDependencies);
     expect(packageJson.scripts).toEqual({
       build: 'tsc -p tsconfig.build.json',
+      'eval:retrieval': 'npm run build --silent && node dist/retrieval/evaluation/cli.js',
       lint: 'eslint . --max-warnings 0',
       'p2a:init': 'node scripts/bootstrap-p2a.mjs',
       test: 'vitest run',
@@ -69,7 +76,7 @@ describe('package contract', () => {
     });
   });
 
-  it('locks the public compiler package without deep imports', async () => {
+  it('[V9-V-24][V10-V-16] locks package-root SDK and forbids dependency/boundary expansion', async () => {
     const packageLock = JSON.parse(
       await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'),
     ) as PackageLockContract;
@@ -97,6 +104,8 @@ describe('package contract', () => {
       'utf8',
     );
     expect(publicCompilerSource).not.toContain('createLlmWikiCompilerBackend');
+    expect(publicCompilerSource).not.toContain('createProjectEmbeddingIdentityStore');
+    expect(publicCompilerSource).not.toContain('ProjectEmbeddingIdentityPort');
     const sourceRoot = new URL('../src/', import.meta.url);
     const sourcePaths = (await readdir(sourceRoot, { recursive: true })).filter((path) =>
       path.endsWith('.ts'),
@@ -109,6 +118,17 @@ describe('package contract', () => {
       )
     ).join('\n');
     expect(allSource).not.toMatch(/from\s+['"]llm-wiki-compiler\//u);
+    const retrievalSource = (
+      await Promise.all(
+        sourcePaths
+          .filter((path) => path.startsWith('retrieval/'))
+          .map(async (path) =>
+            readFile(new URL(path.replaceAll('\\', '/'), sourceRoot), 'utf8'),
+          ),
+      )
+    ).join('\n');
+    expect(retrievalSource).not.toMatch(/Intl\.Segmenter/u);
+    expect(retrievalSource).not.toMatch(/from\s+['"](?:garu-ko|node:child_process|llm-wiki-compiler\/)/u);
     const compilerSource = (
       await Promise.all(
         sourcePaths

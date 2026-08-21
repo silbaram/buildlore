@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/retrieval-corpus.schema.json",
+  "title": "BuildLore frozen retrieval corpus v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "corpusVersion", "documents", "queries", "judgements", "hashes"],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.retrieval-corpus.v1" },
+    "corpusVersion": { "$ref": "#/$defs/id" },
+    "documents": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/document" }
+    },
+    "queries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/query" }
+    },
+    "judgements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2000,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/judgement" }
+    },
+    "hashes": { "$ref": "#/$defs/inputHashes" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "language": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 32,
+      "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]+)*$"
+    },
+    "pageId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 256,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*/[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "safeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "pattern": "^(?![\\s\\S]*[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F])[\\s\\S]+$",
+      "allOf": [
+        { "not": { "pattern": "(?:[Hh][Tt][Tt][Pp][Ss]?|[Ff][Ii][Ll][Ee])://" } },
+        { "not": { "pattern": "(?:^|[\\s\"'(=])(?:/(?:[^/\\s]+/)*[^/\\s]+|[A-Za-z]:[\\\\/]|\\\\\\\\[^\\\\\\s]+\\\\[^\\\\\\s]+)" } },
+        { "not": { "pattern": "(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]\\s*:|[Bb][Ee][Aa][Rr][Ee][Rr]\\s+|(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])\\s*[=:])" } },
+        { "not": { "pattern": "(?:^|[^A-Za-z0-9])(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|npm_[A-Za-z0-9]{20,255}|sk-(?:ant-)?[A-Za-z0-9_-]{20,255}|AIza[A-Za-z0-9_-]{32,64}|xox[baprs]-[A-Za-z0-9-]{10,255})(?:$|[^A-Za-z0-9])" } }
+      ]
+    },
+    "sourceRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[a-z0-9._-]+@[a-z0-9._-]+:[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$",
+      "allOf": [
+        { "not": { "pattern": "(?:^|[:/])(?:\\.|\\.\\.)(?:/|$)" } },
+        { "not": { "pattern": "(?:^|[^A-Za-z0-9])(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|npm_[A-Za-z0-9]{20,255}|sk-(?:ant-)?[A-Za-z0-9_-]{20,255}|AIza[A-Za-z0-9_-]{32,64}|xox[baprs]-[A-Za-z0-9-]{10,255})(?:$|[^A-Za-z0-9])" } }
+      ]
+    },
+    "inputHashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpusSha256", "querySha256", "judgementSha256"],
+      "properties": {
+        "corpusSha256": { "$ref": "#/$defs/digest" },
+        "querySha256": { "$ref": "#/$defs/digest" },
+        "judgementSha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "language", "pageId", "sourceRefs", "title", "summary", "body"],
+      "properties": {
+        "evidenceId": { "$ref": "#/$defs/id" },
+        "language": { "$ref": "#/$defs/language" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "sourceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourceRef" }
+        },
+        "title": { "$ref": "#/$defs/safeText" },
+        "summary": { "$ref": "#/$defs/safeText" },
+        "body": { "$ref": "#/$defs/safeText" }
+      }
+    },
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queryId", "category", "language", "text", "requestedMode"],
+      "properties": {
+        "queryId": { "$ref": "#/$defs/id" },
+        "category": { "$ref": "#/$defs/category" },
+        "language": { "$ref": "#/$defs/language" },
+        "text": { "$ref": "#/$defs/safeText" },
+        "requestedMode": { "$ref": "#/$defs/mode" }
+      }
+    },
+    "judgement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queryId", "evidenceId", "relevance"],
+      "properties": {
+        "queryId": { "$ref": "#/$defs/id" },
+        "evidenceId": { "$ref": "#/$defs/id" },
+        "relevance": { "enum": [1, 2, 3] }
+      }
+    },
+    "category": {
+      "enum": ["korean-exact", "korean-spacing-morphology", "korean-synonym", "korean-to-english", "code-symbol-korean"]
+    },
+    "mode": { "enum": ["lexical", "semantic", "hybrid"] }
+  }
+}
