@@ -5,6 +5,14 @@ export {
   initKnowledge,
   parseSubmoduleStatusLine,
 } from './git.js';
+export {
+  initializeModeAWorkspace,
+  MODE_A_INITIALIZATION_SCHEMA_VERSION,
+  ModeAInitializationError,
+  type ModeAInitializationInput,
+  type ModeAInitializationResult,
+  type ModeAInitializationStage,
+} from './initialization.js';
 export { resolveKnowledgeRoot, resolveProjectWorkspace } from './paths.js';
 export { emptyManifest, readManifest, writeManifest } from './registry.js';
 export { getKnowledgeStatus, getProjectKnowledgeStatus } from './status.js';

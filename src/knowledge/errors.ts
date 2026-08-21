@@ -11,7 +11,8 @@ export type KnowledgeErrorCode =
   | 'REGISTRY_WRITE_FAILED'
   | 'SUBMODULE_CONFLICT'
   | 'SUBMODULE_MISMATCH'
-  | 'SUBMODULE_UNINITIALIZED';
+  | 'SUBMODULE_UNINITIALIZED'
+  | 'WORKSPACE_NOT_EMPTY';
 
 export class KnowledgeError extends Error {
   readonly code: KnowledgeErrorCode;

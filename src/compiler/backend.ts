@@ -7,10 +7,11 @@ import {
 import { isAbsolute, relative } from 'node:path';
 
 import { CompilerBackendError } from './errors.js';
-import type { CompilerBackend, CompilerRequest } from './types.js';
+import type { CompilerBackend, CompilerCorpusBackend, CompilerRequest } from './types.js';
 
 interface CompilerSdk {
-  compile(): Promise<unknown>;
+  compile(options?: { readonly review?: boolean }): Promise<unknown>;
+  exportJson?(options?: { readonly projectId?: string }): Promise<unknown>;
   getContextPack(options: {
     readonly budget?: number;
     readonly depth?: number;
@@ -63,41 +64,10 @@ function classifyBackendError(error: unknown): CompilerBackendError {
   return new CompilerBackendError('failed');
 }
 
-function noOpCompileResult(status: unknown): Readonly<Record<string, unknown>> | null {
-  if (typeof status !== 'object' || status === null) {
-    return null;
-  }
-  const record = status as Readonly<Record<string, unknown>>;
-  const warnings = record.warnings;
-  if (
-    record.stateStatus !== 'ok' ||
-    record.pendingChangesCount !== 0 ||
-    !Array.isArray(record.pendingChanges) ||
-    record.pendingChanges.length !== 0 ||
-    typeof record.sources !== 'number' ||
-    !Number.isSafeInteger(record.sources) ||
-    record.sources < 0 ||
-    (warnings !== undefined && (!Array.isArray(warnings) || warnings.length !== 0))
-  ) {
-    return null;
-  }
-  return {
-    candidates: [],
-    compiled: 0,
-    concepts: [],
-    deleted: 0,
-    errors: [],
-    pages: [],
-    skipped: record.sources,
-  };
-}
-
 async function runRequest(wiki: CompilerSdk, request: CompilerRequest): Promise<unknown> {
   switch (request.capability) {
-    case 'compile': {
-      const noOp = noOpCompileResult(await wiki.status());
-      return noOp ?? wiki.compile();
-    }
+    case 'compile':
+      return request.review === true ? wiki.compile({ review: true }) : wiki.compile();
     case 'context':
       return wiki.getContextPack({
         prompt: request.prompt,
@@ -155,7 +125,7 @@ function normalizeLintPaths(result: unknown, workspaceRoot: string): unknown {
 
 export function createLlmWikiCompilerBackend(
   wikiFactory: WikiFactory = defaultWikiFactory,
-): CompilerBackend {
+): CompilerBackend & CompilerCorpusBackend {
   return {
     async run(workspaceRoot, request) {
       try {
@@ -164,6 +134,20 @@ export function createLlmWikiCompilerBackend(
           return normalizeLintPaths(result, workspaceRoot);
         }
         return result;
+      } catch (error) {
+        if (error instanceof CompilerBackendError) {
+          throw error;
+        }
+        throw classifyBackendError(error);
+      }
+    },
+    async exportProject(workspaceRoot, projectId) {
+      try {
+        const wiki = wikiFactory(workspaceRoot);
+        if (wiki.exportJson === undefined) {
+          throw new CompilerBackendError('failed');
+        }
+        return await wiki.exportJson({ projectId });
       } catch (error) {
         if (error instanceof CompilerBackendError) {
           throw error;

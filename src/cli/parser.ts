@@ -1,0 +1,277 @@
+import type {
+  CliCommandId,
+  CliOperation,
+  CliOutputMode,
+  ParsedCliCommand,
+  ParsedCliInvocation,
+} from './types.js';
+
+export type CliUsageErrorCode =
+  | 'CLI_ARGUMENT_INVALID'
+  | 'CLI_COMMAND_UNSUPPORTED'
+  | 'CLI_OPTION_CONFLICT'
+  | 'CLI_OPTION_MISSING'
+  | 'CLI_OPTION_UNSUPPORTED';
+
+export class CliUsageError extends Error {
+  readonly code: CliUsageErrorCode;
+
+  constructor(code: CliUsageErrorCode) {
+    super('Command usage is invalid.');
+    this.name = 'CliUsageError';
+    this.code = code;
+  }
+}
+
+interface CommandSpec {
+  readonly command: CliCommandId;
+  readonly flagOptions: readonly string[];
+  readonly operation: CliOperation;
+  readonly optionAliases?: Readonly<Record<string, string>>;
+  readonly projectOption?: string;
+  readonly requiredOptions: readonly string[];
+  readonly tokens: readonly string[];
+  readonly valueOptions: readonly string[];
+}
+
+const COMMON_FLAGS = ['--json'] as const;
+const MAX_RETRIEVAL_TEXT_LENGTH = 8_192;
+const PROJECT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const RESERVED_PROJECT_IDS = new Set(['knowledge', 'manifest', 'projects', 'shared']);
+
+const COMMAND_SPECS: readonly CommandSpec[] = [
+  command(['init'], 'init', 'init', ['--knowledge-repo', '--branch'], ['--knowledge-repo']),
+  command(
+    ['project', 'add'],
+    'project.add',
+    'project.add',
+    ['--id', '--source-repo', '--name'],
+    ['--id', '--source-repo'],
+    [],
+    { '--display-name': '--name', '--project-id': '--id', '--source-repository': '--source-repo' },
+    '--id',
+  ),
+  command(['project', 'list'], 'project.list', 'project.list'),
+  command(
+    ['project', 'show'],
+    'project.show',
+    'project.show',
+    ['--project'],
+    ['--project'],
+    [],
+    { '--project-id': '--project' },
+    '--project',
+  ),
+  command(['sync'], 'sync', 'sync', ['--project'], ['--project'], ['--dry-run'], {}, '--project'),
+  command(['compile'], 'compile', 'compile', ['--project'], ['--project'], ['--review'], {}, '--project'),
+  command(['check'], 'check', 'check', ['--project'], ['--project'], [], {}, '--project'),
+  command(
+    ['search'],
+    'search',
+    'search',
+    ['--project', '--query', '--mode'],
+    ['--project', '--query'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['query'],
+    'query',
+    'query',
+    ['--project', '--question'],
+    ['--project', '--question'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['context'],
+    'context',
+    'context',
+    ['--project', '--prompt'],
+    ['--project', '--prompt'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['knowledge', 'clone'],
+    'init',
+    'knowledge.clone',
+    ['--knowledge-repo', '--branch', '--revision'],
+    ['--knowledge-repo'],
+    [],
+    { '--repository': '--knowledge-repo' },
+  ),
+  command(['knowledge', 'init'], 'init', 'knowledge.init'),
+  command(
+    ['knowledge', 'status'],
+    'check',
+    'knowledge.status',
+    ['--project'],
+    [],
+    [],
+    { '--project-id': '--project' },
+    '--project',
+  ),
+  command(
+    ['project', 'validate'],
+    'check',
+    'project.validate',
+    ['--project'],
+    [],
+    [],
+    { '--project-id': '--project' },
+    '--project',
+  ),
+];
+
+function command(
+  tokens: readonly string[],
+  commandId: CliCommandId,
+  operation: CliOperation,
+  valueOptions: readonly string[] = [],
+  requiredOptions: readonly string[] = [],
+  flagOptions: readonly string[] = [],
+  optionAliases: Readonly<Record<string, string>> = {},
+  projectOption?: string,
+): CommandSpec {
+  return {
+    command: commandId,
+    flagOptions: [...COMMON_FLAGS, ...flagOptions],
+    operation,
+    optionAliases,
+    ...(projectOption === undefined ? {} : { projectOption }),
+    requiredOptions,
+    tokens,
+    valueOptions,
+  };
+}
+
+function findCommandSpec(args: readonly string[]): CommandSpec | null {
+  return COMMAND_SPECS.find((spec) =>
+    spec.tokens.every((token, index) => args[index] === token),
+  ) ?? null;
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 32 || (code >= 127 && code <= 159)) return true;
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateRetrievalTextOptions(
+  commandId: CliCommandId,
+  values: Readonly<Record<string, boolean | string>>,
+): void {
+  const option = commandId === 'search'
+    ? '--query'
+    : commandId === 'query'
+      ? '--question'
+      : commandId === 'context'
+        ? '--prompt'
+        : null;
+  if (option === null) return;
+  const value = values[option];
+  if (
+    typeof value !== 'string' ||
+    value.trim() === '' ||
+    value.length > MAX_RETRIEVAL_TEXT_LENGTH ||
+    containsControlCharacter(value) ||
+    (commandId === 'search' && !/[\p{L}\p{N}]/u.test(value.normalize('NFC')))
+  ) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+}
+
+function parseOptions(
+  args: readonly string[],
+  spec: CommandSpec,
+): Readonly<Record<string, boolean | string>> {
+  const values: Record<string, boolean | string> = {};
+  for (let index = spec.tokens.length; index < args.length; index += 1) {
+    const rawOption = args[index];
+    if (rawOption === undefined || !rawOption.startsWith('--') || rawOption === '--all') {
+      throw new CliUsageError(
+        rawOption === '--all' ? 'CLI_OPTION_UNSUPPORTED' : 'CLI_ARGUMENT_INVALID',
+      );
+    }
+    const option = spec.optionAliases?.[rawOption] ?? rawOption;
+    if (option in values) throw new CliUsageError('CLI_OPTION_CONFLICT');
+    if (spec.flagOptions.includes(option)) {
+      values[option] = true;
+      continue;
+    }
+    if (!spec.valueOptions.includes(option)) {
+      throw new CliUsageError('CLI_OPTION_UNSUPPORTED');
+    }
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith('--') || value.length === 0) {
+      throw new CliUsageError('CLI_OPTION_MISSING');
+    }
+    values[option] = value;
+    index += 1;
+  }
+  if (spec.requiredOptions.some((option) => typeof values[option] !== 'string')) {
+    throw new CliUsageError('CLI_OPTION_MISSING');
+  }
+  if (
+    spec.command === 'search' &&
+    values['--mode'] !== undefined &&
+    !['hybrid', 'lexical', 'semantic'].includes(String(values['--mode']))
+  ) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+  validateRetrievalTextOptions(spec.command, values);
+  return Object.freeze(values);
+}
+
+function validatedProjectId(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  if (
+    value.length > 64 ||
+    !PROJECT_ID_PATTERN.test(value) ||
+    RESERVED_PROJECT_IDS.has(value)
+  ) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+  return value;
+}
+
+export function parseCliArguments(args: readonly string[]): ParsedCliInvocation {
+  if (args.length === 0 || (args.length === 1 && (args[0] === '--help' || args[0] === '-h'))) {
+    return Object.freeze({ kind: 'help' });
+  }
+  const spec = findCommandSpec(args);
+  if (spec === null) throw new CliUsageError('CLI_COMMAND_UNSUPPORTED');
+  const options = parseOptions(args, spec);
+  const outputMode: CliOutputMode = options['--json'] === true ? 'json' : 'human';
+  const projectId = validatedProjectId(
+    spec.projectOption === undefined || typeof options[spec.projectOption] !== 'string'
+      ? undefined
+      : String(options[spec.projectOption]),
+  );
+  const result: ParsedCliCommand = {
+    command: spec.command,
+    kind: 'command',
+    operation: spec.operation,
+    options,
+    outputMode,
+    projectId,
+  };
+  return Object.freeze(result);
+}
+
+export function inferCliCommand(args: readonly string[]): CliCommandId | 'unknown' {
+  return findCommandSpec(args)?.command ?? 'unknown';
+}

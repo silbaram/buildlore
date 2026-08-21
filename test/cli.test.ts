@@ -38,13 +38,71 @@ describe('BuildLore CLI', () => {
     });
   });
 
+  it('documents the canonical workflow, common JSON mode, and provider requirements', () => {
+    for (const command of [
+      'init',
+      'project add',
+      'project list',
+      'project show',
+      'sync',
+      'compile',
+      'check',
+      'search',
+      'query',
+      'context',
+    ]) {
+      expect(HELP_TEXT).toContain(`buildlore ${command}`);
+    }
+    expect(HELP_TEXT).toContain('buildlore.cli-envelope.v1');
+    expect(HELP_TEXT).toContain('Provider requirements:');
+    expect(HELP_TEXT).toContain('Required     compile, query');
+  });
+
   it('fails closed without reflecting unsupported input', async () => {
     const secretLikeInput = 'token=do-not-reflect-me';
     const result = await captureCli([secretLikeInput]);
 
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toBe('');
-    expect(result.stderr).toBe('Unsupported command. Run buildlore --help for usage.\n');
+    expect(result.stderr).toBe(
+      'unknown: failed\n' +
+      'error CLI_COMMAND_UNSUPPORTED: Command usage is invalid. Run buildlore --help for usage.\n',
+    );
     expect(result.stderr).not.toContain(secretLikeInput);
+  });
+
+  it('emits a versioned JSON failure envelope when requested', async () => {
+    const result = await captureCli(['unsupported', '--json']);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(JSON.parse(result.stderr)).toEqual({
+      schemaVersion: 'buildlore.cli-envelope.v1',
+      command: 'unknown',
+      ok: false,
+      projectId: null,
+      workspacePath: null,
+      knowledgeRevision: null,
+      data: null,
+      partial: false,
+      warnings: [],
+      errors: [
+        {
+          code: 'CLI_COMMAND_UNSUPPORTED',
+          message: 'Command usage is invalid. Run buildlore --help for usage.',
+        },
+      ],
+    });
+  });
+
+  it('keeps the canonical command in known-command JSON usage failures', async () => {
+    const result = await captureCli(['compile', '--all', '--json']);
+
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stderr)).toMatchObject({
+      command: 'compile',
+      errors: [{ code: 'CLI_OPTION_UNSUPPORTED' }],
+      ok: false,
+    });
   });
 });

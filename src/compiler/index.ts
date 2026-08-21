@@ -8,11 +8,23 @@ export {
 } from './errors.js';
 export { normalizeCompilerStatus } from './normalizers.js';
 export {
+  createProjectCheck,
+  ProjectCheckError,
+  type ProjectCheckComponent,
+  type ProjectCheckErrorCode,
+  type ProjectCheckGateCode,
+  type ProjectCheckPort,
+  type ProjectCheckSummary,
+} from './check.js';
+export {
   createProjectCompiler,
   type CreateProjectCompilerOptions,
 } from './service.js';
 export type {
   CompileRequest,
+  CompileReviewCandidate,
+  CompileReviewDisposition,
+  CompileReviewReason,
   CompileSummary,
   CompilerBackend,
   CompilerCapabilityDescriptor,
