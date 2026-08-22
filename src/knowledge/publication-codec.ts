@@ -164,41 +164,60 @@ function validForeignCounts(value: unknown): boolean {
 
 const failureCodes = new Set([
   'PUBLISH_DIRTY_INDEX',
+  'PUBLISH_COMMIT_INVALID',
   'PUBLISH_INELIGIBLE',
   'PUBLISH_PARTIAL',
   'PUBLISH_PATH_DRIFT',
   'PUBLISH_PLAN_DRIFT',
   'PUBLISH_POLICY_BLOCKED',
   'PUBLISH_REPOSITORY_DRIFT',
+  'PUBLISH_REMOTE_AHEAD',
+  'PUBLISH_REMOTE_DIVERGED',
+  'PUBLISH_REMOTE_MISSING',
+  'PUBLISH_REMOTE_RACE',
+  'PUBLISH_REMOTE_UNREADABLE',
+  'PUBLISH_REFERENCE_DRIFT',
+  'PUBLISH_REPOSITORY_BUSY',
   'PUBLISH_TRANSACTION_FAILED',
 ]);
 
 function validResult(value: unknown): value is KnowledgePublishResult {
   if (!isRecord(value)) return false;
   const blocked = value.state === 'blocked';
-  const keys = blocked ? [
+  const pushFailed = value.state === 'push-failed';
+  const keys = blocked || pushFailed ? [
     'schemaVersion', 'state', 'projectId', 'baseRevision', 'errorCode', 'foreignCounts',
     'knowledgeRevision', 'localCommitPreserved', 'partial', 'pinRequired', 'recoveryCommand',
-    'stagedPaths', 'treeRevision', 'warnings',
+    'remoteRevision', 'stagedPaths', 'treeRevision', 'warnings',
   ] : [
     'schemaVersion', 'state', 'projectId', 'baseRevision', 'foreignCounts',
     'knowledgeRevision', 'localCommitPreserved', 'partial', 'pinRequired', 'recoveryCommand',
-    'stagedPaths', 'treeRevision', 'warnings',
+    'remoteRevision', 'stagedPaths', 'treeRevision', 'warnings',
   ];
   if (!exactKeys(value, keys) || value.schemaVersion !== KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION ||
-      (value.state !== 'blocked' && value.state !== 'committed') || !isProjectId(value.projectId) ||
+      (value.state !== 'blocked' && value.state !== 'committed' && value.state !== 'pushed' &&
+        value.state !== 'push-failed') || !isProjectId(value.projectId) ||
       !isOid(value.baseRevision) || !validForeignCounts(value.foreignCounts) ||
       !(value.knowledgeRevision === null || isOid(value.knowledgeRevision)) ||
       typeof value.localCommitPreserved !== 'boolean' || typeof value.partial !== 'boolean' ||
       value.pinRequired !== true || !Array.isArray(value.recoveryCommand) ||
       !value.recoveryCommand.every((item) => typeof item === 'string' && item.length <= 128) ||
+      !(value.remoteRevision === null || isOid(value.remoteRevision)) ||
       !Array.isArray(value.stagedPaths) || !value.stagedPaths.every(isRelativePath) ||
       !(value.treeRevision === null || isOid(value.treeRevision)) ||
       !Array.isArray(value.warnings) || !value.warnings.every((item) =>
         typeof item === 'string' && item.length <= 160)) return false;
   if (blocked) return typeof value.errorCode === 'string' && failureCodes.has(value.errorCode);
-  return value.knowledgeRevision !== null && value.treeRevision !== null &&
-    value.localCommitPreserved === true && value.partial === false;
+  if (pushFailed) {
+    return value.errorCode === 'PUBLISH_PUSH_FAILED' && value.knowledgeRevision !== null &&
+      value.treeRevision !== null && value.remoteRevision !== null &&
+      value.localCommitPreserved === true && value.partial === true;
+  }
+  if (value.knowledgeRevision === null || value.treeRevision === null ||
+      value.localCommitPreserved !== true || value.partial !== false) return false;
+  return value.state === 'committed'
+    ? value.remoteRevision === null
+    : value.remoteRevision === value.knowledgeRevision;
 }
 
 function validLineage(value: unknown): value is KnowledgeCommitLineageV1 {

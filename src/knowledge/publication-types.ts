@@ -29,6 +29,11 @@ export interface KnowledgePublishCommitInput extends KnowledgePublishPlanInput {
   readonly expectedPlanDigest: PublicationDigest;
 }
 
+export interface KnowledgePublishPushInput {
+  readonly knowledgeRevision: GitObjectId;
+  readonly projectId: string;
+}
+
 export type PublishPathStatus = 'added' | 'deleted' | 'modified';
 
 export interface PublishNumstat {
@@ -123,12 +128,21 @@ export interface KnowledgeCommitLineageV1 {
 
 export type PublicationFailureCode =
   | 'PUBLISH_DIRTY_INDEX'
+  | 'PUBLISH_COMMIT_INVALID'
   | 'PUBLISH_INELIGIBLE'
   | 'PUBLISH_PARTIAL'
   | 'PUBLISH_PATH_DRIFT'
   | 'PUBLISH_PLAN_DRIFT'
   | 'PUBLISH_POLICY_BLOCKED'
   | 'PUBLISH_REPOSITORY_DRIFT'
+  | 'PUBLISH_REMOTE_AHEAD'
+  | 'PUBLISH_REMOTE_DIVERGED'
+  | 'PUBLISH_REMOTE_MISSING'
+  | 'PUBLISH_REMOTE_RACE'
+  | 'PUBLISH_REMOTE_UNREADABLE'
+  | 'PUBLISH_REFERENCE_DRIFT'
+  | 'PUBLISH_REPOSITORY_BUSY'
+  | 'PUBLISH_PUSH_FAILED'
   | 'PUBLISH_TRANSACTION_FAILED';
 
 export interface PublishForeignCounts {
@@ -145,6 +159,7 @@ interface PublishResultBase {
   readonly pinRequired: true;
   readonly projectId: string;
   readonly recoveryCommand: readonly string[];
+  readonly remoteRevision: GitObjectId | null;
   readonly schemaVersion: typeof KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION;
   readonly stagedPaths: readonly string[];
   readonly treeRevision: GitObjectId | null;
@@ -152,7 +167,7 @@ interface PublishResultBase {
 }
 
 export interface KnowledgePublishBlockedResult extends PublishResultBase {
-  readonly errorCode: PublicationFailureCode;
+  readonly errorCode: Exclude<PublicationFailureCode, 'PUBLISH_PUSH_FAILED'>;
   readonly knowledgeRevision: GitObjectId | null;
   readonly state: 'blocked';
 }
@@ -163,9 +178,26 @@ export interface KnowledgePublishCommittedResult extends PublishResultBase {
   readonly treeRevision: GitObjectId;
 }
 
+export interface KnowledgePublishPushedResult extends PublishResultBase {
+  readonly knowledgeRevision: GitObjectId;
+  readonly remoteRevision: GitObjectId;
+  readonly state: 'pushed';
+  readonly treeRevision: GitObjectId;
+}
+
+export interface KnowledgePublishPushFailedResult extends PublishResultBase {
+  readonly errorCode: 'PUBLISH_PUSH_FAILED';
+  readonly knowledgeRevision: GitObjectId;
+  readonly remoteRevision: GitObjectId;
+  readonly state: 'push-failed';
+  readonly treeRevision: GitObjectId;
+}
+
 export type KnowledgePublishResult =
   | KnowledgePublishBlockedResult
-  | KnowledgePublishCommittedResult;
+  | KnowledgePublishCommittedResult
+  | KnowledgePublishPushedResult
+  | KnowledgePublishPushFailedResult;
 
 export interface PublicationBlobPolicyPort {
   validate(
@@ -184,6 +216,7 @@ export interface PublicationFaultHooks {
   readonly afterWriteTree?: (treeOid: GitObjectId) => Promise<void> | void;
   readonly beforeAdd?: () => Promise<void> | void;
   readonly beforePostVerify?: () => Promise<void> | void;
+  readonly beforePush?: (expectedRemoteOid: GitObjectId) => Promise<void> | void;
   readonly beforeUpdateRef?: (commitOid: GitObjectId) => Promise<void> | void;
 }
 

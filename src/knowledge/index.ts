@@ -24,6 +24,11 @@ export {
   renderKnowledgePublishResult,
 } from './publication-codec.js';
 export {
+  createKnowledgePublicationPushService,
+  KnowledgePublicationPushService,
+  type KnowledgePublicationPushOptions,
+} from './publication-push.js';
+export {
   createKnowledgePublicationService,
   KnowledgePublicationService,
   renderKnowledgeCommitLineage,
@@ -47,6 +52,9 @@ export {
   type KnowledgePublishOptions,
   type KnowledgePublishPlan,
   type KnowledgePublishPlanInput,
+  type KnowledgePublishPushInput,
+  type KnowledgePublishPushedResult,
+  type KnowledgePublishPushFailedResult,
   type KnowledgePublishResult,
   type PublicationBlobPolicyPort,
   type PublicationDigest,

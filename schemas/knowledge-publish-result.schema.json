@@ -4,7 +4,9 @@
   "title": "BuildLore Knowledge Publish Result v1",
   "oneOf": [
     { "$ref": "#/$defs/blocked" },
-    { "$ref": "#/$defs/committed" }
+    { "$ref": "#/$defs/committed" },
+    { "$ref": "#/$defs/pushed" },
+    { "$ref": "#/$defs/pushFailed" }
   ],
   "$defs": {
     "oid": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
@@ -20,7 +22,7 @@
     },
     "common": {
       "type": "object",
-      "required": ["schemaVersion", "state", "projectId", "baseRevision", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "stagedPaths", "treeRevision", "warnings"],
+      "required": ["schemaVersion", "state", "projectId", "baseRevision", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "remoteRevision", "stagedPaths", "treeRevision", "warnings"],
       "properties": {
         "schemaVersion": { "const": "buildlore.knowledge-publish-result.v1" },
         "projectId": { "$ref": "#/$defs/projectId" },
@@ -31,6 +33,7 @@
         "partial": { "type": "boolean" },
         "pinRequired": { "const": true },
         "recoveryCommand": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+        "remoteRevision": { "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }] },
         "stagedPaths": { "type": "array", "maxItems": 100000, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
         "treeRevision": { "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }] },
         "warnings": { "type": "array", "maxItems": 32, "items": { "type": "string", "maxLength": 160 } }
@@ -41,14 +44,14 @@
         { "$ref": "#/$defs/common" },
         {
           "type": "object", "additionalProperties": false,
-          "required": ["schemaVersion", "state", "projectId", "baseRevision", "errorCode", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "stagedPaths", "treeRevision", "warnings"],
+          "required": ["schemaVersion", "state", "projectId", "baseRevision", "errorCode", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "remoteRevision", "stagedPaths", "treeRevision", "warnings"],
           "properties": {
             "schemaVersion": true, "projectId": true, "baseRevision": true, "foreignCounts": true,
             "knowledgeRevision": true, "localCommitPreserved": true, "partial": true,
-            "pinRequired": true, "recoveryCommand": true, "stagedPaths": true,
+            "pinRequired": true, "recoveryCommand": true, "remoteRevision": true, "stagedPaths": true,
             "treeRevision": true, "warnings": true,
             "state": { "const": "blocked" },
-            "errorCode": { "enum": ["PUBLISH_DIRTY_INDEX", "PUBLISH_INELIGIBLE", "PUBLISH_PARTIAL", "PUBLISH_PATH_DRIFT", "PUBLISH_PLAN_DRIFT", "PUBLISH_POLICY_BLOCKED", "PUBLISH_REPOSITORY_DRIFT", "PUBLISH_TRANSACTION_FAILED"] }
+            "errorCode": { "enum": ["PUBLISH_DIRTY_INDEX", "PUBLISH_COMMIT_INVALID", "PUBLISH_INELIGIBLE", "PUBLISH_PARTIAL", "PUBLISH_PATH_DRIFT", "PUBLISH_PLAN_DRIFT", "PUBLISH_POLICY_BLOCKED", "PUBLISH_REPOSITORY_DRIFT", "PUBLISH_REMOTE_AHEAD", "PUBLISH_REMOTE_DIVERGED", "PUBLISH_REMOTE_MISSING", "PUBLISH_REMOTE_RACE", "PUBLISH_REMOTE_UNREADABLE", "PUBLISH_REFERENCE_DRIFT", "PUBLISH_REPOSITORY_BUSY", "PUBLISH_TRANSACTION_FAILED"] }
           }
         }
       ]
@@ -58,13 +61,48 @@
         { "$ref": "#/$defs/common" },
         {
           "type": "object", "additionalProperties": false,
-          "required": ["schemaVersion", "state", "projectId", "baseRevision", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "stagedPaths", "treeRevision", "warnings"],
+          "required": ["schemaVersion", "state", "projectId", "baseRevision", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "remoteRevision", "stagedPaths", "treeRevision", "warnings"],
           "properties": {
             "schemaVersion": true, "projectId": true, "baseRevision": true, "foreignCounts": true,
             "knowledgeRevision": { "$ref": "#/$defs/oid" }, "localCommitPreserved": { "const": true },
             "partial": { "const": false }, "pinRequired": true, "recoveryCommand": true,
+            "remoteRevision": { "type": "null" },
             "stagedPaths": true, "treeRevision": { "$ref": "#/$defs/oid" }, "warnings": true,
             "state": { "const": "committed" }
+          }
+        }
+      ]
+    },
+    "pushed": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["schemaVersion", "state", "projectId", "baseRevision", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "remoteRevision", "stagedPaths", "treeRevision", "warnings"],
+          "properties": {
+            "schemaVersion": true, "projectId": true, "baseRevision": true, "foreignCounts": true,
+            "knowledgeRevision": { "$ref": "#/$defs/oid" }, "localCommitPreserved": { "const": true },
+            "partial": { "const": false }, "pinRequired": true, "recoveryCommand": true,
+            "remoteRevision": { "$ref": "#/$defs/oid" }, "stagedPaths": true,
+            "treeRevision": { "$ref": "#/$defs/oid" }, "warnings": true,
+            "state": { "const": "pushed" }
+          }
+        }
+      ]
+    },
+    "pushFailed": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["schemaVersion", "state", "projectId", "baseRevision", "errorCode", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "remoteRevision", "stagedPaths", "treeRevision", "warnings"],
+          "properties": {
+            "schemaVersion": true, "projectId": true, "baseRevision": true, "foreignCounts": true,
+            "knowledgeRevision": { "$ref": "#/$defs/oid" }, "localCommitPreserved": { "const": true },
+            "partial": { "const": true }, "pinRequired": true, "recoveryCommand": true,
+            "remoteRevision": { "$ref": "#/$defs/oid" }, "stagedPaths": true,
+            "treeRevision": { "$ref": "#/$defs/oid" }, "warnings": true,
+            "state": { "const": "push-failed" }, "errorCode": { "const": "PUBLISH_PUSH_FAILED" }
           }
         }
       ]

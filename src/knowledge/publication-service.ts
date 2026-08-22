@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { TextDecoder } from 'node:util';
 
 import { serializeCanonicalJson } from './atomic-file.js';
 import { GitMachineAdapter, type GitCachedDiffEntry, type GitMachinePort, type GitStatusEntry } from './git-machine.js';
@@ -21,6 +20,7 @@ import {
   type KnowledgePublishCommitInput,
   type KnowledgePublishPlan,
   type KnowledgePublishPlanInput,
+  type KnowledgePublishPushInput,
   type KnowledgePublishResult,
   type PublicationBlobPolicyPort,
   type PublicationDigest,
@@ -31,6 +31,11 @@ import {
   type PublishPathStatus,
   type RegistrationManifestEntry,
 } from './publication-types.js';
+import { KnowledgePublicationPushService } from './publication-push.js';
+import {
+  createPublicationBlobPolicy,
+  verifyCanonicalManifestRegistration,
+} from './publication-validation.js';
 import {
   createRepositoryWriterLease,
   type RepositoryWriterLeasePort,
@@ -45,15 +50,13 @@ import {
   LLM_WIKI_COMPILER_VERSION,
   type CompilerPackageIdentity,
 } from './tracking-types.js';
-import { parseKnowledgeManifest, validateProjectId } from './validation.js';
+import { validateProjectId } from './validation.js';
 import { showProject } from './workspace.js';
-import { createProjectSecurityService } from '../sanitizer/index.js';
 
 const OID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const MAX_FOREIGN_ENTRIES = 100;
 const MAX_SELECTED_PATHS = 100_000;
-const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
 const packageIdentity: CompilerPackageIdentity = Object.freeze({
   exactVersion: LLM_WIKI_COMPILER_VERSION,
@@ -82,6 +85,7 @@ interface PlanComputation {
 export interface KnowledgePublicationPort {
   plan(input: KnowledgePublishPlanInput): Promise<KnowledgePublishPlan>;
   commit(input: KnowledgePublishCommitInput): Promise<KnowledgePublishResult>;
+  push(input: KnowledgePublishPushInput): Promise<KnowledgePublishResult>;
 }
 
 export interface KnowledgePublicationServiceOptions {
@@ -244,7 +248,7 @@ function foreignCounts(plan: KnowledgePublishPlan): {
 
 function blocked(
   plan: KnowledgePublishPlan,
-  errorCode: PublicationFailureCode,
+  errorCode: Exclude<PublicationFailureCode, 'PUBLISH_PUSH_FAILED'>,
   options: {
     readonly knowledgeRevision?: string | null;
     readonly partial?: boolean;
@@ -266,6 +270,7 @@ function blocked(
     recoveryCommand: Object.freeze(options.partial === true
       ? ['knowledge', 'status']
       : ['publish', 'plan', '--project', plan.projectId]),
+    remoteRevision: null,
     stagedPaths: Object.freeze([...(options.stagedPaths ?? [])]),
     treeRevision: options.treeRevision ?? null,
     warnings: Object.freeze([]),
@@ -308,80 +313,6 @@ export function renderKnowledgeCommitLineage(lineage: KnowledgeCommitLineageV1):
   );
 }
 
-function canonicalManifestRegistration(
-  beforeBytes: Buffer,
-  afterBytes: Buffer,
-  projectId: string,
-): RegistrationManifestEntry | null {
-  let beforeValue: unknown;
-  let afterValue: unknown;
-  try {
-    beforeValue = JSON.parse(utf8Decoder.decode(beforeBytes)) as unknown;
-    afterValue = JSON.parse(utf8Decoder.decode(afterBytes)) as unknown;
-  } catch {
-    return null;
-  }
-  let before;
-  let after;
-  try {
-    before = parseKnowledgeManifest(beforeValue);
-    after = parseKnowledgeManifest(afterValue);
-  } catch {
-    return null;
-  }
-  if (
-    serializeCanonicalJson(before) !== utf8Decoder.decode(beforeBytes) ||
-    serializeCanonicalJson(after) !== utf8Decoder.decode(afterBytes)
-  ) return null;
-  const added = after.projects.filter((entry) =>
-    !before.projects.some((prior) => prior.projectId === entry.projectId));
-  if (added.length !== 1 || added[0]?.projectId !== projectId) return null;
-  if (before.projects.some((entry) => entry.projectId === projectId)) return null;
-  for (const prior of before.projects) {
-    const current = after.projects.find((entry) => entry.projectId === prior.projectId);
-    if (current === undefined || serializeCanonicalJson(current) !== serializeCanonicalJson(prior)) {
-      return null;
-    }
-  }
-  return {
-    contentSha256: sha256(afterBytes),
-    registeredProjectId: projectId,
-    relativePath: 'manifest.json',
-  };
-}
-
-class ProjectPublicationBlobPolicy implements PublicationBlobPolicyPort {
-  readonly #service: ReturnType<typeof createProjectSecurityService>;
-
-  constructor(knowledgeRoot: string) {
-    this.#service = createProjectSecurityService({ knowledgeRoot });
-  }
-
-  async validate(
-    projectId: string,
-    relativePath: string,
-    content: Buffer,
-    expectedDigest: PublicationDigest,
-  ): Promise<boolean> {
-    let body: string;
-    try {
-      body = utf8Decoder.decode(content);
-    } catch {
-      return false;
-    }
-    if (sha256(Buffer.from(body, 'utf8')) !== expectedDigest) return false;
-    const result = await this.#service.prepareSource({
-      body,
-      bodyDigest: expectedDigest,
-      projectId,
-      source: `buildlore://knowledge/${projectId}/${sha256(relativePath).slice(7)}`,
-      sourceKind: 'wiki',
-      sourceRevisionOrContentSha256: expectedDigest,
-    });
-    return result.ok && result.report.outputDigest === expectedDigest;
-  }
-}
-
 export class KnowledgePublicationService implements KnowledgePublicationPort {
   readonly #blobPolicy: PublicationBlobPolicyPort;
   readonly #git: GitMachinePort;
@@ -389,14 +320,22 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
   readonly #inspector: PublicationInspectionPort;
   readonly #knowledgeRoot: string;
   readonly #lease: RepositoryWriterLeasePort;
+  readonly #pusher: KnowledgePublicationPushService;
 
   constructor(knowledgeRoot: string, options: KnowledgePublicationServiceOptions = {}) {
     this.#knowledgeRoot = knowledgeRoot;
     this.#git = options.gitMachine ?? new GitMachineAdapter();
     this.#inspector = options.inspector ?? createGitPublicationInspector();
     this.#lease = options.lease ?? createRepositoryWriterLease();
-    this.#blobPolicy = options.blobPolicy ?? new ProjectPublicationBlobPolicy(knowledgeRoot);
+    this.#blobPolicy = options.blobPolicy ?? createPublicationBlobPolicy(knowledgeRoot);
     this.#hooks = options.hooks ?? {};
+    this.#pusher = new KnowledgePublicationPushService(knowledgeRoot, {
+      blobPolicy: this.#blobPolicy,
+      gitMachine: this.#git,
+      hooks: this.#hooks,
+      inspector: this.#inspector,
+      lease: this.#lease,
+    });
   }
 
   async plan(input: KnowledgePublishPlanInput): Promise<KnowledgePublishPlan> {
@@ -538,12 +477,13 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
             '--knowledge-revision',
             knowledgeRevision,
           ]),
+          remoteRevision: null,
           stagedPaths: Object.freeze(paths),
           treeRevision,
           warnings: Object.freeze([]),
         });
       } catch (error) {
-        const code = error instanceof PublicationError
+        const code = error instanceof PublicationError && error.code !== 'PUBLISH_PUSH_FAILED'
           ? error.code
           : staged ? 'PUBLISH_PARTIAL' : 'PUBLISH_TRANSACTION_FAILED';
         return blocked(fresh.plan, code, {
@@ -554,6 +494,10 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
         });
       }
     });
+  }
+
+  async push(input: KnowledgePublishPushInput): Promise<KnowledgePublishResult> {
+    return this.#pusher.push(input);
   }
 
   async #computePlan(input: NormalizedPlanInput): Promise<PlanComputation> {
@@ -674,7 +618,7 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
         const before = await this.#inspector.readHeadFile(this.#knowledgeRoot, 'manifest.json');
         const currentFile = await this.#inspector.readWorktreeFile(this.#knowledgeRoot, 'manifest.json');
         if (before === null) blockReasons.add('MANIFEST_REGISTRATION_INVALID');
-        else registrationManifest = canonicalManifestRegistration(
+        else registrationManifest = verifyCanonicalManifestRegistration(
           before,
           currentFile.content,
           input.projectId,

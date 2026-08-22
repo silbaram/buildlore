@@ -7,6 +7,7 @@ import { TextDecoder } from 'node:util';
 
 import { serializeCanonicalJson } from './atomic-file.js';
 import { GitMachineError } from './errors.js';
+import { parseCachedDiffRawZ, type GitCachedDiffEntry } from './git-machine.js';
 import { resolveGitCommonDirectory, resolveGitWorktreeRoot } from './git.js';
 import type { GitObjectId, PublicationDigest } from './publication-types.js';
 
@@ -16,6 +17,7 @@ const MAX_PATH_BYTES = 4096;
 const MAX_PUBLICATION_FILE_BYTES = 8 * 1024 * 1024;
 const OID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const BRANCH_REF_PATTERN = /^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]{0,244}$/u;
+const REMOTE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/u;
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
 export interface PublicationIndexEntry {
@@ -37,9 +39,24 @@ export interface PublicationRepositorySnapshot {
 
 export interface PublicationCommitSnapshot {
   readonly changedPaths: readonly string[];
+  readonly diffEntries: readonly GitCachedDiffEntry[];
   readonly message: Buffer;
   readonly parentRevisions: readonly GitObjectId[];
   readonly treeRevision: GitObjectId;
+}
+
+export interface PublicationPushConfiguration {
+  readonly branchRef: string;
+  readonly remoteAlias: string;
+}
+
+export interface PublicationReferenceSnapshot {
+  readonly digest: PublicationDigest;
+  readonly fetchHeadDigest: PublicationDigest | null;
+  readonly trackingRefs: readonly {
+    readonly oid: GitObjectId;
+    readonly ref: string;
+  }[];
 }
 
 export interface PublicationFileSnapshot {
@@ -51,6 +68,11 @@ export interface PublicationFileSnapshot {
 
 export interface PublicationInspectionPort {
   inspectCommit(repositoryRoot: string, oid: GitObjectId): Promise<PublicationCommitSnapshot>;
+  inspectPushConfiguration(
+    repositoryRoot: string,
+    localBranchRef: string,
+  ): Promise<PublicationPushConfiguration>;
+  inspectReferenceSnapshot(repositoryRoot: string): Promise<PublicationReferenceSnapshot>;
   inspectRepository(repositoryRoot: string): Promise<PublicationRepositorySnapshot>;
   inspectWorktreePathIdentity(
     repositoryRoot: string,
@@ -184,11 +206,14 @@ export class GitPublicationInspector implements PublicationInspectionPort {
       this.#run(repositoryRoot, [
         'diff-tree',
         '--no-commit-id',
-        '--name-only',
+        '--raw',
         '-r',
         '-z',
+        '--no-renames',
+        '--no-abbrev',
         `${commitOid}^`,
         commitOid,
+        '--',
       ]),
     ]);
     const headerEnd = object.stdout.indexOf(Buffer.from('\n\n', 'ascii'));
@@ -201,19 +226,123 @@ export class GitPublicationInspector implements PublicationInspectionPort {
       else if (header.startsWith('parent ')) parentRevisions.push(validateOid(header.slice(7)));
     }
     if (treeRevision === undefined || parentRevisions.length !== 1) throw invalidOutput();
-    const changedPaths: string[] = [];
-    if (changed.stdout.byteLength > 0) {
-      if (changed.stdout[changed.stdout.byteLength - 1] !== 0) throw invalidOutput();
-      for (const record of changed.stdout.subarray(0, -1).toString('utf8').split('\0')) {
-        validateRelativePath(record);
-        changedPaths.push(record);
-      }
-    }
+    const diffEntries = parseCachedDiffRawZ(changed.stdout, {
+      maxOutputBytes: MAX_OUTPUT_BYTES,
+      maxRecords: MAX_INDEX_RECORDS,
+    });
+    const changedPaths = diffEntries.map(({ path }) => validateRelativePath(path));
     return {
       changedPaths: Object.freeze(changedPaths.toSorted()),
+      diffEntries: Object.freeze([...diffEntries]),
       message: Buffer.from(object.stdout.subarray(headerEnd + 2)),
       parentRevisions: Object.freeze(parentRevisions),
       treeRevision,
+    };
+  }
+
+  async inspectPushConfiguration(
+    repositoryRoot: string,
+    localBranchRef: string,
+  ): Promise<PublicationPushConfiguration> {
+    if (!BRANCH_REF_PATTERN.test(localBranchRef)) throw invalidOutput();
+    const branch = localBranchRef.slice('refs/heads/'.length);
+    const [remote, merge] = await Promise.all([
+      this.#run(
+        repositoryRoot,
+        ['config', '--local', '--get', `branch.${branch}.remote`],
+        undefined,
+        true,
+      ),
+      this.#run(
+        repositoryRoot,
+        ['config', '--local', '--get', `branch.${branch}.merge`],
+        undefined,
+        true,
+      ),
+    ]);
+    if (remote.exitCode !== 0 || merge.exitCode !== 0) {
+      throw new GitMachineError('GIT_OPERATION_FAILED', 'Configured Git upstream is unavailable.');
+    }
+    const remoteAlias = decodeSingleLine(remote.stdout);
+    const branchRef = decodeSingleLine(merge.stdout);
+    if (
+      !REMOTE_PATTERN.test(remoteAlias) ||
+      remoteAlias.startsWith('-') ||
+      remoteAlias.includes('..') ||
+      remoteAlias.includes('//') ||
+      !BRANCH_REF_PATTERN.test(branchRef) ||
+      branchRef.includes('..') ||
+      branchRef.includes('//') ||
+      branchRef.includes('@{')
+    ) {
+      throw invalidOutput();
+    }
+    return { branchRef, remoteAlias };
+  }
+
+  async inspectReferenceSnapshot(repositoryRoot: string): Promise<PublicationReferenceSnapshot> {
+    const [trackingRefs, commonDirectory] = await Promise.all([
+      this.#run(repositoryRoot, [
+        'for-each-ref',
+        '--format=%(refname)%00%(objectname)',
+        'refs/remotes/',
+      ]),
+      resolveGitCommonDirectory(repositoryRoot),
+    ]);
+    const fetchHeadPath = join(commonDirectory, 'FETCH_HEAD');
+    let fetchHeadDigest: PublicationDigest | null = null;
+    let handle;
+    try {
+      const status = await lstat(fetchHeadPath);
+      if (!status.isFile() || status.isSymbolicLink() || status.size > MAX_OUTPUT_BYTES) {
+        throw invalidOutput();
+      }
+      handle = await open(fetchHeadPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const opened = await handle.stat();
+      if (
+        !opened.isFile() ||
+        opened.dev !== status.dev ||
+        opened.ino !== status.ino ||
+        opened.size !== status.size ||
+        opened.size > MAX_OUTPUT_BYTES
+      ) {
+        throw invalidOutput();
+      }
+      fetchHeadDigest = sha256(await handle.readFile());
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    } finally {
+      await handle?.close();
+    }
+    let decodedRefs: string;
+    try {
+      decodedRefs = utf8Decoder.decode(trackingRefs.stdout);
+    } catch {
+      throw invalidOutput();
+    }
+    const entries: Array<{ readonly oid: GitObjectId; readonly ref: string }> = [];
+    if (decodedRefs.length > 0) {
+      if (!decodedRefs.endsWith('\n') || decodedRefs.includes('\r')) throw invalidOutput();
+      for (const record of decodedRefs.slice(0, -1).split('\n')) {
+        const fields = record.split('\0');
+        const ref = fields[0];
+        const oid = fields[1];
+        if (
+          fields.length !== 2 ||
+          ref === undefined ||
+          !/^refs\/remotes\/[A-Za-z0-9][A-Za-z0-9._/-]{0,244}$/u.test(ref) ||
+          oid === undefined
+        ) throw invalidOutput();
+        entries.push({ oid: validateOid(oid), ref });
+      }
+    }
+    if (entries.length > MAX_INDEX_RECORDS || entries.some((entry, index) =>
+      index > 0 && (entries[index - 1]?.ref ?? '') >= entry.ref)) throw invalidOutput();
+    const referenceState = { fetchHeadDigest, trackingRefs: entries };
+    return {
+      digest: sha256(serializeCanonicalJson(referenceState)),
+      fetchHeadDigest,
+      trackingRefs: Object.freeze(entries),
     };
   }
 

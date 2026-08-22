@@ -73,6 +73,7 @@ function result(): KnowledgePublishResult {
     partial: false,
     pinRequired: true,
     recoveryCommand: ['publish', 'push', '--project', 'alpha'],
+    remoteRevision: null,
     stagedPaths: ['projects/alpha/sources/entry.md'],
     treeRevision: oid('e'),
     warnings: [],
@@ -100,11 +101,41 @@ function lineage(): KnowledgeCommitLineageV1 {
   };
 }
 
+function pushFailedResult(): KnowledgePublishResult {
+  return {
+    schemaVersion: KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+    state: 'push-failed',
+    projectId: 'alpha',
+    baseRevision: oid('a'),
+    errorCode: 'PUBLISH_PUSH_FAILED',
+    foreignCounts: { staged: 0, unstaged: 0, untracked: 0 },
+    knowledgeRevision: oid('d'),
+    localCommitPreserved: true,
+    partial: true,
+    pinRequired: true,
+    recoveryCommand: ['publish', 'push', '--project', 'alpha'],
+    remoteRevision: oid('a'),
+    stagedPaths: ['projects/alpha/sources/entry.md'],
+    treeRevision: oid('e'),
+    warnings: [],
+  };
+}
+
 describe('publication artifact codecs', () => {
   it('round-trips canonical plan, result, and lineage artifacts', () => {
     expect(parseKnowledgePublishPlan(renderKnowledgePublishPlan(plan()))).toEqual(plan());
     expect(parseKnowledgePublishResult(renderKnowledgePublishResult(result()))).toEqual(result());
+    expect(parseKnowledgePublishResult(renderKnowledgePublishResult(pushFailedResult())))
+      .toEqual(pushFailedResult());
     expect(parseKnowledgeCommitLineage(renderKnowledgeCommitLineageJson(lineage()))).toEqual(lineage());
+  });
+
+  it('does not allow PUBLISH_PUSH_FAILED on the blocked discriminant', () => {
+    const invalid = renderKnowledgePublishResult(pushFailedResult())
+      .replace('"state": "push-failed"', '"state": "blocked"');
+    expect(() => parseKnowledgePublishResult(invalid)).toThrowError(
+      expect.objectContaining({ code: 'PUBLISH_PLAN_DRIFT' }),
+    );
   });
 
   it('fails closed on unknown, duplicate, reordered, and noncanonical newline input', () => {
