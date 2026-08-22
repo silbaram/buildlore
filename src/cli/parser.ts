@@ -36,6 +36,9 @@ interface CommandSpec {
 
 const COMMON_FLAGS = ['--json'] as const;
 const MAX_RETRIEVAL_TEXT_LENGTH = 8_192;
+const FULL_OID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+const PLAN_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const ITERATION_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const PROJECT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const RESERVED_PROJECT_IDS = new Set(['knowledge', 'manifest', 'projects', 'shared']);
 
@@ -94,6 +97,50 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     [],
     {},
     '--project',
+  ),
+  command(
+    ['publish', 'plan'],
+    'publish.plan',
+    'publish.plan',
+    ['--project', '--source-revision'],
+    ['--project', '--source-revision'],
+    ['--include-policy-track', '--registration'],
+    {},
+    '--project',
+  ),
+  command(
+    ['publish', 'commit'],
+    'publish.commit',
+    'publish.commit',
+    ['--project', '--source-revision', '--expect-plan'],
+    ['--project', '--source-revision', '--expect-plan'],
+    ['--include-policy-track', '--registration'],
+    {},
+    '--project',
+  ),
+  command(
+    ['publish', 'push'],
+    'publish.push',
+    'publish.push',
+    ['--project', '--knowledge-revision'],
+    ['--project', '--knowledge-revision'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['knowledge', 'pin', 'plan'],
+    'knowledge.pin.plan',
+    'knowledge.pin.plan',
+    ['--knowledge-revision', '--iteration', '--intent'],
+    ['--knowledge-revision', '--iteration', '--intent'],
+  ),
+  command(
+    ['knowledge', 'pin', 'commit'],
+    'knowledge.pin.commit',
+    'knowledge.pin.commit',
+    ['--knowledge-revision', '--iteration', '--intent', '--expect-plan'],
+    ['--knowledge-revision', '--iteration', '--intent', '--expect-plan'],
   ),
   command(
     ['knowledge', 'clone'],
@@ -233,7 +280,33 @@ function parseOptions(
     throw new CliUsageError('CLI_ARGUMENT_INVALID');
   }
   validateRetrievalTextOptions(spec.command, values);
+  validatePublicationOptions(spec.command, values);
   return Object.freeze(values);
+}
+
+function validatePublicationOptions(
+  commandId: CliCommandId,
+  values: Readonly<Record<string, boolean | string>>,
+): void {
+  if (!commandId.startsWith('publish.') && !commandId.startsWith('knowledge.pin.')) return;
+  for (const option of ['--source-revision', '--knowledge-revision']) {
+    const value = values[option];
+    if (value !== undefined && (typeof value !== 'string' || !FULL_OID_PATTERN.test(value))) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+  }
+  const expectedPlan = values['--expect-plan'];
+  if (expectedPlan !== undefined &&
+      (typeof expectedPlan !== 'string' || !PLAN_DIGEST_PATTERN.test(expectedPlan))) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+  if (commandId.startsWith('knowledge.pin.')) {
+    const iteration = values['--iteration'];
+    if (typeof iteration !== 'string' || iteration.length > 120 ||
+        !ITERATION_ID_PATTERN.test(iteration) || values['--intent'] !== 'iteration-close') {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+  }
 }
 
 function validatedProjectId(value: string | undefined): string | null {

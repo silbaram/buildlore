@@ -31,6 +31,36 @@ describe('CLI argument parser', () => {
     },
     { args: ['query', '--project', 'alpha', '--question', 'why'], command: 'query' },
     { args: ['context', '--project', 'alpha', '--prompt', 'fix it'], command: 'context' },
+    {
+      args: ['publish', 'plan', '--project', 'alpha', '--source-revision', 'a'.repeat(40)],
+      command: 'publish.plan',
+    },
+    {
+      args: [
+        'publish', 'commit', '--project', 'alpha', '--source-revision', 'a'.repeat(40),
+        '--expect-plan', `sha256:${'b'.repeat(64)}`,
+      ],
+      command: 'publish.commit',
+    },
+    {
+      args: ['publish', 'push', '--project', 'alpha', '--knowledge-revision', 'c'.repeat(40)],
+      command: 'publish.push',
+    },
+    {
+      args: [
+        'knowledge', 'pin', 'plan', '--knowledge-revision', 'c'.repeat(40),
+        '--iteration', 'v11-iteration', '--intent', 'iteration-close',
+      ],
+      command: 'knowledge.pin.plan',
+    },
+    {
+      args: [
+        'knowledge', 'pin', 'commit', '--knowledge-revision', 'c'.repeat(40),
+        '--iteration', 'v11-iteration', '--intent', 'iteration-close',
+        '--expect-plan', `sha256:${'d'.repeat(64)}`,
+      ],
+      command: 'knowledge.pin.commit',
+    },
   ])('parses canonical $command', ({ args, command }) => {
     expect(parseCliArguments(args)).toMatchObject({ command, kind: 'command' });
     expect(parseCliArguments([...args, '--json'])).toMatchObject({
@@ -113,5 +143,43 @@ describe('CLI argument parser', () => {
         );
       }
     }
+  });
+
+  it('binds publication flags and rejects non-canonical revision, digest, iteration, and intent', () => {
+    expect(parseCliArguments([
+      'publish', 'plan', '--project', 'alpha', '--source-revision', 'a'.repeat(40),
+      '--include-policy-track', '--registration',
+    ])).toMatchObject({
+      operation: 'publish.plan',
+      options: {
+        '--include-policy-track': true,
+        '--project': 'alpha',
+        '--registration': true,
+        '--source-revision': 'a'.repeat(40),
+      },
+    });
+
+    for (const args of [
+      ['publish', 'plan', '--project', 'alpha', '--source-revision', 'A'.repeat(40)],
+      ['publish', 'push', '--project', 'alpha', '--knowledge-revision', 'a'.repeat(39)],
+      [
+        'publish', 'commit', '--project', 'alpha', '--source-revision', 'a'.repeat(40),
+        '--expect-plan', 'sha256:short',
+      ],
+      [
+        'knowledge', 'pin', 'plan', '--knowledge-revision', 'a'.repeat(40),
+        '--iteration', 'UPPER', '--intent', 'iteration-close',
+      ],
+      [
+        'knowledge', 'pin', 'plan', '--knowledge-revision', 'a'.repeat(40),
+        '--iteration', 'v11', '--intent', 'close',
+      ],
+    ]) expectUsageError(args, 'CLI_ARGUMENT_INVALID');
+
+    expectUsageError([
+      'knowledge', 'pin', 'plan', '--knowledge-revision', 'a'.repeat(40),
+      '--iteration', 'v11', '--intent', 'iteration-close', '--expect-plan',
+      `sha256:${'a'.repeat(64)}`,
+    ], 'CLI_OPTION_UNSUPPORTED');
   });
 });
