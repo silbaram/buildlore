@@ -230,17 +230,35 @@ function validSuccessfulPushReferenceTransition(
 ): boolean {
   if (before.fetchHeadDigest !== after.fetchHeadDigest) return false;
   const expectedTrackingRef = `refs/remotes/${remoteAlias}/${branchRef.slice('refs/heads/'.length)}`;
-  const beforeRefs = new Map(before.trackingRefs.map((entry) => [entry.ref, entry.oid]));
-  const afterRefs = new Map(after.trackingRefs.map((entry) => [entry.ref, entry.oid]));
+  const beforeRefs = new Map(before.trackingRefs.map((entry) => [entry.ref, entry]));
+  const afterRefs = new Map(after.trackingRefs.map((entry) => [entry.ref, entry]));
   const refs = new Set([...beforeRefs.keys(), ...afterRefs.keys()]);
+  const beforeExpected = beforeRefs.get(expectedTrackingRef);
+  const afterExpected = afterRefs.get(expectedTrackingRef);
   for (const ref of refs) {
-    const beforeOid = beforeRefs.get(ref);
-    const afterOid = afterRefs.get(ref);
+    const beforeEntry = beforeRefs.get(ref);
+    const afterEntry = afterRefs.get(ref);
     if (ref !== expectedTrackingRef) {
-      if (beforeOid !== afterOid) return false;
+      if (
+        beforeEntry?.symbolicTarget === expectedTrackingRef &&
+        afterEntry?.symbolicTarget === expectedTrackingRef
+      ) {
+        if (
+          beforeEntry.oid !== beforeExpected?.oid ||
+          afterEntry.oid !== afterExpected?.oid
+        ) return false;
+        continue;
+      }
+      if (
+        beforeEntry?.oid !== afterEntry?.oid ||
+        beforeEntry?.symbolicTarget !== afterEntry?.symbolicTarget
+      ) return false;
       continue;
     }
-    if (afterOid !== beforeOid && afterOid !== targetRevision) return false;
+    if (
+      beforeEntry?.symbolicTarget !== afterEntry?.symbolicTarget ||
+      (afterEntry?.oid !== beforeEntry?.oid && afterEntry?.oid !== targetRevision)
+    ) return false;
   }
   return true;
 }

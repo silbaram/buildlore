@@ -159,6 +159,71 @@ describe('publication artifact codecs', () => {
     }
   });
 
+  it('[V11-V-18] rejects version, OID, digest, bounds, BOM, UTF-8, and LF drift in publish plans', () => {
+    const canonical = renderKnowledgePublishPlan(plan());
+    const invalidValues: readonly (string | Uint8Array)[] = [
+      canonical.replace('buildlore.knowledge-publish-plan.v1', 'buildlore.knowledge-publish-plan.v2'),
+      canonical.replace(oid('a'), 'a'.repeat(39)),
+      canonical.replace(digest('7'), 'sha256:short'),
+      canonical.replace('"projectId": "alpha"', `"projectId": "${'a'.repeat(65)}"`),
+      `\ufeff${canonical}`,
+      canonical.replaceAll('\n', '\r\n'),
+      canonical.slice(0, -1),
+      `${canonical}\n`,
+      Uint8Array.from([0xff, 0xfe, 0xfd]),
+    ];
+    for (const invalid of invalidValues) {
+      expect(() => parseKnowledgePublishPlan(invalid)).toThrowError(
+        expect.objectContaining({ code: 'PUBLISH_PLAN_DRIFT' }),
+      );
+    }
+  });
+
+  it('[V11-V-18] rejects closed-key, order, version, bounds, OID, and digest drift in results and lineage', () => {
+    const canonicalResult = renderKnowledgePublishResult(result());
+    const invalidResults = [
+      canonicalResult.replace('"state":', '"unknown": true,\n  "state":'),
+      canonicalResult.replace('"projectId": "alpha",', '"projectId": "alpha",\n  "projectId": "alpha",'),
+      canonicalResult.replace(
+        '  "schemaVersion": "buildlore.knowledge-publish-result.v1",\n  "state": "committed",',
+        '  "state": "committed",\n  "schemaVersion": "buildlore.knowledge-publish-result.v1",',
+      ),
+      canonicalResult.replace('buildlore.knowledge-publish-result.v1', 'buildlore.knowledge-publish-result.v2'),
+      canonicalResult.replace('"projectId": "alpha"', `"projectId": "${'a'.repeat(65)}"`),
+      canonicalResult.replace(oid('d'), 'd'.repeat(39)),
+      `\ufeff${canonicalResult}`,
+      canonicalResult.slice(0, -1),
+      `${canonicalResult}\n`,
+    ];
+    for (const invalid of invalidResults) {
+      expect(() => parseKnowledgePublishResult(invalid)).toThrowError(
+        expect.objectContaining({ code: 'PUBLISH_PLAN_DRIFT' }),
+      );
+    }
+
+    const canonicalLineage = renderKnowledgeCommitLineageJson(lineage());
+    const invalidLineage = [
+      canonicalLineage.replace('"projectId":', '"unknown": true,\n  "projectId":'),
+      canonicalLineage.replace('"projectId": "alpha",', '"projectId": "alpha",\n  "projectId": "alpha",'),
+      canonicalLineage.replace(
+        '  "schemaVersion": "buildlore.knowledge-commit-lineage.v1",\n  "projectId": "alpha",',
+        '  "projectId": "alpha",\n  "schemaVersion": "buildlore.knowledge-commit-lineage.v1",',
+      ),
+      canonicalLineage.replace('buildlore.knowledge-commit-lineage.v1', 'buildlore.knowledge-commit-lineage.v2'),
+      canonicalLineage.replace(oid('c'), 'c'.repeat(39)),
+      canonicalLineage.replace(digest('8'), 'sha256:short'),
+      `\ufeff${canonicalLineage}`,
+      canonicalLineage.replaceAll('\n', '\r\n'),
+      canonicalLineage.slice(0, -1),
+      `${canonicalLineage}\n`,
+    ];
+    for (const invalid of invalidLineage) {
+      expect(() => parseKnowledgeCommitLineage(invalid)).toThrowError(
+        expect.objectContaining({ code: 'PUBLISH_PLAN_DRIFT' }),
+      );
+    }
+  });
+
   it('keeps runtime schema versions aligned with checked-in schemas', async () => {
     const [planSchema, resultSchema, lineageSchema] = await Promise.all([
       readFile('schemas/knowledge-publish-plan.schema.json', 'utf8'),

@@ -191,4 +191,37 @@ describe('package contract', () => {
     expect(cliSource).not.toMatch(/node:child_process|\b(?:exec|execFile|spawn|fork)\s*\(/u);
     expect(cliSource).not.toMatch(/JSON\.parse\s*\([^)]*\.stdout|\.stdout\s*\.\s*(?:match|split|trim)\s*\(/u);
   });
+
+  it('[V11-V-23] forbids Git authority, unsafe commands, services, and dependency expansion outside knowledge', async () => {
+    const sourceRoot = new URL('../src/', import.meta.url);
+    const sourcePaths = (await readdir(sourceRoot, { recursive: true }))
+      .filter((path) => path.endsWith('.ts'));
+    const readSources = async (prefixes: readonly string[]): Promise<string> => (
+      await Promise.all(sourcePaths
+        .filter((path) => prefixes.some((prefix) => path.startsWith(prefix)))
+        .map(async (path) => readFile(
+          new URL(path.replaceAll('\\', '/'), sourceRoot),
+          'utf8',
+        )))
+    ).join('\n');
+    const nonKnowledgeGitConsumers = await readSources(['compiler/', 'projector/', 'retrieval/']);
+    expect(nonKnowledgeGitConsumers).not.toMatch(
+      /knowledge\/(?:git-machine|parent-pin|publication|repository-writer-lease)/u,
+    );
+
+    const allSource = await readSources(['']);
+    expect(allSource).not.toMatch(/from\s+['"]llm-wiki-compiler\//u);
+    expect(allSource).not.toMatch(/\bGIT_INDEX_FILE\b/u);
+    expect(allSource).not.toMatch(/['"](?:pull|rebase|stash)['"]/u);
+    expect(allSource).not.toMatch(/['"]--force(?:-with-lease)?['"]/u);
+    expect(allSource).not.toMatch(
+      /from\s+['"](?:express|fastify|pg|postgres|sqlite3|better-sqlite3|node:http|node:http2)['"]/u,
+    );
+    expect(allSource).not.toMatch(/['"](?:checkout|switch)['"][\s\S]{0,80}['"]-(?:b|c)['"]/u);
+
+    const packageJson = JSON.parse(
+      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as PackageContract;
+    expect(packageJson.dependencies).toEqual(approvedRuntimeDependencies);
+  });
 });

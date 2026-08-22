@@ -56,6 +56,7 @@ export interface PublicationReferenceSnapshot {
   readonly trackingRefs: readonly {
     readonly oid: GitObjectId;
     readonly ref: string;
+    readonly symbolicTarget: string | null;
   }[];
 }
 
@@ -284,7 +285,7 @@ export class GitPublicationInspector implements PublicationInspectionPort {
     const [trackingRefs, commonDirectory] = await Promise.all([
       this.#run(repositoryRoot, [
         'for-each-ref',
-        '--format=%(refname)%00%(objectname)',
+        '--format=%(refname)%00%(objectname)%00%(symref)',
         'refs/remotes/',
       ]),
       resolveGitCommonDirectory(repositoryRoot),
@@ -320,20 +321,32 @@ export class GitPublicationInspector implements PublicationInspectionPort {
     } catch {
       throw invalidOutput();
     }
-    const entries: Array<{ readonly oid: GitObjectId; readonly ref: string }> = [];
+    const entries: Array<{
+      readonly oid: GitObjectId;
+      readonly ref: string;
+      readonly symbolicTarget: string | null;
+    }> = [];
     if (decodedRefs.length > 0) {
       if (!decodedRefs.endsWith('\n') || decodedRefs.includes('\r')) throw invalidOutput();
       for (const record of decodedRefs.slice(0, -1).split('\n')) {
         const fields = record.split('\0');
         const ref = fields[0];
         const oid = fields[1];
+        const symbolicTarget = fields[2];
         if (
-          fields.length !== 2 ||
+          fields.length !== 3 ||
           ref === undefined ||
           !/^refs\/remotes\/[A-Za-z0-9][A-Za-z0-9._/-]{0,244}$/u.test(ref) ||
-          oid === undefined
+          oid === undefined ||
+          symbolicTarget === undefined ||
+          (symbolicTarget.length > 0 &&
+            !/^refs\/remotes\/[A-Za-z0-9][A-Za-z0-9._/-]{0,244}$/u.test(symbolicTarget))
         ) throw invalidOutput();
-        entries.push({ oid: validateOid(oid), ref });
+        entries.push({
+          oid: validateOid(oid),
+          ref,
+          symbolicTarget: symbolicTarget.length === 0 ? null : symbolicTarget,
+        });
       }
     }
     if (entries.length > MAX_INDEX_RECORDS || entries.some((entry, index) =>

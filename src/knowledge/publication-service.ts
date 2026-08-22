@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { serializeCanonicalJson } from './atomic-file.js';
+import { RepositoryWriterError } from './errors.js';
 import { GitMachineAdapter, type GitCachedDiffEntry, type GitMachinePort, type GitStatusEntry } from './git-machine.js';
 import {
   createGitPublicationInspector,
@@ -246,6 +247,16 @@ function foreignCounts(plan: KnowledgePublishPlan): {
   };
 }
 
+function ineligibleFailureCode(
+  plan: KnowledgePublishPlan,
+): Exclude<PublicationFailureCode, 'PUBLISH_PUSH_FAILED'> {
+  return plan.blockReasons.some((reason) =>
+    reason === 'DIRTY_INDEX' || reason === 'FOREIGN_STAGED_CHANGE' ||
+    reason === 'UNMERGED_CHANGE')
+    ? 'PUBLISH_DIRTY_INDEX'
+    : 'PUBLISH_INELIGIBLE';
+}
+
 function blocked(
   plan: KnowledgePublishPlan,
   errorCode: Exclude<PublicationFailureCode, 'PUBLISH_PUSH_FAILED'>,
@@ -355,145 +366,152 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
       return blocked(initial.plan, 'PUBLISH_PLAN_DRIFT');
     }
     if (!initial.plan.eligible || initial.plan.selectedPaths.length === 0) {
-      return blocked(initial.plan, 'PUBLISH_INELIGIBLE');
+      return blocked(initial.plan, ineligibleFailureCode(initial.plan));
     }
 
-    return this.#lease.withLease(this.#knowledgeRoot, 'commit', async (lease) => {
-      await lease.updatePhase('revalidate');
-      const fresh = await this.#computePlan(normalized);
-      if (
-        fresh.plan.planDigest !== expectedPlanDigest ||
-        fresh.repository.branchRef !== initial.repository.branchRef ||
-        fresh.repository.baseRevision !== initial.repository.baseRevision ||
-        fresh.repository.indexSnapshotDigest !== initial.repository.indexSnapshotDigest ||
-        fresh.repository.repositoryIdentityDigest !== initial.repository.repositoryIdentityDigest
-      ) {
-        return blocked(fresh.plan, 'PUBLISH_PLAN_DRIFT');
-      }
-      if (!fresh.plan.eligible) return blocked(fresh.plan, 'PUBLISH_INELIGIBLE');
-      if ((await this.#git.cachedDiff(this.#knowledgeRoot)).length !== 0) {
-        return blocked(fresh.plan, 'PUBLISH_DIRTY_INDEX');
-      }
-
-      const paths = fresh.plan.selectedPaths.map(({ relativePath }) => relativePath);
-      let staged = false;
-      let treeRevision: string | null = null;
-      let knowledgeRevision: string | null = null;
-      try {
-        await this.#hooks.beforeAdd?.();
-        let beforeAdd: PlanComputation;
-        try {
-          beforeAdd = await this.#computePlan(normalized);
-        } catch {
-          throw new PublicationError('PUBLISH_PATH_DRIFT');
+    try {
+      return await this.#lease.withLease(this.#knowledgeRoot, 'commit', async (lease) => {
+        await lease.updatePhase('revalidate');
+        const fresh = await this.#computePlan(normalized);
+        if (
+          fresh.plan.planDigest !== expectedPlanDigest ||
+          fresh.repository.branchRef !== initial.repository.branchRef ||
+          fresh.repository.baseRevision !== initial.repository.baseRevision ||
+          fresh.repository.indexSnapshotDigest !== initial.repository.indexSnapshotDigest ||
+          fresh.repository.repositoryIdentityDigest !== initial.repository.repositoryIdentityDigest
+        ) {
+          return blocked(fresh.plan, 'PUBLISH_PLAN_DRIFT');
         }
-        if (
-          beforeAdd.plan.planDigest !== expectedPlanDigest ||
-          beforeAdd.repository.branchRef !== fresh.repository.branchRef ||
-          beforeAdd.repository.baseRevision !== fresh.repository.baseRevision ||
-          beforeAdd.repository.indexSnapshotDigest !== fresh.repository.indexSnapshotDigest ||
-          beforeAdd.foreignSnapshotDigest !== fresh.foreignSnapshotDigest
-        ) throw new PublicationError('PUBLISH_PLAN_DRIFT');
-        await lease.updatePhase('add');
-        await this.#git.addExact(this.#knowledgeRoot, paths);
-        staged = true;
-        await this.#hooks.afterAdd?.();
+        if (!fresh.plan.eligible) return blocked(fresh.plan, ineligibleFailureCode(fresh.plan));
+        if ((await this.#git.cachedDiff(this.#knowledgeRoot)).length !== 0) {
+          return blocked(fresh.plan, 'PUBLISH_DIRTY_INDEX');
+        }
 
-        await lease.updatePhase('validate-index');
-        const cached = await this.#git.cachedDiff(this.#knowledgeRoot);
-        this.#validateCachedDiff(fresh.plan, cached);
-        await this.#hooks.afterCachedValidation?.();
+        const paths = fresh.plan.selectedPaths.map(({ relativePath }) => relativePath);
+        let staged = false;
+        let treeRevision: string | null = null;
+        let knowledgeRevision: string | null = null;
+        try {
+          await this.#hooks.beforeAdd?.();
+          let beforeAdd: PlanComputation;
+          try {
+            beforeAdd = await this.#computePlan(normalized);
+          } catch {
+            throw new PublicationError('PUBLISH_PATH_DRIFT');
+          }
+          if (
+            beforeAdd.plan.planDigest !== expectedPlanDigest ||
+            beforeAdd.repository.branchRef !== fresh.repository.branchRef ||
+            beforeAdd.repository.baseRevision !== fresh.repository.baseRevision ||
+            beforeAdd.repository.indexSnapshotDigest !== fresh.repository.indexSnapshotDigest ||
+            beforeAdd.foreignSnapshotDigest !== fresh.foreignSnapshotDigest
+          ) throw new PublicationError('PUBLISH_PLAN_DRIFT');
+          await lease.updatePhase('add');
+          await this.#git.addExact(this.#knowledgeRoot, paths);
+          staged = true;
+          await this.#hooks.afterAdd?.();
 
-        await lease.updatePhase('secret-scan');
-        await this.#validateStagedBlobs(fresh.plan, cached);
-        await this.#hooks.afterSecretScan?.();
+          await lease.updatePhase('validate-index');
+          const cached = await this.#git.cachedDiff(this.#knowledgeRoot);
+          this.#validateCachedDiff(fresh.plan, cached);
+          await this.#hooks.afterCachedValidation?.();
 
-        await lease.updatePhase('write-tree');
-        treeRevision = await this.#git.writeTree(this.#knowledgeRoot);
-        await this.#hooks.afterWriteTree?.(treeRevision);
-        const lineage = commitLineage(normalized, fresh.plan, treeRevision);
+          await lease.updatePhase('secret-scan');
+          await this.#validateStagedBlobs(fresh.plan, cached);
+          await this.#hooks.afterSecretScan?.();
 
-        await lease.updatePhase('commit-tree');
-        knowledgeRevision = await this.#git.commitTree(
-          this.#knowledgeRoot,
-          treeRevision,
-          [fresh.plan.baseRevision],
-          renderKnowledgeCommitLineage(lineage),
-        );
-        await this.#hooks.afterCommitTree?.(knowledgeRevision);
+          await lease.updatePhase('write-tree');
+          treeRevision = await this.#git.writeTree(this.#knowledgeRoot);
+          await this.#hooks.afterWriteTree?.(treeRevision);
+          const lineage = commitLineage(normalized, fresh.plan, treeRevision);
 
-        await lease.updatePhase('update-ref');
-        await this.#hooks.beforeUpdateRef?.(knowledgeRevision);
-        await this.#git.updateRefCompareAndSwap(
-          this.#knowledgeRoot,
-          fresh.repository.branchRef,
-          knowledgeRevision,
-          fresh.plan.baseRevision,
-        );
+          await lease.updatePhase('commit-tree');
+          knowledgeRevision = await this.#git.commitTree(
+            this.#knowledgeRoot,
+            treeRevision,
+            [fresh.plan.baseRevision],
+            renderKnowledgeCommitLineage(lineage),
+          );
+          await this.#hooks.afterCommitTree?.(knowledgeRevision);
 
-        await lease.updatePhase('post-verify');
-        await this.#hooks.beforePostVerify?.();
-        const verified = await this.#inspector.inspectRepository(this.#knowledgeRoot);
-        const remaining = await this.#git.cachedDiff(this.#knowledgeRoot);
-        const commitSnapshot = await this.#inspector.inspectCommit(
-          this.#knowledgeRoot,
-          knowledgeRevision,
-        );
-        const expectedMessage = renderKnowledgeCommitLineage(lineage);
-        const postStatus = await this.#git.status(this.#knowledgeRoot);
-        const foreignAfter = await this.#foreignSnapshotDigest(
-          normalized.projectId,
-          normalized.registration,
-          postStatus,
-        );
-        if (
-          verified.baseRevision !== knowledgeRevision ||
-          verified.branchRef !== fresh.repository.branchRef ||
-          remaining.length !== 0 ||
-          commitSnapshot.treeRevision !== treeRevision ||
-          commitSnapshot.parentRevisions.length !== 1 ||
-          commitSnapshot.parentRevisions[0] !== fresh.plan.baseRevision ||
-          !commitSnapshot.message.equals(expectedMessage) ||
-          commitSnapshot.changedPaths.length !== paths.length ||
-          commitSnapshot.changedPaths.some((path, index) => path !== paths.toSorted()[index]) ||
-          foreignAfter !== fresh.foreignSnapshotDigest
-        ) throw new PublicationError('PUBLISH_PARTIAL', true);
-
-        return Object.freeze({
-          schemaVersion: KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
-          state: 'committed',
-          projectId: fresh.plan.projectId,
-          baseRevision: fresh.plan.baseRevision,
-          foreignCounts: foreignCounts(fresh.plan),
-          knowledgeRevision,
-          localCommitPreserved: true,
-          partial: false,
-          pinRequired: true,
-          recoveryCommand: Object.freeze([
-            'publish',
-            'push',
-            '--project',
-            fresh.plan.projectId,
-            '--knowledge-revision',
+          await lease.updatePhase('update-ref');
+          await this.#hooks.beforeUpdateRef?.(knowledgeRevision);
+          await this.#git.updateRefCompareAndSwap(
+            this.#knowledgeRoot,
+            fresh.repository.branchRef,
             knowledgeRevision,
-          ]),
-          remoteRevision: null,
-          stagedPaths: Object.freeze(paths),
-          treeRevision,
-          warnings: Object.freeze([]),
-        });
-      } catch (error) {
-        const code = error instanceof PublicationError && error.code !== 'PUBLISH_PUSH_FAILED'
-          ? error.code
-          : staged ? 'PUBLISH_PARTIAL' : 'PUBLISH_TRANSACTION_FAILED';
-        return blocked(fresh.plan, code, {
-          knowledgeRevision,
-          partial: staged || (error instanceof PublicationError && error.partial),
-          stagedPaths: staged ? paths : [],
-          treeRevision,
-        });
+            fresh.plan.baseRevision,
+          );
+
+          await lease.updatePhase('post-verify');
+          await this.#hooks.beforePostVerify?.();
+          const verified = await this.#inspector.inspectRepository(this.#knowledgeRoot);
+          const remaining = await this.#git.cachedDiff(this.#knowledgeRoot);
+          const commitSnapshot = await this.#inspector.inspectCommit(
+            this.#knowledgeRoot,
+            knowledgeRevision,
+          );
+          const expectedMessage = renderKnowledgeCommitLineage(lineage);
+          const postStatus = await this.#git.status(this.#knowledgeRoot);
+          const foreignAfter = await this.#foreignSnapshotDigest(
+            normalized.projectId,
+            normalized.registration,
+            postStatus,
+          );
+          if (
+            verified.baseRevision !== knowledgeRevision ||
+            verified.branchRef !== fresh.repository.branchRef ||
+            remaining.length !== 0 ||
+            commitSnapshot.treeRevision !== treeRevision ||
+            commitSnapshot.parentRevisions.length !== 1 ||
+            commitSnapshot.parentRevisions[0] !== fresh.plan.baseRevision ||
+            !commitSnapshot.message.equals(expectedMessage) ||
+            commitSnapshot.changedPaths.length !== paths.length ||
+            commitSnapshot.changedPaths.some((path, index) => path !== paths.toSorted()[index]) ||
+            foreignAfter !== fresh.foreignSnapshotDigest
+          ) throw new PublicationError('PUBLISH_PARTIAL', true);
+
+          return Object.freeze({
+            schemaVersion: KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+            state: 'committed',
+            projectId: fresh.plan.projectId,
+            baseRevision: fresh.plan.baseRevision,
+            foreignCounts: foreignCounts(fresh.plan),
+            knowledgeRevision,
+            localCommitPreserved: true,
+            partial: false,
+            pinRequired: true,
+            recoveryCommand: Object.freeze([
+              'publish',
+              'push',
+              '--project',
+              fresh.plan.projectId,
+              '--knowledge-revision',
+              knowledgeRevision,
+            ]),
+            remoteRevision: null,
+            stagedPaths: Object.freeze(paths),
+            treeRevision,
+            warnings: Object.freeze([]),
+          });
+        } catch (error) {
+          const code = error instanceof PublicationError && error.code !== 'PUBLISH_PUSH_FAILED'
+            ? error.code
+            : staged ? 'PUBLISH_PARTIAL' : 'PUBLISH_TRANSACTION_FAILED';
+          return blocked(fresh.plan, code, {
+            knowledgeRevision,
+            partial: staged || (error instanceof PublicationError && error.partial),
+            stagedPaths: staged ? paths : [],
+            treeRevision,
+          });
+        }
+      });
+    } catch (error) {
+      if (error instanceof RepositoryWriterError && error.code === 'REPOSITORY_BUSY') {
+        return blocked(initial.plan, 'PUBLISH_REPOSITORY_BUSY');
       }
-    });
+      throw error;
+    }
   }
 
   async push(input: KnowledgePublishPushInput): Promise<KnowledgePublishResult> {

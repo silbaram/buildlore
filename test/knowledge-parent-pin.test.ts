@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { CompilerRequest } from '../src/compiler/index.js';
+import { runCli, type CliIo, type CliRuntime } from '../src/cli/index.js';
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import { GitMachineAdapter, type GitMachinePort } from '../src/knowledge/git-machine.js';
 import { resolveGitCommonDirectory } from '../src/knowledge/git.js';
@@ -28,6 +30,7 @@ import {
   type RepositoryWriterLeasePort,
 } from '../src/knowledge/repository-writer-lease.js';
 import { KNOWLEDGE_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION } from '../src/knowledge/types.js';
+import { PROJECT_SYNC_SCHEMA_VERSION } from '../src/projector/index.js';
 
 const roots: string[] = [];
 const digest = (character: string): PublicationDigest => `sha256:${character.repeat(64)}`;
@@ -80,6 +83,7 @@ async function writeKnowledgeProject(root: string): Promise<void> {
   await writeFile(join(workspace, 'sources', 'entry.md'), '# initial source\n', 'utf8');
   await writeFile(join(workspace, 'wiki', '.gitkeep'), '', 'utf8');
   await writeFile(join(workspace, '.llmwiki', '.gitkeep'), '', 'utf8');
+  await writeFile(join(root, '.gitignore'), 'projects/*/.llmwiki/embeddings.json\n', 'utf8');
   await writeFile(join(root, 'manifest.json'), serializeCanonicalJson({
     projects: [{
       displayName: 'Alpha',
@@ -107,7 +111,157 @@ interface ParentPinFixture {
   readonly parentBaseRevision: string;
   readonly parentRemoteRoot: string;
   readonly parentRoot: string;
+  readonly preparationTrace: Readonly<{
+    readonly compileCalls: number;
+    readonly presentation: string;
+    readonly syncCalls: number;
+  }>;
+  readonly publicationTrace: Readonly<{
+    readonly afterCommitRemote: string;
+    readonly afterPlanSnapshot: string;
+    readonly afterPushParentSnapshot: string;
+    readonly afterPushRemote: string;
+    readonly beforePlanSnapshot: string;
+    readonly beforePushParentSnapshot: string;
+    readonly commitArtifact: string;
+    readonly commitLog: string;
+    readonly commitResult: string;
+    readonly errorResult: string;
+    readonly leaseMetadata: string;
+    readonly planArtifact: string;
+    readonly stagedBlobSnapshot: string;
+    readonly stagedSnapshot: string;
+  }>;
   readonly remoteRoot: string;
+  readonly securitySentinels: readonly string[];
+}
+
+async function runPreparationWorkflow(
+  parentRoot: string,
+  knowledgeRoot: string,
+  securitySentinels: readonly string[],
+): Promise<ParentPinFixture['preparationTrace']> {
+  let compileCalls = 0;
+  let syncCalls = 0;
+  let presentation = '';
+  const io: CliIo = {
+    stderr: (message) => { presentation += message; },
+    stdout: (message) => { presentation += message; },
+  };
+  const sourceRevision = digest('f');
+  const emptyPlan = {
+    counts: { blocked: 0, error: 0, exclude: 0, include: 0, quarantine: 0 },
+    entries: [],
+    planFingerprint: digest('1'),
+  } as const;
+  const runtime: CliRuntime = {
+    cwd: parentRoot,
+    projectCompiler: {
+      execute: async (request: CompilerRequest) => {
+        if (request.capability !== 'compile') throw new Error('Unexpected compiler capability.');
+        compileCalls += 1;
+        await mkdir(join(knowledgeRoot, 'projects', 'alpha', 'wiki', 'concepts'));
+        await writeFile(
+          join(knowledgeRoot, 'projects', 'alpha', 'wiki', 'concepts', 'iteration-close.md'),
+          '# Compiled iteration-close page\n',
+          'utf8',
+        );
+        return {
+          capability: 'compile',
+          data: {
+            candidateCount: 0,
+            candidates: [],
+            compiled: 1,
+            deleted: 0,
+            pageIds: ['iteration-close'],
+            skipped: 0,
+          },
+          ok: true,
+          outcome: 'succeeded',
+          projectId: request.projectId,
+          warnings: [],
+        };
+      },
+      status: () => Promise.resolve({
+        pendingChanges: [],
+        pendingChangesCount: 0,
+        stateStatus: 'ok',
+      }),
+    },
+    sync: {
+      sync: async (input) => {
+        syncCalls += 1;
+        await writeFile(
+          join(knowledgeRoot, 'projects', 'alpha', 'sources', 'entry.md'),
+          '# synchronized iteration-close source\n',
+          'utf8',
+        );
+        const planning = {
+          counts: { ...emptyPlan.counts, include: 1 },
+          entries: [{
+            decision: 'include',
+            reasonCode: 'accepted-fixture-source',
+            sourceKind: 'planning',
+            sourceRef: 'fixture/iteration-close',
+            sourceRevision,
+            target: 'projects/alpha/sources/entry.md',
+            writeStatus: 'update',
+          }],
+          planFingerprint: digest('2'),
+        } as const;
+        return {
+          appliedCount: 1,
+          dryRun: input.dryRun,
+          execution: emptyPlan,
+          partial: false,
+          planning,
+          projectId: input.projectId,
+          remainingCount: 0,
+          schemaVersion: PROJECT_SYNC_SCHEMA_VERSION,
+          writes: [{
+            sourceKind: 'planning',
+            sourceRevision,
+            target: 'projects/alpha/sources/entry.md',
+            writeStatus: 'update',
+          }],
+        };
+      },
+    },
+  };
+  const syncExit = await runCli(['sync', '--project', 'alpha'], io, runtime);
+  const compileExit = await runCli(['compile', '--project', 'alpha', '--json'], io, runtime);
+  if (syncExit !== 0 || compileExit !== 0) {
+    throw new Error(
+      `Provider-free preparation workflow failed: sync=${syncExit}/${syncCalls}, compile=${compileExit}/${compileCalls}.`,
+    );
+  }
+  await writeFile(
+    join(knowledgeRoot, 'projects', 'alpha', '.llmwiki', 'embeddings.json'),
+    JSON.stringify(securitySentinels),
+    'utf8',
+  );
+  return { compileCalls, presentation, syncCalls };
+}
+
+async function publicationSnapshot(
+  knowledgeRoot: string,
+  remoteRoot: string,
+): Promise<string> {
+  return JSON.stringify({
+    head: await git(knowledgeRoot, ['rev-parse', 'HEAD']),
+    index: await git(knowledgeRoot, ['ls-files', '--stage']),
+    remote: await git(remoteRoot, ['rev-parse', 'refs/heads/main']),
+    status: await git(knowledgeRoot, ['status', '--porcelain=v2', '--untracked-files=all']),
+  });
+}
+
+async function parentSnapshot(parentRoot: string): Promise<string> {
+  return JSON.stringify({
+    gitlink: await git(parentRoot, ['ls-tree', 'HEAD', 'knowledge']),
+    head: await git(parentRoot, ['rev-parse', 'HEAD']),
+    index: await git(parentRoot, ['ls-files', '--stage']),
+    status: await git(parentRoot, ['status', '--porcelain=v2', '--untracked-files=all']),
+  });
 }
 
 async function createFixture(): Promise<ParentPinFixture> {
@@ -148,6 +302,13 @@ async function createFixture(): Promise<ParentPinFixture> {
     remoteRoot,
     'knowledge',
   ]);
+  await git(parentRoot, [
+    'config',
+    '-f',
+    '.gitmodules',
+    'submodule.knowledge.url',
+    '../knowledge-remote.git',
+  ]);
   await git(parentRoot, ['add', '--all']);
   await git(parentRoot, ['commit', '-m', 'parent code baseline']);
   const parentBaseRevision = await git(parentRoot, ['rev-parse', 'HEAD']);
@@ -160,10 +321,16 @@ async function createFixture(): Promise<ParentPinFixture> {
   await git(knowledgeRoot, ['config', 'user.email', 'buildlore@example.invalid']);
   await git(knowledgeRoot, ['checkout', 'main']);
   await git(knowledgeRoot, ['branch', '--set-upstream-to=origin/main', 'main']);
-  await writeFile(
-    join(knowledgeRoot, 'projects', 'alpha', 'sources', 'entry.md'),
-    '# iteration-close source\n',
-    'utf8',
+  const securitySentinels = [
+    ['ghp_', 'A'.repeat(24)].join(''),
+    ['private', 'endpoint', 'sentinel', 'example', 'invalid'].join('.'),
+    parentRoot,
+    ['source', 'body', 'sentinel', 'v11'].join('-'),
+  ];
+  const preparationTrace = await runPreparationWorkflow(
+    parentRoot,
+    knowledgeRoot,
+    securitySentinels,
   );
   const publicationInput = {
     codeRevision: parentBaseRevision,
@@ -176,20 +343,64 @@ async function createFixture(): Promise<ParentPinFixture> {
     registration: false,
     sourceRevision: 'a'.repeat(40),
   };
+  let leaseMetadata = '';
+  let stagedBlobSnapshot = '';
+  let stagedSnapshot = '';
+  const knowledgeCommonDirectory = await resolveGitCommonDirectory(knowledgeRoot);
   const publisher = createKnowledgePublicationService(knowledgeRoot, {
     blobPolicy: allowPolicy,
+    hooks: {
+      afterAdd: async () => {
+        leaseMetadata = await readFile(
+          join(knowledgeCommonDirectory, 'buildlore.repository-writer.lock'),
+          'utf8',
+        );
+        stagedSnapshot = await git(knowledgeRoot, [
+          'diff',
+          '--cached',
+          '--binary',
+          '--no-ext-diff',
+        ]);
+        stagedBlobSnapshot = (await Promise.all([
+          git(knowledgeRoot, ['show', ':projects/alpha/sources/entry.md']),
+          git(knowledgeRoot, ['show', ':projects/alpha/wiki/concepts/iteration-close.md']),
+        ])).join('\0');
+      },
+    },
   });
+  const beforePlanSnapshot = await publicationSnapshot(knowledgeRoot, remoteRoot);
   const publishPlan = await publisher.plan(publicationInput);
+  const afterPlanSnapshot = await publicationSnapshot(knowledgeRoot, remoteRoot);
   const commit = await publisher.commit({
     ...publicationInput,
     expectedPlanDigest: publishPlan.planDigest,
   });
-  if (commit.state !== 'committed') throw new Error('Knowledge fixture commit failed.');
-  await git(knowledgeRoot, [
-    'push',
-    'origin',
-    `${commit.knowledgeRevision}:refs/heads/main`,
-  ]);
+  if (commit.state !== 'committed') {
+    const outcome = commit.state === 'blocked' || commit.state === 'push-failed'
+      ? commit.errorCode
+      : commit.state;
+    throw new Error(
+      `Knowledge fixture commit failed: ${outcome}/${publishPlan.blockReasons.join(',')}.`,
+    );
+  }
+  const errorResult = JSON.stringify(await publisher.push({
+    knowledgeRevision: '0'.repeat(40),
+    projectId: 'alpha',
+  }));
+  const afterCommitRemote = await git(remoteRoot, ['rev-parse', 'refs/heads/main']);
+  const beforePushParentSnapshot = await parentSnapshot(parentRoot);
+  const pushed = await publisher.push({
+    knowledgeRevision: commit.knowledgeRevision,
+    projectId: 'alpha',
+  });
+  if (pushed.state !== 'pushed') {
+    const outcome = pushed.state === 'blocked' || pushed.state === 'push-failed'
+      ? pushed.errorCode
+      : pushed.state;
+    throw new Error(`Knowledge fixture push failed: ${outcome}.`);
+  }
+  const afterPushRemote = await git(remoteRoot, ['rev-parse', 'refs/heads/main']);
+  const afterPushParentSnapshot = await parentSnapshot(parentRoot);
   return {
     input: {
       intent: 'iteration-close',
@@ -201,7 +412,30 @@ async function createFixture(): Promise<ParentPinFixture> {
     parentBaseRevision,
     parentRemoteRoot,
     parentRoot,
+    preparationTrace,
+    publicationTrace: {
+      afterCommitRemote,
+      afterPlanSnapshot,
+      afterPushParentSnapshot,
+      afterPushRemote,
+      beforePlanSnapshot,
+      beforePushParentSnapshot,
+      commitArtifact: await git(knowledgeRoot, [
+        'show',
+        '-s',
+        '--format=%H%x00%P%x00%T%x00%B',
+        commit.knowledgeRevision,
+      ]),
+      commitLog: await git(knowledgeRoot, ['log', '-1', '--format=%B']),
+      commitResult: JSON.stringify(commit),
+      errorResult,
+      leaseMetadata,
+      planArtifact: JSON.stringify(publishPlan),
+      stagedBlobSnapshot,
+      stagedSnapshot,
+    },
     remoteRoot,
+    securitySentinels,
   };
 }
 
@@ -284,6 +518,14 @@ describe('ParentKnowledgePinService', () => {
 
   it('keeps plan mutation-free and durably commits exactly one knowledge gitlink', async () => {
     const fixture = await createFixture();
+    expect(fixture.preparationTrace).toMatchObject({ compileCalls: 1, syncCalls: 1 });
+    expect(fixture.publicationTrace.afterPlanSnapshot)
+      .toBe(fixture.publicationTrace.beforePlanSnapshot);
+    expect(fixture.publicationTrace.afterCommitRemote)
+      .not.toBe(fixture.knowledgeRevision);
+    expect(fixture.publicationTrace.afterPushRemote).toBe(fixture.knowledgeRevision);
+    expect(fixture.publicationTrace.afterPushParentSnapshot)
+      .toBe(fixture.publicationTrace.beforePushParentSnapshot);
     const machine = new GitMachineAdapter();
     const push = vi.spyOn(machine, 'pushExactNonForce');
     const fetch = vi.spyOn(machine, 'fetchObjectNoRefUpdate');
@@ -413,6 +655,35 @@ describe('ParentKnowledgePinService', () => {
       .resolves.toBe(result.resultingParentCommitSha);
     expect(JSON.stringify(result)).not.toContain(fixture.parentRoot);
     expect(JSON.stringify(result)).not.toContain(fixture.remoteRoot);
+  });
+
+  it('[V11-V-15] keeps private byte sentinels out of every publication evidence surface', async () => {
+    const fixture = await createFixture();
+    const inventory = await readFile(
+      new URL('./fixtures/tracking-policy/llm-wiki-compiler-1.1.0-inventory.json', import.meta.url),
+      'utf8',
+    );
+    const evidence = {
+      cliHumanAndJson: fixture.preparationTrace.presentation,
+      commitArtifact: fixture.publicationTrace.commitArtifact,
+      commitLog: fixture.publicationTrace.commitLog,
+      commitResult: fixture.publicationTrace.commitResult,
+      errorResult: fixture.publicationTrace.errorResult,
+      inventory,
+      leaseMetadata: fixture.publicationTrace.leaseMetadata,
+      parentSnapshot: fixture.publicationTrace.afterPushParentSnapshot,
+      planArtifact: fixture.publicationTrace.planArtifact,
+      repositorySnapshot: fixture.publicationTrace.afterPlanSnapshot,
+      stagedBlobSnapshot: fixture.publicationTrace.stagedBlobSnapshot,
+      temporaryDiff: fixture.publicationTrace.stagedSnapshot,
+    };
+    const sentinels = fixture.securitySentinels;
+    for (const [surface, bytes] of Object.entries(evidence)) {
+      expect(bytes.length, `${surface} must be executable evidence`).toBeGreaterThan(0);
+      for (const sentinel of sentinels) {
+        expect(bytes, `${surface} reflected a private sentinel`).not.toContain(sentinel);
+      }
+    }
   });
 
   it('revalidates an idempotent no-op under canonical dual locks with zero Git mutation', async () => {

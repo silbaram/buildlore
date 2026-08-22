@@ -23,6 +23,7 @@ function git(cwd: string, args: readonly string[]): Promise<string> {
         encoding: 'utf8',
         env: {
           ...process.env,
+          GIT_CONFIG_GLOBAL: '/dev/null',
           GIT_CONFIG_NOSYSTEM: '1',
           GIT_TERMINAL_PROMPT: '0',
           LC_ALL: 'C',

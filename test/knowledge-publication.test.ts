@@ -24,6 +24,23 @@ const allowPolicy: PublicationBlobPolicyPort = {
   validate: vi.fn(() => Promise.resolve(true)),
 };
 
+function deferred(): Readonly<{
+  promise: Promise<void>;
+  resolve(): void;
+}> {
+  let resolvePromise: (() => void) | undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: () => {
+      if (resolvePromise === undefined) throw new Error('Deferred promise is unavailable.');
+      resolvePromise();
+    },
+  };
+}
+
 function git(cwd: string, args: readonly string[], stdin?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(
@@ -34,6 +51,7 @@ function git(cwd: string, args: readonly string[], stdin?: string): Promise<stri
         encoding: 'utf8',
         env: {
           ...process.env,
+          GIT_CONFIG_GLOBAL: '/dev/null',
           GIT_CONFIG_NOSYSTEM: '1',
           GIT_TERMINAL_PROMPT: '0',
           LC_ALL: 'C',
@@ -164,7 +182,11 @@ describe('KnowledgePublicationService plan', () => {
     expect(plan.eligible).toBe(false);
     expect(plan.blockReasons).toEqual(expect.arrayContaining(['DIRTY_INDEX', 'FOREIGN_STAGED_CHANGE']));
     const result = await service.commit({ ...planInput(), expectedPlanDigest: plan.planDigest });
-    expect(result).toMatchObject({ state: 'blocked', partial: false });
+    expect(result).toMatchObject({
+      errorCode: 'PUBLISH_DIRTY_INDEX',
+      state: 'blocked',
+      partial: false,
+    });
     await expect(git(root, ['rev-parse', 'HEAD'])).resolves.toBe(beforeHead);
     await expect(git(root, ['ls-files', '--stage'])).resolves.toBe(beforeIndex);
   });
@@ -246,6 +268,50 @@ describe('KnowledgePublicationService plan', () => {
 });
 
 describe('KnowledgePublicationService commit transaction', () => {
+  it('[V11-V-08][V11-P-08] returns a bounded busy loser while one publisher owns the common-dir lease', async () => {
+    const root = await createKnowledgeRepository();
+    await writeFile(join(root, 'projects', 'alpha', 'sources', 'entry.md'), '# concurrent alpha\n', 'utf8');
+    const entered = deferred();
+    const release = deferred();
+    const winningMachine = new GitMachineAdapter();
+    const losingMachine = new GitMachineAdapter();
+    const losingAdd = vi.spyOn(losingMachine, 'addExact');
+    const winner = createKnowledgePublicationService(root, {
+      blobPolicy: allowPolicy,
+      gitMachine: winningMachine,
+      hooks: {
+        beforeAdd: async () => {
+          entered.resolve();
+          await release.promise;
+        },
+      },
+    });
+    const loser = createKnowledgePublicationService(root, {
+      blobPolicy: allowPolicy,
+      gitMachine: losingMachine,
+    });
+    const plan = await winner.plan(planInput());
+    const winningCommit = winner.commit({
+      ...planInput(),
+      expectedPlanDigest: plan.planDigest,
+    });
+    await entered.promise;
+    const losingResult = await loser.commit({
+      ...planInput(),
+      expectedPlanDigest: plan.planDigest,
+    });
+    expect(losingResult).toMatchObject({
+      errorCode: 'PUBLISH_REPOSITORY_BUSY',
+      partial: false,
+      state: 'blocked',
+    });
+    expect(losingAdd).not.toHaveBeenCalled();
+    release.resolve();
+    await expect(winningCommit).resolves.toMatchObject({ state: 'committed' });
+    await expect(git(root, ['rev-list', '--count', 'HEAD'])).resolves.toBe('2');
+    await expect(git(root, ['diff', '--cached', '--name-only'])).resolves.toBe('');
+  });
+
   it('blocks a selected-area nested repository/gitlink before add or ref update', async () => {
     const root = await createKnowledgeRepository();
     const nested = join(root, 'projects', 'alpha', 'wiki', 'nested');
