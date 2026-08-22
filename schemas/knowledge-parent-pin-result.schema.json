@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/knowledge-parent-pin-result.schema.json",
+  "title": "BuildLore Parent Knowledge Pin Result v1",
+  "oneOf": [
+    { "$ref": "#/$defs/applied" },
+    { "$ref": "#/$defs/noOp" },
+    { "$ref": "#/$defs/blocked" }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "oid": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
+    "iterationId": {
+      "type": "string", "minLength": 1, "maxLength": 120,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "projectId": {
+      "type": "string", "minLength": 1, "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "recovery": {
+      "type": "array", "minItems": 1, "maxItems": 12,
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+    },
+    "common": {
+      "type": "object",
+      "required": [
+        "schemaVersion", "intent", "iterationId", "path", "projectId", "sourceRevision",
+        "parentBaseRevision", "codeRevision", "oldKnowledgeGitlink", "newKnowledgeGitlink",
+        "targetRemoteReachability", "planDigest", "state", "applied", "noOp", "partial",
+        "resultingParentCommitSha", "recoveryCommand"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.parent-knowledge-pin-result.v1" },
+        "intent": { "const": "iteration-close" },
+        "iterationId": { "$ref": "#/$defs/iterationId" },
+        "path": { "const": "knowledge" },
+        "projectId": { "oneOf": [{ "$ref": "#/$defs/projectId" }, { "type": "null" }] },
+        "sourceRevision": { "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }] },
+        "parentBaseRevision": { "$ref": "#/$defs/oid" },
+        "codeRevision": { "$ref": "#/$defs/oid" },
+        "oldKnowledgeGitlink": { "$ref": "#/$defs/oid" },
+        "newKnowledgeGitlink": { "$ref": "#/$defs/oid" },
+        "targetRemoteReachability": { "type": "boolean" },
+        "planDigest": { "$ref": "#/$defs/digest" },
+        "applied": { "type": "boolean" },
+        "noOp": { "type": "boolean" },
+        "partial": { "type": "boolean" },
+        "resultingParentCommitSha": {
+          "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }]
+        },
+        "recoveryCommand": { "$ref": "#/$defs/recovery" }
+      }
+    },
+    "applied": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "schemaVersion", "intent", "iterationId", "path", "projectId", "sourceRevision",
+            "parentBaseRevision", "codeRevision", "oldKnowledgeGitlink", "newKnowledgeGitlink",
+            "targetRemoteReachability", "planDigest", "state", "applied", "noOp", "partial",
+            "resultingParentCommitSha", "recoveryCommand"
+          ],
+          "properties": {
+            "schemaVersion": true, "intent": true, "iterationId": true, "path": true,
+            "projectId": { "$ref": "#/$defs/projectId" }, "sourceRevision": { "$ref": "#/$defs/oid" },
+            "parentBaseRevision": true, "codeRevision": true, "oldKnowledgeGitlink": true,
+            "newKnowledgeGitlink": true, "targetRemoteReachability": { "const": true },
+            "planDigest": true, "state": { "const": "applied" }, "applied": { "const": true },
+            "noOp": { "const": false }, "partial": { "const": false },
+            "resultingParentCommitSha": { "$ref": "#/$defs/oid" }, "recoveryCommand": true
+          }
+        }
+      ]
+    },
+    "noOp": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "schemaVersion", "intent", "iterationId", "path", "projectId", "sourceRevision",
+            "parentBaseRevision", "codeRevision", "oldKnowledgeGitlink", "newKnowledgeGitlink",
+            "targetRemoteReachability", "planDigest", "state", "applied", "noOp", "partial",
+            "resultingParentCommitSha", "recoveryCommand"
+          ],
+          "properties": {
+            "schemaVersion": true, "intent": true, "iterationId": true, "path": true,
+            "projectId": { "$ref": "#/$defs/projectId" }, "sourceRevision": { "$ref": "#/$defs/oid" },
+            "parentBaseRevision": true, "codeRevision": true, "oldKnowledgeGitlink": true,
+            "newKnowledgeGitlink": true, "targetRemoteReachability": { "const": true },
+            "planDigest": true, "state": { "const": "no-op" }, "applied": { "const": false },
+            "noOp": { "const": true }, "partial": { "const": false },
+            "resultingParentCommitSha": { "type": "null" }, "recoveryCommand": true
+          }
+        }
+      ]
+    },
+    "blocked": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "schemaVersion", "intent", "iterationId", "path", "projectId", "sourceRevision",
+            "parentBaseRevision", "codeRevision", "oldKnowledgeGitlink", "newKnowledgeGitlink",
+            "targetRemoteReachability", "planDigest", "state", "errorCode", "applied", "noOp",
+            "partial", "resultingParentCommitSha", "recoveryCommand"
+          ],
+          "properties": {
+            "schemaVersion": true, "intent": true, "iterationId": true, "path": true,
+            "projectId": true, "sourceRevision": true, "parentBaseRevision": true,
+            "codeRevision": true, "oldKnowledgeGitlink": true, "newKnowledgeGitlink": true,
+            "targetRemoteReachability": true, "planDigest": true,
+            "state": { "const": "blocked" },
+            "errorCode": {
+              "enum": [
+                "PARENT_PIN_INELIGIBLE", "PARENT_PIN_PARTIAL", "PARENT_PIN_PLAN_DRIFT",
+                "PARENT_PIN_POSTVERIFY_FAILED", "PARENT_PIN_REPOSITORY_BUSY",
+                "PARENT_PIN_TRANSACTION_FAILED"
+              ]
+            },
+            "applied": { "const": false }, "noOp": { "const": false },
+            "partial": true, "resultingParentCommitSha": true, "recoveryCommand": true
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "errorCode": {
+                  "enum": [
+                    "PARENT_PIN_INELIGIBLE", "PARENT_PIN_PLAN_DRIFT",
+                    "PARENT_PIN_REPOSITORY_BUSY", "PARENT_PIN_TRANSACTION_FAILED"
+                  ]
+                },
+                "partial": { "const": false },
+                "resultingParentCommitSha": { "type": "null" }
+              }
+            },
+            {
+              "properties": {
+                "errorCode": { "const": "PARENT_PIN_PARTIAL" },
+                "partial": { "const": true },
+                "resultingParentCommitSha": { "type": "null" }
+              }
+            },
+            {
+              "properties": {
+                "errorCode": { "const": "PARENT_PIN_POSTVERIFY_FAILED" },
+                "partial": { "const": true },
+                "resultingParentCommitSha": { "$ref": "#/$defs/oid" }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

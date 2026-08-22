@@ -15,6 +15,33 @@ export {
 } from './initialization.js';
 export { resolveKnowledgeRoot, resolveProjectWorkspace } from './paths.js';
 export {
+  MAX_PARENT_PIN_ARTIFACT_BYTES,
+  parseParentKnowledgePinPlan,
+  parseParentKnowledgePinResult,
+  renderParentKnowledgePinPlan,
+  renderParentKnowledgePinResult,
+} from './parent-pin-codec.js';
+export {
+  createParentKnowledgePinService,
+  ParentKnowledgePinService,
+} from './parent-pin-service.js';
+export {
+  PARENT_KNOWLEDGE_PIN_PLAN_SCHEMA_VERSION,
+  PARENT_KNOWLEDGE_PIN_RESULT_SCHEMA_VERSION,
+  ParentKnowledgePinError,
+  type ParentKnowledgePinAppliedResult,
+  type ParentKnowledgePinBlockedResult,
+  type ParentKnowledgePinBlockReason,
+  type ParentKnowledgePinFailureCode,
+  type ParentKnowledgePinFaultHooks,
+  type ParentKnowledgePinInput,
+  type ParentKnowledgePinNoOpResult,
+  type ParentKnowledgePinPlan,
+  type ParentKnowledgePinPort,
+  type ParentKnowledgePinResult,
+  type ParentKnowledgePinServiceOptions,
+} from './parent-pin-types.js';
+export {
   MAX_PUBLISH_ARTIFACT_BYTES,
   parseKnowledgeCommitLineage,
   parseKnowledgePublishPlan,
