@@ -197,4 +197,15 @@ describe('GitMachineAdapter', () => {
       message: 'Git machine output exceeded the configured limit.',
     });
   });
+
+  it('rejects NUL pathspec framing without invoking a partial add', async () => {
+    const repository = await createRepository();
+    const adapter = new GitMachineAdapter();
+    await writeFile(join(repository, 'safe.md'), 'safe\n', 'utf8');
+
+    await expect(adapter.addExact(repository, ['safe.md\0foreign.md'])).rejects.toMatchObject({
+      code: 'GIT_OPERATION_FAILED',
+    });
+    await expect(adapter.cachedDiff(repository)).resolves.toEqual([]);
+  });
 });

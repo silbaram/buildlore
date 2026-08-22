@@ -14,6 +14,51 @@ export {
   type ModeAInitializationStage,
 } from './initialization.js';
 export { resolveKnowledgeRoot, resolveProjectWorkspace } from './paths.js';
+export {
+  MAX_PUBLISH_ARTIFACT_BYTES,
+  parseKnowledgeCommitLineage,
+  parseKnowledgePublishPlan,
+  parseKnowledgePublishResult,
+  renderKnowledgeCommitLineageJson,
+  renderKnowledgePublishPlan,
+  renderKnowledgePublishResult,
+} from './publication-codec.js';
+export {
+  createKnowledgePublicationService,
+  KnowledgePublicationService,
+  renderKnowledgeCommitLineage,
+  type KnowledgePublicationPort,
+  type KnowledgePublicationServiceOptions,
+} from './publication-service.js';
+export {
+  KNOWLEDGE_COMMIT_LINEAGE_SCHEMA_VERSION,
+  KNOWLEDGE_PUBLISH_PLAN_SCHEMA_VERSION,
+  KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+  PublicationError,
+  type ForeignChangeBucket,
+  type ForeignChangeKind,
+  type ForeignChangeSummary,
+  type ForeignPathSummary,
+  type GitObjectId,
+  type KnowledgeCommitLineageV1,
+  type KnowledgePublishBlockedResult,
+  type KnowledgePublishCommitInput,
+  type KnowledgePublishCommittedResult,
+  type KnowledgePublishOptions,
+  type KnowledgePublishPlan,
+  type KnowledgePublishPlanInput,
+  type KnowledgePublishResult,
+  type PublicationBlobPolicyPort,
+  type PublicationDigest,
+  type PublicationFailureCode,
+  type PublicationFaultHooks,
+  type PublishBlockReason,
+  type PublishForeignCounts,
+  type PublishNumstat,
+  type PublishPathEntry,
+  type PublishPathStatus,
+  type RegistrationManifestEntry,
+} from './publication-types.js';
 export { emptyManifest, readManifest, writeManifest } from './registry.js';
 export { getKnowledgeStatus, getProjectKnowledgeStatus } from './status.js';
 export {

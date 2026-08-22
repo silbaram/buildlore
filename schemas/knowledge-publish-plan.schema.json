@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/knowledge-publish-plan.schema.json",
+  "title": "BuildLore Knowledge Publish Plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "projectId", "repositoryIdentityDigest", "baseRevision",
+    "localUpstreamRevision", "sourceRevision", "codeRevision", "selectedPaths",
+    "foreignChanges", "registrationManifest", "trackingPolicyDigest", "lineageDigest",
+    "indexSnapshotDigest", "eligible", "blockReasons", "planDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.knowledge-publish-plan.v1" },
+    "projectId": { "$ref": "#/$defs/projectId" },
+    "repositoryIdentityDigest": { "$ref": "#/$defs/digest" },
+    "baseRevision": { "$ref": "#/$defs/oid" },
+    "localUpstreamRevision": { "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }] },
+    "sourceRevision": { "$ref": "#/$defs/oid" },
+    "codeRevision": { "$ref": "#/$defs/oid" },
+    "selectedPaths": {
+      "type": "array", "maxItems": 100000, "uniqueItems": true,
+      "items": { "$ref": "#/$defs/selectedPath" }
+    },
+    "foreignChanges": { "$ref": "#/$defs/foreignChanges" },
+    "registrationManifest": {
+      "oneOf": [{ "$ref": "#/$defs/registrationManifest" }, { "type": "null" }]
+    },
+    "trackingPolicyDigest": { "$ref": "#/$defs/digest" },
+    "lineageDigest": { "$ref": "#/$defs/digest" },
+    "indexSnapshotDigest": { "$ref": "#/$defs/digest" },
+    "eligible": { "type": "boolean" },
+    "blockReasons": {
+      "type": "array", "maxItems": 8, "uniqueItems": true,
+      "items": { "enum": [
+        "DIRTY_INDEX", "EMPTY_SELECTION", "FOREIGN_STAGED_CHANGE",
+        "MANIFEST_REGISTRATION_INVALID", "PATH_UNSAFE", "ROOT_CHANGE_NOT_ALLOWED",
+        "TRACKING_POLICY_VIOLATION", "UNMERGED_CHANGE"
+      ] }
+    },
+    "planDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "oid": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
+    "projectId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "relativePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "numstat": {
+      "type": "object", "additionalProperties": false,
+      "required": ["added", "deleted"],
+      "properties": {
+        "added": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000000000 },
+        "deleted": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000000000 }
+      }
+    },
+    "selectedPath": {
+      "type": "object", "additionalProperties": false,
+      "required": ["classification", "contentSha256", "mode", "numstat", "reasonCode", "relativePath", "status"],
+      "properties": {
+        "classification": { "enum": ["always-track", "policy-track"] },
+        "contentSha256": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "mode": { "enum": ["100644", null] },
+        "numstat": { "$ref": "#/$defs/numstat" },
+        "reasonCode": { "const": "selected" },
+        "relativePath": { "$ref": "#/$defs/relativePath" },
+        "status": { "enum": ["added", "deleted", "modified"] }
+      }
+    },
+    "foreignEntry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "relativePath", "status"],
+      "properties": {
+        "kind": { "enum": ["staged", "unstaged", "untracked"] },
+        "relativePath": { "$ref": "#/$defs/relativePath" },
+        "status": { "type": "string", "minLength": 1, "maxLength": 4 }
+      }
+    },
+    "foreignBucket": {
+      "type": "object", "additionalProperties": false,
+      "required": ["count", "entries", "overflow"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "entries": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/foreignEntry" } },
+        "overflow": { "type": "boolean" }
+      }
+    },
+    "foreignChanges": {
+      "type": "object", "additionalProperties": false,
+      "required": ["digest", "staged", "unstaged", "untracked"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/digest" },
+        "staged": { "$ref": "#/$defs/foreignBucket" },
+        "unstaged": { "$ref": "#/$defs/foreignBucket" },
+        "untracked": { "$ref": "#/$defs/foreignBucket" }
+      }
+    },
+    "registrationManifest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contentSha256", "registeredProjectId", "relativePath"],
+      "properties": {
+        "contentSha256": { "$ref": "#/$defs/digest" },
+        "registeredProjectId": { "$ref": "#/$defs/projectId" },
+        "relativePath": { "const": "manifest.json" }
+      }
+    }
+  }
+}

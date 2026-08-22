@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/knowledge-publish-result.schema.json",
+  "title": "BuildLore Knowledge Publish Result v1",
+  "oneOf": [
+    { "$ref": "#/$defs/blocked" },
+    { "$ref": "#/$defs/committed" }
+  ],
+  "$defs": {
+    "oid": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
+    "projectId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "counts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["staged", "unstaged", "untracked"],
+      "properties": {
+        "staged": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "unstaged": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "untracked": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+      }
+    },
+    "common": {
+      "type": "object",
+      "required": ["schemaVersion", "state", "projectId", "baseRevision", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "stagedPaths", "treeRevision", "warnings"],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.knowledge-publish-result.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "baseRevision": { "$ref": "#/$defs/oid" },
+        "foreignCounts": { "$ref": "#/$defs/counts" },
+        "knowledgeRevision": { "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }] },
+        "localCommitPreserved": { "type": "boolean" },
+        "partial": { "type": "boolean" },
+        "pinRequired": { "const": true },
+        "recoveryCommand": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+        "stagedPaths": { "type": "array", "maxItems": 100000, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+        "treeRevision": { "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }] },
+        "warnings": { "type": "array", "maxItems": 32, "items": { "type": "string", "maxLength": 160 } }
+      }
+    },
+    "blocked": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["schemaVersion", "state", "projectId", "baseRevision", "errorCode", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "stagedPaths", "treeRevision", "warnings"],
+          "properties": {
+            "schemaVersion": true, "projectId": true, "baseRevision": true, "foreignCounts": true,
+            "knowledgeRevision": true, "localCommitPreserved": true, "partial": true,
+            "pinRequired": true, "recoveryCommand": true, "stagedPaths": true,
+            "treeRevision": true, "warnings": true,
+            "state": { "const": "blocked" },
+            "errorCode": { "enum": ["PUBLISH_DIRTY_INDEX", "PUBLISH_INELIGIBLE", "PUBLISH_PARTIAL", "PUBLISH_PATH_DRIFT", "PUBLISH_PLAN_DRIFT", "PUBLISH_POLICY_BLOCKED", "PUBLISH_REPOSITORY_DRIFT", "PUBLISH_TRANSACTION_FAILED"] }
+          }
+        }
+      ]
+    },
+    "committed": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["schemaVersion", "state", "projectId", "baseRevision", "foreignCounts", "knowledgeRevision", "localCommitPreserved", "partial", "pinRequired", "recoveryCommand", "stagedPaths", "treeRevision", "warnings"],
+          "properties": {
+            "schemaVersion": true, "projectId": true, "baseRevision": true, "foreignCounts": true,
+            "knowledgeRevision": { "$ref": "#/$defs/oid" }, "localCommitPreserved": { "const": true },
+            "partial": { "const": false }, "pinRequired": true, "recoveryCommand": true,
+            "stagedPaths": true, "treeRevision": { "$ref": "#/$defs/oid" }, "warnings": true,
+            "state": { "const": "committed" }
+          }
+        }
+      ]
+    }
+  }
+}

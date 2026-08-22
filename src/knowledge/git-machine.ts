@@ -429,6 +429,7 @@ function validateRelativePath(path: string): string {
     path.startsWith('/') ||
     path.endsWith('/') ||
     path.includes('\\') ||
+    path.includes('\0') ||
     path.split('/').some((component) => component === '' || component === '.' || component === '..' || component === '.git')
   ) {
     throw new GitMachineError('GIT_OPERATION_FAILED', 'Git path is not a safe relative path.');
