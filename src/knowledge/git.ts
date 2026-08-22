@@ -105,7 +105,7 @@ async function pathStatus(path: string): Promise<Awaited<ReturnType<typeof lstat
   }
 }
 
-async function gitCommonDirectory(repositoryRoot: string): Promise<string> {
+export async function resolveGitCommonDirectory(repositoryRoot: string): Promise<string> {
   const result = await runGit(repositoryRoot, ['rev-parse', '--git-common-dir']);
   const rawPath = result.stdout.trim();
   if (rawPath.length === 0 || rawPath.includes('\n') || rawPath.includes('\r')) {
@@ -486,7 +486,7 @@ export async function cloneKnowledge(
       recoveryCommand: ['knowledge', 'status'],
     });
   }
-  const commonGitDirectory = await gitCommonDirectory(repositoryRoot);
+  const commonGitDirectory = await resolveGitCommonDirectory(repositoryRoot);
   await assertCloneTargetsAbsent(repositoryRoot, commonGitDirectory);
 
   const args = [
