@@ -23,7 +23,7 @@ On resume, inspect canonical status, constitution, current spec, active iteratio
 | Full current visual experience | `p2a-visual-experience` | experience contract and approved prototypes |
 | Execution readiness | `p2a-next`, then dev execution or task breakdown | synthetic Direct/Planned item or Orchestrated graph |
 
-After Gate B approval, run `p2a next --json` and follow its one action. Direct/Planned preparation is handled by `p2a-dev-execution`; only Orchestrated execution routes to task decomposition.
+After Gate B approval, run `p2a next --json --contract v2` and follow its one action. Direct/Planned preparation is handled by `p2a-dev-execution`; only Orchestrated execution routes to task decomposition.
 
 ## Progressive reference routing
 
@@ -54,7 +54,7 @@ If the user rejects the source document, stop and request a different path. Cano
 3. Establish or reuse the approved project constitution.
 4. Invoke `p2a-spec` with explicit JSON state and inspected evidence. Invoke the visual track only when Gate B selects full current design.
 5. Present the complete spec and implementation plan and record exact quoted approval only after open decisions are empty.
-6. Validate canonical artifacts, then run `p2a next --json`. Do not create a detailed graph unconditionally.
+6. Validate canonical artifacts, then run `p2a next --json --contract v2`. Do not create a detailed graph unconditionally.
 
 The scope artifact records the confirmed idea, summary, facts, assumptions, genuinely necessary questions/decisions, baseline context, evidence, status, and approval audit. Existing legacy intake fields remain readable but never drive new workflow state.
 

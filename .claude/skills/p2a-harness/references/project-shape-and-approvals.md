@@ -35,4 +35,4 @@ Gate A owns product scope. Gate ② owns durable architecture, stack, prohibitio
 
 Present the complete product specification and implementation plan together, including consequential choices, trade-offs, open decisions, selected/rejected recommendations, and verification strategy. Approval requires no open decisions and any required selected visual prototype evidence.
 
-After explicit approval, record the exact quote with `p2a decide`. Then run `p2a next --json`. Direct/Planned preparation creates a synthetic work item; only Orchestrated execution routes to task decomposition. Neither path adds a human Gate C approval.
+After explicit approval, record the exact quote with `p2a decide`. Then run `p2a next --json --contract v2`. Direct/Planned preparation creates a synthetic work item; only Orchestrated execution routes to task decomposition. Neither path adds a human Gate C approval.
