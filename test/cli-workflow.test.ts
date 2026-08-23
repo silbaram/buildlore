@@ -762,4 +762,58 @@ describe('canonical CLI workflow', () => {
       },
     }]);
   });
+
+  it('[V12-V-03] allows publish push only for the expected post-commit gitlink mismatch', async () => {
+    const cwd = await createConfiguredRepository();
+    const knowledge = join(cwd, 'knowledge');
+    await configureIdentity(knowledge);
+    await writeFile(join(knowledge, 'README.md'), '# Published knowledge\n', 'utf8');
+    await git(knowledge, ['add', 'README.md']);
+    await git(knowledge, ['commit', '-m', 'publication commit']);
+    const revision = await git(knowledge, ['rev-parse', 'HEAD']);
+    const treeRevision = await git(knowledge, ['rev-parse', 'HEAD^{tree}']);
+    const pushInputs: KnowledgePublishPushInput[] = [];
+    const runtime: CliRuntime = {
+      cwd,
+      publication: {
+        plan: () => Promise.reject(new Error('plan must not run')),
+        commit: () => Promise.reject(new Error('commit must not run')),
+        push: (input) => {
+          pushInputs.push(input);
+          return Promise.resolve({
+            schemaVersion: KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+            state: 'pushed',
+            projectId: input.projectId,
+            baseRevision: oid('a'),
+            foreignCounts: { staged: 0, unstaged: 0, untracked: 0 },
+            knowledgeRevision: input.knowledgeRevision,
+            localCommitPreserved: true,
+            partial: false,
+            pinRequired: true,
+            recoveryCommand: ['knowledge', 'status'],
+            remoteRevision: input.knowledgeRevision,
+            stagedPaths: ['projects/alpha/sources/entry.md'],
+            treeRevision,
+            warnings: [],
+          });
+        },
+      },
+    };
+
+    const allowed = await capture([
+      'publish', 'push', '--project', 'alpha', '--knowledge-revision', revision, '--json',
+    ], runtime);
+    expect(allowed.exitCode).toBe(0);
+    expect(pushInputs).toEqual([{ knowledgeRevision: revision, projectId: 'alpha' }]);
+
+    const rejected = await capture([
+      'publish', 'push', '--project', 'alpha', '--knowledge-revision', oid('f'), '--json',
+    ], runtime);
+    expect(rejected.exitCode).toBe(6);
+    expect(JSON.parse(rejected.stderr)).toMatchObject({
+      errors: [{ code: 'SUBMODULE_MISMATCH' }],
+      ok: false,
+    });
+    expect(pushInputs).toHaveLength(1);
+  });
 });

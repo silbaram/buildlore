@@ -18,7 +18,9 @@ import {
 } from '../src/knowledge/parent-pin-codec.js';
 import { createParentKnowledgePinService } from '../src/knowledge/parent-pin-service.js';
 import type { ParentKnowledgePinInput } from '../src/knowledge/parent-pin-types.js';
-import { createKnowledgePublicationService } from '../src/knowledge/publication-service.js';
+import {
+  createKnowledgePublicationServiceForTesting as createKnowledgePublicationService,
+} from '../src/knowledge/publication-service.js';
 import type {
   PublicationBlobPolicyPort,
   PublicationDigest,
@@ -443,11 +445,17 @@ function wrapGit(overrides: Partial<GitMachinePort>): GitMachinePort {
   const real = new GitMachineAdapter();
   return {
     addExact: overrides.addExact ?? real.addExact.bind(real),
+    stageValidated: overrides.stageValidated ?? real.stageValidated.bind(real),
+    isExactStageContent: overrides.isExactStageContent ?? real.isExactStageContent.bind(real),
+    worktreeNumstat: overrides.worktreeNumstat ?? real.worktreeNumstat.bind(real),
+    untrackedNumstat: overrides.untrackedNumstat ?? real.untrackedNumstat.bind(real),
     cachedDiff: overrides.cachedDiff ?? real.cachedDiff.bind(real),
     commitTree: overrides.commitTree ?? real.commitTree.bind(real),
     fetchObjectNoRefUpdate: overrides.fetchObjectNoRefUpdate ??
       real.fetchObjectNoRefUpdate.bind(real),
     isAncestor: overrides.isAncestor ?? real.isAncestor.bind(real),
+    proveRemoteReachability: overrides.proveRemoteReachability ??
+      real.proveRemoteReachability.bind(real),
     lsRemoteExact: overrides.lsRemoteExact ?? real.lsRemoteExact.bind(real),
     pushExactNonForce: overrides.pushExactNonForce ?? real.pushExactNonForce.bind(real),
     status: overrides.status ?? real.status.bind(real),
@@ -655,6 +663,47 @@ describe('ParentKnowledgePinService', () => {
       .resolves.toBe(result.resultingParentCommitSha);
     expect(JSON.stringify(result)).not.toContain(fixture.parentRoot);
     expect(JSON.stringify(result)).not.toContain(fixture.remoteRoot);
+  });
+
+  it('[V12-V-06] proves remote descendant reachability without importing it locally', async () => {
+    const fixture = await createFixture();
+    await git(fixture.remoteRoot, ['config', 'user.name', 'BuildLore Remote Test']);
+    await git(fixture.remoteRoot, ['config', 'user.email', 'remote@example.invalid']);
+    const remoteTree = await git(fixture.remoteRoot, [
+      'rev-parse', `${fixture.knowledgeRevision}^{tree}`,
+    ]);
+    const remoteDescendant = await git(fixture.remoteRoot, [
+      'commit-tree', remoteTree, '-p', fixture.knowledgeRevision, '-m', 'remote descendant',
+    ]);
+    await git(fixture.remoteRoot, ['update-ref', 'refs/heads/main', remoteDescendant]);
+    await expect(git(fixture.knowledgeRoot, ['cat-file', '-e', `${remoteDescendant}^{commit}`]))
+      .rejects.toThrow();
+
+    const beforeObjects = await git(fixture.knowledgeRoot, [
+      'cat-file', '--batch-all-objects', '--batch-check=%(objectname)',
+    ]);
+    const beforeRefs = await git(fixture.knowledgeRoot, [
+      'for-each-ref', '--format=%(refname)%00%(objectname)',
+    ]);
+    const beforeFetchHead = await optionalFile(join(
+      await resolveGitCommonDirectory(fixture.knowledgeRoot),
+      'FETCH_HEAD',
+    ));
+
+    const plan = await createParentKnowledgePinService(fixture.parentRoot).plan(fixture.input);
+    expect(plan).toMatchObject({ eligible: true, targetRemoteReachability: true });
+    await expect(git(fixture.knowledgeRoot, ['cat-file', '-e', `${remoteDescendant}^{commit}`]))
+      .rejects.toThrow();
+    await expect(git(fixture.knowledgeRoot, [
+      'cat-file', '--batch-all-objects', '--batch-check=%(objectname)',
+    ])).resolves.toBe(beforeObjects);
+    await expect(git(fixture.knowledgeRoot, [
+      'for-each-ref', '--format=%(refname)%00%(objectname)',
+    ])).resolves.toBe(beforeRefs);
+    await expect(optionalFile(join(
+      await resolveGitCommonDirectory(fixture.knowledgeRoot),
+      'FETCH_HEAD',
+    ))).resolves.toEqual(beforeFetchHead);
   });
 
   it('[V11-V-15] keeps private byte sentinels out of every publication evidence surface', async () => {

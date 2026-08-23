@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import { GitMachineAdapter } from '../src/knowledge/git-machine.js';
-import { createKnowledgePublicationService } from '../src/knowledge/publication-service.js';
+import { parseKnowledgePublishResult, renderKnowledgePublishResult } from '../src/knowledge/publication-codec.js';
+import {
+  createKnowledgePublicationServiceForTesting as createKnowledgePublicationService,
+} from '../src/knowledge/publication-service.js';
 import type {
   KnowledgePublishPlanInput,
   PublicationBlobPolicyPort,
@@ -17,6 +20,7 @@ import type {
 import { KNOWLEDGE_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION } from '../src/knowledge/types.js';
 import { parseJsonStrict } from '../src/knowledge/strict-json.js';
 import { parseKnowledgeManifest } from '../src/knowledge/validation.js';
+import { RepositoryWriterLeaseManager } from '../src/knowledge/repository-writer-lease.js';
 
 const roots: string[] = [];
 const digest = (character: string): PublicationDigest => `sha256:${character.repeat(64)}`;
@@ -251,6 +255,64 @@ describe('KnowledgePublicationService plan', () => {
     expect(JSON.stringify(plan)).not.toContain(sentinel);
   });
 
+  it('[V12-V-05] enforces all-or-none selection for the policy-track event pair', async () => {
+    for (const changed of ['head', 'store', 'both'] as const) {
+      const root = await createKnowledgeRepository();
+      const head = join(root, 'projects', 'alpha', '.llmwiki', 'events.head');
+      const graph = join(root, 'projects', 'alpha', 'wiki', 'graph');
+      const store = join(graph, 'events.jsonl');
+      await mkdir(graph, { recursive: true });
+      if (changed !== 'store') await writeFile(head, 'sha256:paired\n', 'utf8');
+      if (changed !== 'head') await writeFile(store, '{"event":"paired"}\n', 'utf8');
+      const service = createKnowledgePublicationService(root, { blobPolicy: allowPolicy });
+      const input = { ...planInput(), includePolicyTrack: true };
+      const plan = await service.plan(input);
+      expect(plan.blockReasons.includes('TRACKING_POLICY_VIOLATION')).toBe(changed !== 'both');
+      expect(plan.eligible).toBe(changed === 'both');
+    }
+  });
+
+  it('[V12-V-06] blocks selected unsafe paths and reports foreign unsafe paths opaquely', async () => {
+    const root = await createKnowledgeRepository();
+    const selectedName = 'access-token.md';
+    const foreignName = `\u0001password.md`;
+    await writeFile(join(root, 'projects', 'alpha', 'sources', selectedName), '# unsafe selected\n', 'utf8');
+    await writeFile(join(root, 'projects', 'beta', 'sources', foreignName), '# unsafe foreign\n', 'utf8');
+    const service = createKnowledgePublicationService(root, { blobPolicy: allowPolicy });
+    const plan = await service.plan(planInput());
+    const rendered = JSON.stringify(plan);
+
+    expect(plan.eligible).toBe(false);
+    expect(plan.blockReasons).toContain('PATH_UNSAFE');
+    expect(plan.foreignChanges.untracked).toMatchObject({ count: 2 });
+    expect(plan.foreignChanges.untracked.entries.every((entry) =>
+      entry.relativePath === 'redacted-path')).toBe(true);
+    expect(rendered).not.toContain(selectedName);
+    expect(rendered).not.toContain('password.md');
+  });
+
+  it('[V12-V-07] matches Git numstat for add, modify, delete, no-final-newline, and binary paths', async () => {
+    const root = await createKnowledgeRepository();
+    const sources = join(root, 'projects', 'alpha', 'sources');
+    await writeFile(join(sources, 'deleted.md'), 'one\ntwo\n', 'utf8');
+    await writeFile(join(sources, 'binary.md'), Buffer.from([0, 1, 2, 3]));
+    await git(root, ['add', '--', 'projects/alpha/sources/deleted.md', 'projects/alpha/sources/binary.md']);
+    await git(root, ['commit', '-m', 'numstat baseline']);
+
+    await writeFile(join(sources, 'entry.md'), 'first\nsecond', 'utf8');
+    await writeFile(join(sources, 'added.md'), 'one\ntwo', 'utf8');
+    await writeFile(join(sources, 'binary.md'), Buffer.from([0, 4, 5, 6]));
+    await rm(join(sources, 'deleted.md'));
+
+    const service = createKnowledgePublicationService(root, { blobPolicy: allowPolicy });
+    const plan = await service.plan(planInput());
+    const stats = new Map(plan.selectedPaths.map((entry) => [entry.relativePath, entry.numstat]));
+    expect(stats.get('projects/alpha/sources/added.md')).toEqual({ added: 2, deleted: 0 });
+    expect(stats.get('projects/alpha/sources/entry.md')).toEqual({ added: 2, deleted: 1 });
+    expect(stats.get('projects/alpha/sources/deleted.md')).toEqual({ added: 0, deleted: 2 });
+    expect(stats.get('projects/alpha/sources/binary.md')).toEqual({ added: null, deleted: null });
+  });
+
   it('returns an explicit ineligible no-op plan for an empty selection', async () => {
     const root = await createKnowledgeRepository();
     const service = createKnowledgePublicationService(root, { blobPolicy: allowPolicy });
@@ -275,7 +337,7 @@ describe('KnowledgePublicationService commit transaction', () => {
     const release = deferred();
     const winningMachine = new GitMachineAdapter();
     const losingMachine = new GitMachineAdapter();
-    const losingAdd = vi.spyOn(losingMachine, 'addExact');
+    const losingAdd = vi.spyOn(losingMachine, 'stageValidated');
     const winner = createKnowledgePublicationService(root, {
       blobPolicy: allowPolicy,
       gitMachine: winningMachine,
@@ -324,7 +386,7 @@ describe('KnowledgePublicationService commit transaction', () => {
     await git(nested, ['commit', '-m', 'nested']);
     await git(root, ['add', '--', 'projects/alpha/wiki/nested']);
     const machine = new GitMachineAdapter();
-    const add = vi.spyOn(machine, 'addExact');
+    const add = vi.spyOn(machine, 'stageValidated');
     const updateRef = vi.spyOn(machine, 'updateRefCompareAndSwap');
     const service = createKnowledgePublicationService(root, {
       blobPolicy: allowPolicy,
@@ -362,7 +424,7 @@ describe('KnowledgePublicationService commit transaction', () => {
     const root = await createKnowledgeRepository();
     await writeFile(join(root, 'projects', 'alpha', 'sources', 'entry.md'), '# planned bytes\n', 'utf8');
     const machine = new GitMachineAdapter();
-    const add = vi.spyOn(machine, 'addExact');
+    const add = vi.spyOn(machine, 'stageValidated');
     const service = createKnowledgePublicationService(root, {
       blobPolicy: allowPolicy,
       gitMachine: machine,
@@ -419,24 +481,27 @@ describe('KnowledgePublicationService commit transaction', () => {
       .resolves.toBe(beforeStatus);
   });
 
-  it('detects filter byte drift after exact staging and preserves an explicit partial recovery state', async () => {
+  it('[V12-V-01] rejects clean-filter byte drift before persistent Git mutation', async () => {
     const root = await createKnowledgeRepository();
     await writeFile(join(root, '.gitattributes'), 'projects/alpha/sources/*.md text eol=lf\n', 'utf8');
     await git(root, ['add', '.gitattributes']);
     await git(root, ['commit', '-m', 'attributes']);
     await writeFile(join(root, 'projects', 'alpha', 'sources', 'entry.md'), '# alpha\r\nchanged\r\n', 'utf8');
     const beforeHead = await git(root, ['rev-parse', 'HEAD']);
+    const beforeObjects = await git(root, ['cat-file', '--batch-all-objects', '--batch-check=%(objectname)']);
     const service = createKnowledgePublicationService(root, { blobPolicy: allowPolicy });
     const plan = await service.plan(planInput());
     const result = await service.commit({ ...planInput(), expectedPlanDigest: plan.planDigest });
 
     expect(result).toMatchObject({
       errorCode: 'PUBLISH_PATH_DRIFT',
-      partial: true,
+      partial: false,
       state: 'blocked',
     });
     await expect(git(root, ['rev-parse', 'HEAD'])).resolves.toBe(beforeHead);
-    expect(await git(root, ['diff', '--cached', '--name-only'])).toBe('projects/alpha/sources/entry.md');
+    await expect(git(root, ['diff', '--cached', '--name-only'])).resolves.toBe('');
+    await expect(git(root, ['cat-file', '--batch-all-objects', '--batch-check=%(objectname)']))
+      .resolves.toBe(beforeObjects);
   });
 
   it.each(['100755', '120000', '160000'] as const)(
@@ -515,7 +580,7 @@ describe('KnowledgePublicationService commit transaction', () => {
     expect(result.recoveryCommand).toEqual(['knowledge', 'status']);
   });
 
-  it('uses the production sanitizer to block a synthetic staged credential without reflecting it', async () => {
+  it('[V12-V-01] uses the production sanitizer to block a synthetic staged credential without reflecting it before index or object creation', async () => {
     const root = await createKnowledgeRepository();
     const syntheticCredential = `Bearer ${'synth-token-'.repeat(6)}`;
     await writeFile(
@@ -525,22 +590,56 @@ describe('KnowledgePublicationService commit transaction', () => {
     );
     const service = createKnowledgePublicationService(root);
     const plan = await service.plan(planInput());
+    const beforeHead = await git(root, ['rev-parse', 'HEAD']);
+    const beforeIndex = await git(root, ['ls-files', '--stage']);
+    const beforeRefs = await git(root, ['show-ref']);
+    const beforeObjects = await git(root, ['cat-file', '--batch-all-objects', '--batch-check=%(objectname)']);
     const result = await service.commit({ ...planInput(), expectedPlanDigest: plan.planDigest });
     expect(result).toMatchObject({
       errorCode: 'PUBLISH_POLICY_BLOCKED',
-      partial: true,
+      partial: false,
       state: 'blocked',
     });
+    await expect(git(root, ['rev-parse', 'HEAD'])).resolves.toBe(beforeHead);
+    await expect(git(root, ['ls-files', '--stage'])).resolves.toBe(beforeIndex);
+    await expect(git(root, ['show-ref'])).resolves.toBe(beforeRefs);
+    await expect(git(root, ['cat-file', '--batch-all-objects', '--batch-check=%(objectname)']))
+      .resolves.toBe(beforeObjects);
     const rendered = JSON.stringify(result);
     expect(rendered).not.toContain(syntheticCredential);
     expect(rendered).not.toContain(root);
+  });
+
+  it('[V12-V-09] preserves an exact successful commit when lease cleanup fails', async () => {
+    const root = await createKnowledgeRepository();
+    await writeFile(join(root, 'projects', 'alpha', 'sources', 'entry.md'), '# cleanup recovery\n', 'utf8');
+    const lease = new RepositoryWriterLeaseManager({
+      beforeRelease: () => { throw new Error('private cleanup fault'); },
+    });
+    const service = createKnowledgePublicationService(root, { blobPolicy: allowPolicy, lease });
+    const plan = await service.plan(planInput());
+    const result = await service.commit({ ...planInput(), expectedPlanDigest: plan.planDigest });
+
+    expect(result).toMatchObject({
+      state: 'blocked',
+      errorCode: 'PUBLISH_PARTIAL',
+      localCommitPreserved: true,
+      partial: true,
+      recoveryCommand: ['knowledge', 'status'],
+      warnings: ['REPOSITORY_LEASE_CLEANUP_FAILED'],
+    });
+    expect(result.knowledgeRevision).not.toBeNull();
+    await expect(git(root, ['rev-parse', 'HEAD'])).resolves.toBe(result.knowledgeRevision);
+    await expect(git(root, ['rev-parse', 'HEAD^{tree}'])).resolves.toBe(result.treeRevision);
+    expect(parseKnowledgePublishResult(renderKnowledgePublishResult(result))).toEqual(result);
+    expect(JSON.stringify(result)).not.toContain('private cleanup fault');
   });
 
   it.each([
     ['beforeAdd', { beforeAdd: () => { throw new Error('fault'); } }, false, false],
     ['afterAdd', { afterAdd: () => { throw new Error('fault'); } }, true, false],
     ['afterCachedValidation', { afterCachedValidation: () => { throw new Error('fault'); } }, true, false],
-    ['afterSecretScan', { afterSecretScan: () => { throw new Error('fault'); } }, true, false],
+    ['afterSecretScan', { afterSecretScan: () => { throw new Error('fault'); } }, false, false],
     ['afterWriteTree', { afterWriteTree: () => { throw new Error('fault'); } }, true, false],
     ['afterCommitTree', { afterCommitTree: () => { throw new Error('fault'); } }, true, false],
     ['beforeUpdateRef', { beforeUpdateRef: () => { throw new Error('fault'); } }, true, false],

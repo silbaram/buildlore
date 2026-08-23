@@ -32,7 +32,10 @@ import {
   type PublishPathStatus,
   type RegistrationManifestEntry,
 } from './publication-types.js';
-import { KnowledgePublicationPushService } from './publication-push.js';
+import {
+  createInternalKnowledgePublicationPushService,
+  type KnowledgePublicationPushPort,
+} from './publication-push.js';
 import {
   createPublicationBlobPolicy,
   verifyCanonicalManifestRegistration,
@@ -81,6 +84,15 @@ interface PlanComputation {
   readonly foreignSnapshotDigest: PublicationDigest;
   readonly plan: KnowledgePublishPlan;
   readonly repository: PublicationRepositorySnapshot;
+  readonly selectedCandidates: readonly PublicationCandidateSnapshot[];
+}
+
+interface PublicationCandidateSnapshot {
+  readonly content: Buffer | null;
+  readonly contentSha256: PublicationDigest | null;
+  readonly identityDigest: PublicationDigest | null;
+  readonly path: string;
+  readonly status: PublishPathStatus;
 }
 
 export interface KnowledgePublicationPort {
@@ -89,7 +101,7 @@ export interface KnowledgePublicationPort {
   push(input: KnowledgePublishPushInput): Promise<KnowledgePublishResult>;
 }
 
-export interface KnowledgePublicationServiceOptions {
+export interface KnowledgePublicationServiceTestOptions {
   readonly blobPolicy?: PublicationBlobPolicyPort;
   readonly gitMachine?: GitMachinePort;
   readonly hooks?: PublicationFaultHooks;
@@ -159,6 +171,11 @@ function normalizeInput(
   });
 }
 
+function hasCredentialLikePathData(path: string): boolean {
+  return /(?:^|[/_.-])(?:api[-_]?key|authorization|bearer|credentials?|password|secrets?|tokens?|access[-_]?token|refresh[-_]?token)(?:$|[/_.-])|https?:\/\/|ssh:\/\//iu
+    .test(path);
+}
+
 function safePath(path: string): boolean {
   if (
     path.length === 0 ||
@@ -167,18 +184,16 @@ function safePath(path: string): boolean {
     path.startsWith('/') ||
     path.endsWith('/') ||
     path.includes('\\') ||
-    path.includes('\0')
+    path.includes('\0') ||
+    /[\p{Cc}\p{Cf}]/u.test(path) ||
+    hasCredentialLikePathData(path)
   ) return false;
   return path.split('/').every((segment) =>
     segment.length > 0 && segment !== '.' && segment !== '..' && segment !== '.git');
 }
 
 function safeSummaryPath(path: string): string {
-  if (
-    path.length > 240 ||
-    /(?:api[-_]?key|authorization|bearer|credential|password|secret|token|https?:\/\/|ssh:\/\/)/iu
-      .test(path)
-  ) return `redacted-${sha256(path).slice(7, 23)}`;
+  if (path.length > 240 || !safePath(path)) return 'redacted-path';
   return path;
 }
 
@@ -226,13 +241,6 @@ function selectedStatus(entry: GitStatusEntry): PublishPathStatus | null {
   if (entry.indexStatus === 'D' || entry.worktreeStatus === 'D') return 'deleted';
   if (/^0+$/u.test(entry.headOid)) return 'added';
   return 'modified';
-}
-
-function lineCount(content: Buffer): number | null {
-  if (content.byteLength > 1024 * 1024) return null;
-  let count = 0;
-  for (const byte of content) if (byte === 0x0a) count += 1;
-  return count;
 }
 
 function foreignCounts(plan: KnowledgePublishPlan): {
@@ -288,6 +296,29 @@ function blocked(
   });
 }
 
+function cleanupFailure(result: KnowledgePublishResult): KnowledgePublishResult {
+  return Object.freeze({
+    schemaVersion: KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+    state: 'blocked',
+    projectId: result.projectId,
+    baseRevision: result.baseRevision,
+    errorCode: 'PUBLISH_PARTIAL',
+    foreignCounts: result.foreignCounts,
+    knowledgeRevision: result.knowledgeRevision,
+    localCommitPreserved: true,
+    partial: true,
+    pinRequired: true,
+    recoveryCommand: Object.freeze(['knowledge', 'status']),
+    remoteRevision: result.remoteRevision,
+    stagedPaths: result.stagedPaths,
+    treeRevision: result.treeRevision,
+    warnings: Object.freeze([
+      ...result.warnings.filter((warning) => warning !== 'REPOSITORY_LEASE_CLEANUP_FAILED').slice(0, 31),
+      'REPOSITORY_LEASE_CLEANUP_FAILED',
+    ]),
+  });
+}
+
 function commitLineage(
   input: NormalizedPlanInput,
   plan: KnowledgePublishPlan,
@@ -324,23 +355,23 @@ export function renderKnowledgeCommitLineage(lineage: KnowledgeCommitLineageV1):
   );
 }
 
-export class KnowledgePublicationService implements KnowledgePublicationPort {
+class KnowledgePublicationServiceImplementation implements KnowledgePublicationPort {
   readonly #blobPolicy: PublicationBlobPolicyPort;
   readonly #git: GitMachinePort;
   readonly #hooks: PublicationFaultHooks;
   readonly #inspector: PublicationInspectionPort;
   readonly #knowledgeRoot: string;
   readonly #lease: RepositoryWriterLeasePort;
-  readonly #pusher: KnowledgePublicationPushService;
+  readonly #pusher: KnowledgePublicationPushPort;
 
-  constructor(knowledgeRoot: string, options: KnowledgePublicationServiceOptions = {}) {
+  constructor(knowledgeRoot: string, options: KnowledgePublicationServiceTestOptions = {}) {
     this.#knowledgeRoot = knowledgeRoot;
     this.#git = options.gitMachine ?? new GitMachineAdapter();
     this.#inspector = options.inspector ?? createGitPublicationInspector();
     this.#lease = options.lease ?? createRepositoryWriterLease();
     this.#blobPolicy = options.blobPolicy ?? createPublicationBlobPolicy(knowledgeRoot);
     this.#hooks = options.hooks ?? {};
-    this.#pusher = new KnowledgePublicationPushService(knowledgeRoot, {
+    this.#pusher = createInternalKnowledgePublicationPushService(knowledgeRoot, {
       blobPolicy: this.#blobPolicy,
       gitMachine: this.#git,
       hooks: this.#hooks,
@@ -369,8 +400,10 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
       return blocked(initial.plan, ineligibleFailureCode(initial.plan));
     }
 
+    let completedResult: KnowledgePublishResult | null = null;
     try {
       return await this.#lease.withLease(this.#knowledgeRoot, 'commit', async (lease) => {
+        const outcome = await (async (): Promise<KnowledgePublishResult> => {
         await lease.updatePhase('revalidate');
         const fresh = await this.#computePlan(normalized);
         if (
@@ -406,9 +439,23 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
             beforeAdd.repository.indexSnapshotDigest !== fresh.repository.indexSnapshotDigest ||
             beforeAdd.foreignSnapshotDigest !== fresh.foreignSnapshotDigest
           ) throw new PublicationError('PUBLISH_PLAN_DRIFT');
+
+          await lease.updatePhase('secret-scan');
+          await this.#validateCandidateBlobs(beforeAdd);
+          await this.#hooks.afterSecretScan?.();
+          await this.#revalidateCandidatePaths(beforeAdd);
+
           await lease.updatePhase('add');
-          await this.#git.addExact(this.#knowledgeRoot, paths);
           staged = true;
+          await this.#git.stageValidated(
+            this.#knowledgeRoot,
+            beforeAdd.selectedCandidates.map((candidate) => ({
+              content: candidate.content,
+              path: candidate.path,
+              previousOid: beforeAdd.repository.baseRevision,
+              status: candidate.status,
+            })),
+          );
           await this.#hooks.afterAdd?.();
 
           await lease.updatePhase('validate-index');
@@ -416,9 +463,7 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
           this.#validateCachedDiff(fresh.plan, cached);
           await this.#hooks.afterCachedValidation?.();
 
-          await lease.updatePhase('secret-scan');
           await this.#validateStagedBlobs(fresh.plan, cached);
-          await this.#hooks.afterSecretScan?.();
 
           await lease.updatePhase('write-tree');
           treeRevision = await this.#git.writeTree(this.#knowledgeRoot);
@@ -453,6 +498,7 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
           );
           const expectedMessage = renderKnowledgeCommitLineage(lineage);
           const postStatus = await this.#git.status(this.#knowledgeRoot);
+          const selectedStatusAfterCommit = new Set(paths);
           const foreignAfter = await this.#foreignSnapshotDigest(
             normalized.projectId,
             normalized.registration,
@@ -468,6 +514,7 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
             !commitSnapshot.message.equals(expectedMessage) ||
             commitSnapshot.changedPaths.length !== paths.length ||
             commitSnapshot.changedPaths.some((path, index) => path !== paths.toSorted()[index]) ||
+            postStatus.some((entry) => selectedStatusAfterCommit.has(entry.path)) ||
             foreignAfter !== fresh.foreignSnapshotDigest
           ) throw new PublicationError('PUBLISH_PARTIAL', true);
 
@@ -505,11 +552,19 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
             treeRevision,
           });
         }
+        })();
+        if (outcome.state === 'committed') completedResult = outcome;
+        return outcome;
       });
     } catch (error) {
       if (error instanceof RepositoryWriterError && error.code === 'REPOSITORY_BUSY') {
         return blocked(initial.plan, 'PUBLISH_REPOSITORY_BUSY');
       }
+      if (
+        error instanceof RepositoryWriterError &&
+        (error.code === 'REPOSITORY_RELEASE_FAILED' || error.code === 'REPOSITORY_OWNERSHIP_LOST') &&
+        completedResult !== null
+      ) return cleanupFailure(completedResult);
       throw error;
     }
   }
@@ -522,6 +577,11 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
     await showProject(this.#knowledgeRoot, input.projectId);
     const repository = await this.#inspector.inspectRepository(this.#knowledgeRoot);
     const status = await this.#git.status(this.#knowledgeRoot);
+    const trackedNumstatEntries = await this.#git.worktreeNumstat(this.#knowledgeRoot);
+    const trackedNumstat = new Map(trackedNumstatEntries.map((entry) => [entry.path, entry]));
+    if (trackedNumstat.size !== trackedNumstatEntries.length) {
+      throw new PublicationError('PUBLISH_REPOSITORY_DRIFT');
+    }
     const projectPrefix = `projects/${input.projectId}/`;
     const stagedForeign: ForeignPathSummary[] = [];
     const unstagedForeign: ForeignPathSummary[] = [];
@@ -535,6 +595,22 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
       if (entry.kind === 'ignored') continue;
       if (!safePath(entry.path)) {
         blockReasons.add('PATH_UNSAFE');
+        const summary = {
+          relativePath: safeSummaryPath(entry.path),
+          status: pathStatus(entry),
+        };
+        const hasStaged = entry.kind !== 'untracked' && entry.indexStatus !== '.';
+        const hasUnstaged = entry.kind !== 'untracked' && entry.worktreeStatus !== '.';
+        if (hasStaged) {
+          stagedForeign.push({ kind: 'staged', ...summary });
+          blockReasons.add('FOREIGN_STAGED_CHANGE');
+          blockReasons.add('DIRTY_INDEX');
+        }
+        if (entry.kind === 'untracked') {
+          untrackedForeign.push({ kind: 'untracked', ...summary, status: '?' });
+        } else if (hasUnstaged) {
+          unstagedForeign.push({ kind: 'unstaged', ...summary });
+        }
         continue;
       }
       const target = entry.path.startsWith(projectPrefix);
@@ -583,6 +659,7 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
       blockReasons.add('TRACKING_POLICY_VIOLATION');
     }
     const selected: PublishPathEntry[] = [];
+    const selectedCandidates: PublicationCandidateSnapshot[] = [];
     const identityDigests: Array<{ readonly digest: PublicationDigest; readonly path: string }> = [];
     for (const entry of candidates.slice(0, MAX_SELECTED_PATHS)) {
       let file: PublicationFileSnapshot | null = null;
@@ -615,16 +692,27 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
         }
         identityDigests.push({ digest: file.identityDigest, path: entry.path });
       }
+      const numstat = entry.kind === 'untracked'
+        ? await this.#git.untrackedNumstat(this.#knowledgeRoot, entry.path)
+        : trackedNumstat.get(entry.path);
+      if (numstat === undefined) {
+        blockReasons.add('PATH_UNSAFE');
+        continue;
+      }
       selected.push({
         classification: classification.classification,
         contentSha256: file?.digest ?? null,
         mode: file?.mode ?? null,
-        numstat: {
-          added: statusKind === 'added' && file !== null ? lineCount(file.content) : null,
-          deleted: null,
-        },
+        numstat: { added: numstat.added, deleted: numstat.deleted },
         reasonCode: 'selected',
         relativePath: entry.path,
+        status: statusKind,
+      });
+      selectedCandidates.push({
+        content: file?.content ?? null,
+        contentSha256: file?.digest ?? null,
+        identityDigest: file?.identityDigest ?? null,
+        path: entry.path,
         status: statusKind,
       });
     }
@@ -644,13 +732,26 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
         if (registrationManifest === null) blockReasons.add('MANIFEST_REGISTRATION_INVALID');
         else {
           identityDigests.push({ digest: currentFile.identityDigest, path: 'manifest.json' });
-          selected.push({
+          const manifestNumstat = trackedNumstat.get('manifest.json');
+          if (manifestNumstat === undefined) {
+            blockReasons.add('MANIFEST_REGISTRATION_INVALID');
+          } else selected.push({
             classification: 'always-track',
             contentSha256: currentFile.digest,
             mode: '100644',
-            numstat: { added: null, deleted: null },
+            numstat: {
+              added: manifestNumstat.added,
+              deleted: manifestNumstat.deleted,
+            },
             reasonCode: 'selected',
             relativePath: 'manifest.json',
+            status: 'modified',
+          });
+          if (manifestNumstat !== undefined) selectedCandidates.push({
+            content: currentFile.content,
+            contentSha256: currentFile.digest,
+            identityDigest: currentFile.identityDigest,
+            path: 'manifest.json',
             status: 'modified',
           });
         }
@@ -664,6 +765,14 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
       const identity = entry.relativePath.toLowerCase();
       if (folded.has(identity)) blockReasons.add('PATH_UNSAFE');
       folded.add(identity);
+    }
+    if (input.includePolicyTrack) {
+      const selectedSet = new Set(selectedPaths.map(({ relativePath }) => relativePath));
+      const eventHead = `projects/${input.projectId}/.llmwiki/events.head`;
+      const eventStore = `projects/${input.projectId}/wiki/graph/events.jsonl`;
+      if (selectedSet.has(eventHead) !== selectedSet.has(eventStore)) {
+        blockReasons.add('TRACKING_POLICY_VIOLATION');
+      }
     }
     if (selectedPaths.length === 0) blockReasons.add('EMPTY_SELECTION');
     identityDigests.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
@@ -712,7 +821,70 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
       }),
       repository,
       foreignSnapshotDigest,
+      selectedCandidates: Object.freeze(selectedCandidates.toSorted((left, right) =>
+        left.path < right.path ? -1 : left.path > right.path ? 1 : 0)),
     };
+  }
+
+  async #validateCandidateBlobs(computation: PlanComputation): Promise<void> {
+    const expected = new Map(computation.plan.selectedPaths.map((entry) => [entry.relativePath, entry]));
+    if (computation.selectedCandidates.length !== expected.size) {
+      throw new PublicationError('PUBLISH_PATH_DRIFT');
+    }
+    for (const candidate of computation.selectedCandidates) {
+      const planned = expected.get(candidate.path);
+      if (planned === undefined || planned.status !== candidate.status) {
+        throw new PublicationError('PUBLISH_PATH_DRIFT');
+      }
+      const classification = classifyTrackingPath(candidate.path, packageIdentity, {
+        includePolicyTrack: planned.classification === 'policy-track',
+      });
+      if (!classification.ok || classification.disposition !== 'include') {
+        throw new PublicationError('PUBLISH_POLICY_BLOCKED');
+      }
+      if (candidate.status === 'deleted') continue;
+      if (
+        candidate.content === null ||
+        candidate.contentSha256 === null ||
+        sha256(candidate.content) !== candidate.contentSha256 ||
+        !await this.#blobPolicy.validate(
+          computation.plan.projectId,
+          candidate.path,
+          candidate.content,
+          candidate.contentSha256,
+        )
+      ) throw new PublicationError('PUBLISH_POLICY_BLOCKED');
+      if (!await this.#git.isExactStageContent(
+        this.#knowledgeRoot,
+        candidate.path,
+        candidate.content,
+      )) throw new PublicationError('PUBLISH_PATH_DRIFT');
+    }
+  }
+
+  async #revalidateCandidatePaths(computation: PlanComputation): Promise<void> {
+    for (const candidate of computation.selectedCandidates) {
+      if (candidate.status === 'deleted') {
+        if (await this.#inspector.inspectWorktreePathIdentity(this.#knowledgeRoot, candidate.path) !== null) {
+          throw new PublicationError('PUBLISH_PATH_DRIFT');
+        }
+        continue;
+      }
+      if (candidate.content === null || candidate.identityDigest === null) {
+        throw new PublicationError('PUBLISH_PATH_DRIFT');
+      }
+      let current: PublicationFileSnapshot;
+      try {
+        current = await this.#inspector.readWorktreeFile(this.#knowledgeRoot, candidate.path);
+      } catch {
+        throw new PublicationError('PUBLISH_PATH_DRIFT');
+      }
+      if (
+        current.identityDigest !== candidate.identityDigest ||
+        current.digest !== candidate.contentSha256 ||
+        !current.content.equals(candidate.content)
+      ) throw new PublicationError('PUBLISH_PATH_DRIFT');
+    }
   }
 
   async #foreignIdentityDigest(entries: readonly GitStatusEntry[]): Promise<PublicationDigest> {
@@ -825,9 +997,35 @@ export class KnowledgePublicationService implements KnowledgePublicationPort {
   }
 }
 
+export class KnowledgePublicationService implements KnowledgePublicationPort {
+  readonly #implementation: KnowledgePublicationPort;
+
+  constructor(knowledgeRoot: string) {
+    this.#implementation = new KnowledgePublicationServiceImplementation(knowledgeRoot);
+  }
+
+  plan(input: KnowledgePublishPlanInput): Promise<KnowledgePublishPlan> {
+    return this.#implementation.plan(input);
+  }
+
+  commit(input: KnowledgePublishCommitInput): Promise<KnowledgePublishResult> {
+    return this.#implementation.commit(input);
+  }
+
+  push(input: KnowledgePublishPushInput): Promise<KnowledgePublishResult> {
+    return this.#implementation.push(input);
+  }
+}
+
 export function createKnowledgePublicationService(
   knowledgeRoot: string,
-  options: KnowledgePublicationServiceOptions = {},
 ): KnowledgePublicationPort {
-  return new KnowledgePublicationService(knowledgeRoot, options);
+  return new KnowledgePublicationService(knowledgeRoot);
+}
+
+export function createKnowledgePublicationServiceForTesting(
+  knowledgeRoot: string,
+  options: KnowledgePublicationServiceTestOptions = {},
+): KnowledgePublicationPort {
+  return new KnowledgePublicationServiceImplementation(knowledgeRoot, options);
 }

@@ -11,6 +11,10 @@ import {
 } from './publication-types.js';
 
 export const MAX_PUBLISH_ARTIFACT_BYTES = 2 * 1024 * 1024;
+const MAX_PUBLISH_BLOCK_REASONS = 8;
+const MAX_PUBLISH_RECOVERY_COMMANDS = 8;
+const MAX_PUBLISH_STAGED_PATHS = 100_000;
+const MAX_PUBLISH_WARNINGS = 32;
 
 function invalid(): never {
   throw new PublicationError('PUBLISH_PLAN_DRIFT');
@@ -146,6 +150,7 @@ function validPlan(value: unknown): value is KnowledgePublishPlan {
       !isDigest(value.trackingPolicyDigest) || !isDigest(value.lineageDigest) ||
       !isDigest(value.indexSnapshotDigest) || !isDigest(value.planDigest) ||
       typeof value.eligible !== 'boolean' || !Array.isArray(reasonValues) ||
+      reasonValues.length > MAX_PUBLISH_BLOCK_REASONS ||
       !reasonValues.every((reason) => typeof reason === 'string' && blockReasons.has(reason)) ||
       value.eligible !== (reasonValues.length === 0)) return false;
   const paths = selectedValues.map((entry) =>
@@ -201,11 +206,17 @@ function validResult(value: unknown): value is KnowledgePublishResult {
       !(value.knowledgeRevision === null || isOid(value.knowledgeRevision)) ||
       typeof value.localCommitPreserved !== 'boolean' || typeof value.partial !== 'boolean' ||
       value.pinRequired !== true || !Array.isArray(value.recoveryCommand) ||
-      !value.recoveryCommand.every((item) => typeof item === 'string' && item.length <= 128) ||
+      value.recoveryCommand.length < 1 ||
+      value.recoveryCommand.length > MAX_PUBLISH_RECOVERY_COMMANDS ||
+      !value.recoveryCommand.every((item) =>
+        typeof item === 'string' && item.length >= 1 && item.length <= 128) ||
       !(value.remoteRevision === null || isOid(value.remoteRevision)) ||
-      !Array.isArray(value.stagedPaths) || !value.stagedPaths.every(isRelativePath) ||
+      !Array.isArray(value.stagedPaths) || value.stagedPaths.length > MAX_PUBLISH_STAGED_PATHS ||
+      !value.stagedPaths.every(isRelativePath) ||
+      new Set(value.stagedPaths).size !== value.stagedPaths.length ||
       !(value.treeRevision === null || isOid(value.treeRevision)) ||
-      !Array.isArray(value.warnings) || !value.warnings.every((item) =>
+      !Array.isArray(value.warnings) || value.warnings.length > MAX_PUBLISH_WARNINGS ||
+      !value.warnings.every((item) =>
         typeof item === 'string' && item.length <= 160)) return false;
   if (blocked) return typeof value.errorCode === 'string' && failureCodes.has(value.errorCode);
   if (pushFailed) {

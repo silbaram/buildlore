@@ -59,6 +59,16 @@ describe('package contract', () => {
     expect(packageJson.exports['./schemas/retrieval-evaluation.schema.json']).toBe(
       './schemas/retrieval-evaluation.schema.json',
     );
+    for (const schema of [
+      'knowledge-tracking-policy.schema.json',
+      'knowledge-publish-plan.schema.json',
+      'knowledge-publish-result.schema.json',
+      'knowledge-commit-lineage.schema.json',
+      'knowledge-parent-pin-plan.schema.json',
+      'knowledge-parent-pin-result.schema.json',
+    ]) {
+      expect(packageJson.exports[`./schemas/${schema}`]).toBe(`./schemas/${schema}`);
+    }
     expect(packageJson.exports['./profiles/buildlore.profile.v1.json']).toBe(
       './profiles/buildlore.profile.v1.json',
     );
@@ -190,6 +200,36 @@ describe('package contract', () => {
     expect(cliSource).not.toMatch(/from\s+['"]llm-wiki-compiler(?:\/|['"])/u);
     expect(cliSource).not.toMatch(/node:child_process|\b(?:exec|execFile|spawn|fork)\s*\(/u);
     expect(cliSource).not.toMatch(/JSON\.parse\s*\([^)]*\.stdout|\.stdout\s*\.\s*(?:match|split|trim)\s*\(/u);
+  });
+
+  it('[V12-V-02][V12-V-10] keeps publication authority internal and exports every schema', async () => {
+    const knowledgeIndex = await readFile(
+      new URL('../src/knowledge/index.ts', import.meta.url),
+      'utf8',
+    );
+    expect(knowledgeIndex).not.toMatch(
+      /KnowledgePublication(?:Service|Push)(?:Test|Internal)?Options|PublicationBlobPolicyPort|PublicationFaultHooks/u,
+    );
+    expect(knowledgeIndex).not.toContain('createKnowledgePublicationServiceForTesting');
+    expect(knowledgeIndex).not.toContain('createInternalKnowledgePublicationPushService');
+
+    const packageJson = JSON.parse(
+      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as PackageContract;
+    for (const schema of [
+      'knowledge-tracking-policy.schema.json',
+      'knowledge-publish-plan.schema.json',
+      'knowledge-publish-result.schema.json',
+      'knowledge-commit-lineage.schema.json',
+      'knowledge-parent-pin-plan.schema.json',
+      'knowledge-parent-pin-result.schema.json',
+    ]) {
+      const subpath = `./schemas/${schema}`;
+      expect(packageJson.exports[subpath]).toBe(subpath);
+      expect(() => new URL(`../schemas/${schema}`, import.meta.url)).not.toThrow();
+      expect((await readFile(new URL(`../schemas/${schema}`, import.meta.url), 'utf8')).length)
+        .toBeGreaterThan(0);
+    }
   });
 
   it('[V11-V-23] forbids Git authority, unsafe commands, services, and dependency expansion outside knowledge', async () => {

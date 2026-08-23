@@ -58,6 +58,7 @@ interface PinComputation {
   readonly parentRepository: PublicationRepositorySnapshot;
   readonly plan: ParentKnowledgePinPlan;
   readonly remoteProofDigest: PublicationDigest;
+  readonly remoteTarget: string | null;
 }
 
 interface ParentPinCommitMetadata {
@@ -352,7 +353,11 @@ export class ParentKnowledgePinService implements ParentKnowledgePinPort {
         await parentLease.updatePhase('parent-pin-revalidate');
         await knowledgeLease.updatePhase('parent-pin-revalidate');
         const fresh = await this.#computePlan(normalized);
-        if (!fresh.plan.eligible || fresh.plan.planDigest !== expected) {
+        if (
+          !fresh.plan.eligible ||
+          fresh.plan.planDigest !== expected ||
+          fresh.remoteTarget !== initial.remoteTarget
+        ) {
           return blocked(fresh.plan, 'PARENT_PIN_PLAN_DRIFT');
         }
         if (fresh.plan.noOp) return noOp(fresh.plan);
@@ -360,7 +365,11 @@ export class ParentKnowledgePinService implements ParentKnowledgePinPort {
         try {
           await this.#hooks.beforeAdd?.();
           const beforeAdd = await this.#computePlan(normalized);
-          if (!beforeAdd.plan.eligible || beforeAdd.plan.planDigest !== expected) {
+          if (
+            !beforeAdd.plan.eligible ||
+            beforeAdd.plan.planDigest !== expected ||
+            beforeAdd.remoteTarget !== fresh.remoteTarget
+          ) {
             return blocked(beforeAdd.plan, 'PARENT_PIN_PLAN_DRIFT');
           }
 
@@ -505,16 +514,20 @@ export class ParentKnowledgePinService implements ParentKnowledgePinPort {
 
     let targetRemoteReachability = false;
     let remoteProofDigest = sha256('unverified');
+    let remoteTarget: string | null = null;
     try {
       const configuration = await this.#inspector.inspectPushConfiguration(
         this.#knowledgeRoot,
         knowledgeRepository.branchRef,
       );
-      const remoteRevision = await this.#git.lsRemoteExact(
+      remoteTarget = configuration.effectivePushTarget;
+      const proof = await this.#git.proveRemoteReachability(
         this.#knowledgeRoot,
-        configuration.remoteAlias,
+        configuration.effectivePushTarget,
         configuration.branchRef,
+        input.knowledgeRevision,
       );
+      const remoteRevision = proof.remoteRevision;
       if (remoteRevision === null) {
         reasons.add('KNOWLEDGE_REMOTE_MISSING');
         remoteProofDigest = sha256(serializeCanonicalJson({
@@ -523,12 +536,7 @@ export class ParentKnowledgePinService implements ParentKnowledgePinPort {
           remoteRevision: null,
         }));
       } else {
-        targetRemoteReachability = remoteRevision === input.knowledgeRevision ||
-          await this.#git.isAncestor(
-            this.#knowledgeRoot,
-            input.knowledgeRevision,
-            remoteRevision,
-          );
+        targetRemoteReachability = proof.targetReachable;
         if (!targetRemoteReachability) reasons.add('KNOWLEDGE_REMOTE_UNREACHABLE');
         remoteProofDigest = sha256(serializeCanonicalJson({
           branchRefDigest: sha256(configuration.branchRef),
@@ -574,6 +582,7 @@ export class ParentKnowledgePinService implements ParentKnowledgePinPort {
       parentRepository,
       knowledgeRepository,
       remoteProofDigest,
+      remoteTarget,
       plan: Object.freeze({ ...base, planDigest }),
     };
   }

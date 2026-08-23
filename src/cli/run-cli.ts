@@ -163,6 +163,27 @@ async function assertProjectCommandsReady(
   }
 }
 
+async function assertPublicationPushReady(
+  runtime: CliRuntime,
+  projectId: string,
+  knowledgeRevision: string,
+): Promise<void> {
+  const status = await getKnowledgeStatus(runtime.cwd);
+  const expectedPinMismatch =
+    status.knowledge.state === 'commit-mismatch' &&
+    status.knowledge.checkedOutCommit === knowledgeRevision;
+  if (!status.ok && !expectedPinMismatch) {
+    throw new KnowledgeError(
+      statusErrorCode(status.knowledge.state),
+      'Knowledge repository requires recovery before publication push.',
+      status.recoveryCommand === undefined
+        ? {}
+        : { recoveryCommand: status.recoveryCommand },
+    );
+  }
+  await showProject(join(runtime.cwd, 'knowledge'), projectId);
+}
+
 function retrievalMode(command: ParsedCliCommand): RetrievalMode {
   switch (stringOption(command, '--mode')) {
     case 'lexical':
@@ -314,12 +335,13 @@ async function executeCommand(
     }
     case 'publish.push': {
       const projectId = requiredStringOption(command, '--project');
-      await assertProjectCommandsReady(runtime, projectId);
+      const knowledgeRevision = requiredStringOption(command, '--knowledge-revision');
+      await assertPublicationPushReady(runtime, projectId, knowledgeRevision);
       const service = runtime.publication ?? createKnowledgePublicationService(
         join(runtime.cwd, 'knowledge'),
       );
       return service.push({
-        knowledgeRevision: requiredStringOption(command, '--knowledge-revision'),
+        knowledgeRevision,
         projectId,
       });
     }

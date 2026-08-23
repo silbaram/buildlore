@@ -224,6 +224,36 @@ describe('publication artifact codecs', () => {
     }
   });
 
+  it('[V12-V-11] enforces result collection bounds and staged-path uniqueness', () => {
+    const maximumPaths = Array.from(
+      { length: 100_000 },
+      (_, index) => `p/${index.toString(36).padStart(4, '0')}`,
+    );
+    const maximum = {
+      ...result(),
+      recoveryCommand: Array.from({ length: 8 }, () => 'x'),
+      stagedPaths: maximumPaths,
+      warnings: Array.from({ length: 32 }, () => 'x'.repeat(160)),
+    } satisfies KnowledgePublishResult;
+    expect(parseKnowledgePublishResult(renderKnowledgePublishResult(maximum))).toEqual(maximum);
+
+    const invalidResults: readonly KnowledgePublishResult[] = [
+      { ...result(), recoveryCommand: [] },
+      { ...result(), recoveryCommand: Array.from({ length: 9 }, () => 'x') },
+      { ...result(), recoveryCommand: [''] },
+      { ...result(), recoveryCommand: ['x'.repeat(129)] },
+      { ...result(), stagedPaths: [...maximumPaths, 'p/overflow'] },
+      { ...result(), stagedPaths: ['p/duplicate', 'p/duplicate'] },
+      { ...result(), warnings: Array.from({ length: 33 }, () => 'warning') },
+      { ...result(), warnings: ['x'.repeat(161)] },
+    ];
+    for (const invalid of invalidResults) {
+      expect(() => parseKnowledgePublishResult(renderKnowledgePublishResult(invalid))).toThrowError(
+        expect.objectContaining({ code: 'PUBLISH_PLAN_DRIFT' }),
+      );
+    }
+  });
+
   it('keeps runtime schema versions aligned with checked-in schemas', async () => {
     const [planSchema, resultSchema, lineageSchema] = await Promise.all([
       readFile('schemas/knowledge-publish-plan.schema.json', 'utf8'),

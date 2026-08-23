@@ -65,7 +65,7 @@ interface VerifiedPublicationCommit {
   readonly treeRevision: GitObjectId;
 }
 
-export interface KnowledgePublicationPushOptions {
+export interface KnowledgePublicationPushInternalOptions {
   readonly blobPolicy?: PublicationBlobPolicyPort;
   readonly gitMachine?: GitMachinePort;
   readonly hooks?: PublicationFaultHooks;
@@ -207,6 +207,29 @@ function pushFailed(
   });
 }
 
+function cleanupFailure(result: KnowledgePublishResult): KnowledgePublishResult {
+  return Object.freeze({
+    schemaVersion: KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+    state: 'blocked',
+    projectId: result.projectId,
+    baseRevision: result.baseRevision,
+    errorCode: 'PUBLISH_PARTIAL',
+    foreignCounts: result.foreignCounts,
+    knowledgeRevision: result.knowledgeRevision,
+    localCommitPreserved: true,
+    partial: true,
+    pinRequired: true,
+    recoveryCommand: Object.freeze(['knowledge', 'status']),
+    remoteRevision: result.remoteRevision,
+    stagedPaths: result.stagedPaths,
+    treeRevision: result.treeRevision,
+    warnings: Object.freeze([
+      ...result.warnings.filter((warning) => warning !== 'REPOSITORY_LEASE_CLEANUP_FAILED').slice(0, 31),
+      'REPOSITORY_LEASE_CLEANUP_FAILED',
+    ]),
+  });
+}
+
 function publicationMessage(lineage: KnowledgeCommitLineageV1): Buffer {
   return Buffer.from(
     `BuildLore knowledge publish: ${lineage.projectId}\n\n${renderKnowledgeCommitLineageJson(lineage)}`,
@@ -224,46 +247,15 @@ function pathStatus(status: string): PublishPathStatus | null {
 function validSuccessfulPushReferenceTransition(
   before: PublicationReferenceSnapshot,
   after: PublicationReferenceSnapshot,
-  remoteAlias: string,
-  branchRef: string,
-  targetRevision: GitObjectId,
 ): boolean {
-  if (before.fetchHeadDigest !== after.fetchHeadDigest) return false;
-  const expectedTrackingRef = `refs/remotes/${remoteAlias}/${branchRef.slice('refs/heads/'.length)}`;
-  const beforeRefs = new Map(before.trackingRefs.map((entry) => [entry.ref, entry]));
-  const afterRefs = new Map(after.trackingRefs.map((entry) => [entry.ref, entry]));
-  const refs = new Set([...beforeRefs.keys(), ...afterRefs.keys()]);
-  const beforeExpected = beforeRefs.get(expectedTrackingRef);
-  const afterExpected = afterRefs.get(expectedTrackingRef);
-  for (const ref of refs) {
-    const beforeEntry = beforeRefs.get(ref);
-    const afterEntry = afterRefs.get(ref);
-    if (ref !== expectedTrackingRef) {
-      if (
-        beforeEntry?.symbolicTarget === expectedTrackingRef &&
-        afterEntry?.symbolicTarget === expectedTrackingRef
-      ) {
-        if (
-          beforeEntry.oid !== beforeExpected?.oid ||
-          afterEntry.oid !== afterExpected?.oid
-        ) return false;
-        continue;
-      }
-      if (
-        beforeEntry?.oid !== afterEntry?.oid ||
-        beforeEntry?.symbolicTarget !== afterEntry?.symbolicTarget
-      ) return false;
-      continue;
-    }
-    if (
-      beforeEntry?.symbolicTarget !== afterEntry?.symbolicTarget ||
-      (afterEntry?.oid !== beforeEntry?.oid && afterEntry?.oid !== targetRevision)
-    ) return false;
-  }
-  return true;
+  return before.digest === after.digest;
 }
 
-export class KnowledgePublicationPushService {
+export interface KnowledgePublicationPushPort {
+  push(input: KnowledgePublishPushInput): Promise<KnowledgePublishResult>;
+}
+
+class KnowledgePublicationPushServiceImplementation implements KnowledgePublicationPushPort {
   readonly #blobPolicy: PublicationBlobPolicyPort;
   readonly #git: GitMachinePort;
   readonly #hooks: PublicationFaultHooks;
@@ -271,7 +263,7 @@ export class KnowledgePublicationPushService {
   readonly #knowledgeRoot: string;
   readonly #lease: RepositoryWriterLeasePort;
 
-  constructor(knowledgeRoot: string, options: KnowledgePublicationPushOptions = {}) {
+  constructor(knowledgeRoot: string, options: KnowledgePublicationPushInternalOptions = {}) {
     this.#knowledgeRoot = knowledgeRoot;
     this.#git = options.gitMachine ?? new GitMachineAdapter();
     this.#hooks = options.hooks ?? {};
@@ -304,8 +296,10 @@ export class KnowledgePublicationPushService {
       );
     }
 
+    let completedResult: KnowledgePublishResult | null = null;
     try {
       return await this.#lease.withLease(this.#knowledgeRoot, 'push', async (lease) => {
+        const outcome = await (async (): Promise<KnowledgePublishResult> => {
         await lease.updatePhase('verify-local');
         let fresh: VerifiedPublicationCommit;
         try {
@@ -357,7 +351,7 @@ export class KnowledgePublicationPushService {
           await lease.updatePhase('inspect-remote');
           oldRemoteRevision = await this.#git.lsRemoteExact(
             this.#knowledgeRoot,
-            configuration.remoteAlias,
+            configuration.effectivePushTarget,
             configuration.branchRef,
           );
         } catch {
@@ -426,7 +420,7 @@ export class KnowledgePublicationPushService {
           await lease.updatePhase('fetch-object');
           await this.#git.fetchObjectNoRefUpdate(
             this.#knowledgeRoot,
-            configuration.remoteAlias,
+            configuration.effectivePushTarget,
             oldRemoteRevision,
           );
         } catch {
@@ -518,7 +512,7 @@ export class KnowledgePublicationPushService {
         try {
           beforePushRemote = await this.#git.lsRemoteExact(
             this.#knowledgeRoot,
-            configuration.remoteAlias,
+            configuration.effectivePushTarget,
             configuration.branchRef,
           );
         } catch {
@@ -560,7 +554,7 @@ export class KnowledgePublicationPushService {
         try {
           await this.#git.pushExactNonForce(
             this.#knowledgeRoot,
-            configuration.remoteAlias,
+            configuration.effectivePushTarget,
             normalized.knowledgeRevision,
             configuration.branchRef,
           );
@@ -605,7 +599,7 @@ export class KnowledgePublicationPushService {
           try {
             liveRemote = await this.#git.lsRemoteExact(
               this.#knowledgeRoot,
-              configuration.remoteAlias,
+              configuration.effectivePushTarget,
               configuration.branchRef,
             );
           } catch {
@@ -653,7 +647,7 @@ export class KnowledgePublicationPushService {
           [finalRemote, referenceAfterPush] = await Promise.all([
             this.#git.lsRemoteExact(
               this.#knowledgeRoot,
-              configuration.remoteAlias,
+              configuration.effectivePushTarget,
               configuration.branchRef,
             ),
             this.#inspector.inspectReferenceSnapshot(this.#knowledgeRoot),
@@ -671,9 +665,6 @@ export class KnowledgePublicationPushService {
         if (!validSuccessfulPushReferenceTransition(
           referenceBefore,
           referenceAfterPush,
-          configuration.remoteAlias,
-          configuration.branchRef,
-          normalized.knowledgeRevision,
         )) {
           return blocked(
             normalized,
@@ -696,6 +687,9 @@ export class KnowledgePublicationPushService {
           finalRemote,
           true,
         );
+        })();
+        if (outcome.state === 'pushed') completedResult = outcome;
+        return outcome;
       });
     } catch (error) {
       if (error instanceof RepositoryWriterError && error.code === 'REPOSITORY_BUSY') {
@@ -706,6 +700,11 @@ export class KnowledgePublicationPushService {
           'PUBLISH_REPOSITORY_BUSY',
         );
       }
+      if (
+        error instanceof RepositoryWriterError &&
+        (error.code === 'REPOSITORY_RELEASE_FAILED' || error.code === 'REPOSITORY_OWNERSHIP_LOST') &&
+        completedResult !== null
+      ) return cleanupFailure(completedResult);
       throw error;
     }
   }
@@ -863,9 +862,27 @@ export class KnowledgePublicationPushService {
   }
 }
 
+export class KnowledgePublicationPushService implements KnowledgePublicationPushPort {
+  readonly #implementation: KnowledgePublicationPushPort;
+
+  constructor(knowledgeRoot: string) {
+    this.#implementation = new KnowledgePublicationPushServiceImplementation(knowledgeRoot);
+  }
+
+  push(input: KnowledgePublishPushInput): Promise<KnowledgePublishResult> {
+    return this.#implementation.push(input);
+  }
+}
+
 export function createKnowledgePublicationPushService(
   knowledgeRoot: string,
-  options: KnowledgePublicationPushOptions = {},
 ): KnowledgePublicationPushService {
-  return new KnowledgePublicationPushService(knowledgeRoot, options);
+  return new KnowledgePublicationPushService(knowledgeRoot);
+}
+
+export function createInternalKnowledgePublicationPushService(
+  knowledgeRoot: string,
+  options: KnowledgePublicationPushInternalOptions = {},
+): KnowledgePublicationPushPort {
+  return new KnowledgePublicationPushServiceImplementation(knowledgeRoot, options);
 }

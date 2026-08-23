@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { TextDecoder } from 'node:util';
 
 import { GitMachineError, isNodeError, KnowledgeError } from './errors.js';
@@ -13,7 +16,6 @@ const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const MODE_PATTERN = /^[0-7]{6}$/u;
 const STATUS_PAIR_PATTERN = /^[.MADRCU]{2}$/u;
 const SUBMODULE_PATTERN = /^(?:N\.\.\.|S[.C][.M][.U])$/u;
-const REMOTE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/u;
 const FULL_BRANCH_REF_PATTERN = /^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]{0,244}$/u;
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
@@ -71,10 +73,39 @@ export interface GitCachedDiffEntry {
   readonly status: string;
 }
 
+export interface GitNumstatEntry {
+  readonly added: number | null;
+  readonly deleted: number | null;
+  readonly path: string;
+}
+
+export interface GitValidatedIndexEntry {
+  readonly content: Buffer | null;
+  readonly path: string;
+  readonly previousOid: string;
+  readonly status: 'added' | 'deleted' | 'modified';
+}
+
+export interface GitRemoteReachabilityProof {
+  readonly remoteRevision: string | null;
+  readonly targetReachable: boolean;
+}
+
 export interface GitMachinePort {
   status(repositoryRoot: string): Promise<readonly GitStatusEntry[]>;
   cachedDiff(repositoryRoot: string): Promise<readonly GitCachedDiffEntry[]>;
   addExact(repositoryRoot: string, relativePaths: readonly string[]): Promise<void>;
+  stageValidated(
+    repositoryRoot: string,
+    entries: readonly GitValidatedIndexEntry[],
+  ): Promise<void>;
+  isExactStageContent(
+    repositoryRoot: string,
+    relativePath: string,
+    content: Buffer,
+  ): Promise<boolean>;
+  worktreeNumstat(repositoryRoot: string): Promise<readonly GitNumstatEntry[]>;
+  untrackedNumstat(repositoryRoot: string, relativePath: string): Promise<GitNumstatEntry>;
   writeTree(repositoryRoot: string): Promise<string>;
   commitTree(
     repositoryRoot: string,
@@ -91,6 +122,12 @@ export interface GitMachinePort {
   lsRemoteExact(repositoryRoot: string, remote: string, ref: string): Promise<string | null>;
   fetchObjectNoRefUpdate(repositoryRoot: string, remote: string, oid: string): Promise<void>;
   isAncestor(repositoryRoot: string, ancestorOid: string, descendantOid: string): Promise<boolean>;
+  proveRemoteReachability(
+    repositoryRoot: string,
+    remote: string,
+    ref: string,
+    targetOid: string,
+  ): Promise<GitRemoteReachabilityProof>;
   pushExactNonForce(
     repositoryRoot: string,
     remote: string,
@@ -385,6 +422,56 @@ export function parseCachedDiffRawZ(
   return entries;
 }
 
+function parseNumstatCount(value: Buffer): number | null {
+  const decoded = value.toString('ascii');
+  if (decoded === '-') return null;
+  if (!/^(?:0|[1-9][0-9]{0,14})$/u.test(decoded)) throw invalidMachineOutput();
+  const count = Number(decoded);
+  if (!Number.isSafeInteger(count)) throw invalidMachineOutput();
+  return count;
+}
+
+export function parseNumstatZ(
+  output: Buffer,
+  options: { readonly maxOutputBytes?: number; readonly maxRecords?: number } = {},
+): readonly GitNumstatEntry[] {
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  const maxRecords = options.maxRecords ?? DEFAULT_MAX_RECORDS;
+  assertOutputBound(output, maxOutputBytes);
+  const records = splitNulRecords(output, maxRecords);
+  const entries: GitNumstatEntry[] = [];
+  for (const record of records) {
+    const firstTab = record.indexOf(0x09);
+    const secondTab = firstTab < 0 ? -1 : record.indexOf(0x09, firstTab + 1);
+    if (firstTab <= 0 || secondTab <= firstTab + 1) throw invalidMachineOutput();
+    const path = decodePath(record.subarray(secondTab + 1));
+    entries.push({
+      added: parseNumstatCount(record.subarray(0, firstTab)),
+      deleted: parseNumstatCount(record.subarray(firstTab + 1, secondTab)),
+      path,
+    });
+  }
+  if (entries.length > maxRecords) throw invalidMachineOutput();
+  return entries;
+}
+
+function parseSingleNoIndexNumstat(output: Buffer, expectedPath: string): GitNumstatEntry {
+  assertOutputBound(output, DEFAULT_MAX_OUTPUT_BYTES);
+  const firstTab = output.indexOf(0x09);
+  const secondTab = firstTab < 0 ? -1 : output.indexOf(0x09, firstTab + 1);
+  if (
+    firstTab <= 0 ||
+    secondTab <= firstTab + 1 ||
+    output[secondTab + 1] !== 0 ||
+    output[output.byteLength - 1] !== 0
+  ) throw invalidMachineOutput();
+  return {
+    added: parseNumstatCount(output.subarray(0, firstTab)),
+    deleted: parseNumstatCount(output.subarray(firstTab + 1, secondTab)),
+    path: expectedPath,
+  };
+}
+
 function validateOid(oid: string): string {
   const normalized = oid.toLowerCase();
   if (!OBJECT_ID_PATTERN.test(normalized)) {
@@ -393,16 +480,18 @@ function validateOid(oid: string): string {
   return normalized;
 }
 
-function validateRemote(remote: string): string {
+function validateTransportTarget(target: string): string {
+  const encoded = Buffer.from(target, 'utf8');
   if (
-    !REMOTE_PATTERN.test(remote) ||
-    remote.startsWith('-') ||
-    remote.includes('..') ||
-    remote.includes('//')
+    target.length === 0 ||
+    encoded.byteLength > MAX_PATH_BYTES ||
+    decodeUtf8(encoded) !== target ||
+    target.startsWith('-') ||
+    /[\0\r\n]/u.test(target)
   ) {
-    throw new GitMachineError('GIT_OPERATION_FAILED', 'Configured Git remote is invalid.');
+    throw new GitMachineError('GIT_OPERATION_FAILED', 'Configured Git transport target is invalid.');
   }
-  return remote;
+  return target;
 }
 
 function validateBranchRef(ref: string): string {
@@ -531,6 +620,100 @@ export class GitMachineAdapter implements GitMachinePort {
     if (result.stdout.byteLength !== 0) throw invalidMachineOutput();
   }
 
+  async stageValidated(
+    repositoryRoot: string,
+    entries: readonly GitValidatedIndexEntry[],
+  ): Promise<void> {
+    if (entries.length === 0) return;
+    const seen = new Set<string>();
+    const indexRecords: Buffer[] = [];
+    let objectIdLength: number | null = null;
+    for (const entry of entries) {
+      const path = validateRelativePath(entry.path);
+      if (seen.has(path)) {
+        throw new GitMachineError('GIT_OPERATION_FAILED', 'Git path list contains a duplicate.');
+      }
+      seen.add(path);
+      const previousOid = validateOid(entry.previousOid);
+      objectIdLength ??= previousOid.length;
+      if (previousOid.length !== objectIdLength) throw invalidMachineOutput();
+      if (entry.status === 'deleted') {
+        if (entry.content !== null || /^0+$/u.test(previousOid)) throw invalidMachineOutput();
+        indexRecords.push(Buffer.from(
+          `0 ${'0'.repeat(objectIdLength)}\t${path}\0`,
+          'utf8',
+        ));
+        continue;
+      }
+      if (entry.content === null) throw invalidMachineOutput();
+      const hashed = await this.#run(repositoryRoot, ['hash-object', '-w', '--stdin'], entry.content);
+      this.#assertSuccess(hashed);
+      const oid = parseOidOutput(hashed.stdout);
+      if (oid.length !== objectIdLength) throw invalidMachineOutput();
+      indexRecords.push(Buffer.from(`100644 ${oid}\t${path}\0`, 'utf8'));
+    }
+    const update = await this.#run(
+      repositoryRoot,
+      ['update-index', '-z', '--index-info'],
+      Buffer.concat(indexRecords),
+    );
+    this.#assertSuccess(update);
+    if (update.stdout.byteLength !== 0) throw invalidMachineOutput();
+  }
+
+  async isExactStageContent(
+    repositoryRoot: string,
+    relativePath: string,
+    content: Buffer,
+  ): Promise<boolean> {
+    const path = validateRelativePath(relativePath);
+    const [raw, filtered] = await Promise.all([
+      this.#run(repositoryRoot, ['hash-object', '--no-filters', '--stdin'], content),
+      this.#run(repositoryRoot, ['hash-object', '--stdin', `--path=${path}`], content),
+    ]);
+    this.#assertSuccess(raw);
+    this.#assertSuccess(filtered);
+    return parseOidOutput(raw.stdout) === parseOidOutput(filtered.stdout);
+  }
+
+  async worktreeNumstat(repositoryRoot: string): Promise<readonly GitNumstatEntry[]> {
+    const result = await this.#run(repositoryRoot, [
+      '--literal-pathspecs',
+      'diff',
+      '--numstat',
+      '-z',
+      '--no-renames',
+      '--no-ext-diff',
+      '--no-textconv',
+      'HEAD',
+      '--',
+    ]);
+    this.#assertSuccess(result);
+    return parseNumstatZ(result.stdout, {
+      maxOutputBytes: this.#maxOutputBytes,
+      maxRecords: this.#maxRecords,
+    });
+  }
+
+  async untrackedNumstat(repositoryRoot: string, relativePath: string): Promise<GitNumstatEntry> {
+    const path = validateRelativePath(relativePath);
+    const result = await this.#run(repositoryRoot, [
+      '--literal-pathspecs',
+      'diff',
+      '--no-index',
+      '--numstat',
+      '-z',
+      '--no-renames',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--',
+      '/dev/null',
+      path,
+    ]);
+    if (result.exitCode !== 1) this.#assertSuccess(result);
+    return parseSingleNoIndexNumstat(result.stdout, path);
+  }
+
   async writeTree(repositoryRoot: string): Promise<string> {
     const result = await this.#run(repositoryRoot, ['write-tree']);
     this.#assertSuccess(result);
@@ -589,7 +772,7 @@ export class GitMachineAdapter implements GitMachinePort {
       'ls-remote',
       '--exit-code',
       '--refs',
-      validateRemote(remote),
+      validateTransportTarget(remote),
       exactRef,
     ]);
     if (result.exitCode === 2 && result.stdout.byteLength === 0) return null;
@@ -609,7 +792,7 @@ export class GitMachineAdapter implements GitMachinePort {
       'fetch',
       '--no-write-fetch-head',
       '--no-tags',
-      validateRemote(remote),
+      validateTransportTarget(remote),
       validateOid(oid),
     ]);
     this.#assertSuccess(result);
@@ -632,6 +815,71 @@ export class GitMachineAdapter implements GitMachinePort {
     throw new GitMachineError('GIT_OPERATION_FAILED', 'Git ancestry check failed.');
   }
 
+  async proveRemoteReachability(
+    repositoryRoot: string,
+    remote: string,
+    ref: string,
+    targetOid: string,
+  ): Promise<GitRemoteReachabilityProof> {
+    const transportTarget = validateTransportTarget(remote);
+    const branchRef = validateBranchRef(ref);
+    const target = validateOid(targetOid);
+    const remoteRevision = await this.lsRemoteExact(
+      repositoryRoot,
+      transportTarget,
+      branchRef,
+    );
+    if (remoteRevision === null) return { remoteRevision: null, targetReachable: false };
+
+    const formatResult = await this.#run(repositoryRoot, ['rev-parse', '--show-object-format']);
+    this.#assertSuccess(formatResult);
+    const format = decodeUtf8(formatResult.stdout);
+    if (format !== 'sha1\n' && format !== 'sha256\n') throw invalidMachineOutput();
+    const proofRoot = await mkdtemp(join(tmpdir(), 'buildlore-remote-proof-'));
+    let proofError: unknown;
+    let targetReachable = false;
+    try {
+      const initialized = await this.#run(proofRoot, [
+        'init',
+        '--bare',
+        `--object-format=${format.slice(0, -1)}`,
+        '.',
+      ]);
+      this.#assertSuccess(initialized);
+      const fetched = await this.#run(proofRoot, [
+        'fetch',
+        '--no-write-fetch-head',
+        '--no-tags',
+        transportTarget,
+        branchRef,
+      ]);
+      this.#assertSuccess(fetched);
+      const targetObject = await this.#run(proofRoot, ['cat-file', '-e', `${target}^{commit}`]);
+      targetReachable = targetObject.exitCode === 0 &&
+        await this.isAncestor(proofRoot, target, remoteRevision);
+      const confirmedRemote = await this.lsRemoteExact(
+        repositoryRoot,
+        transportTarget,
+        branchRef,
+      );
+      if (confirmedRemote !== remoteRevision) {
+        throw new GitMachineError('GIT_OPERATION_FAILED', 'Git remote changed during proof.');
+      }
+    } catch (error) {
+      proofError = error;
+    }
+    try {
+      await rm(proofRoot, { force: true, recursive: true });
+    } catch {
+      throw new GitMachineError('GIT_OPERATION_FAILED', 'Git remote proof cleanup failed.');
+    }
+    if (proofError !== undefined) {
+      if (proofError instanceof Error) throw proofError;
+      throw new GitMachineError('GIT_OPERATION_FAILED', 'Git remote proof failed.');
+    }
+    return { remoteRevision, targetReachable };
+  }
+
   async pushExactNonForce(
     repositoryRoot: string,
     remote: string,
@@ -641,7 +889,7 @@ export class GitMachineAdapter implements GitMachinePort {
     const result = await this.#run(repositoryRoot, [
       'push',
       '--porcelain',
-      validateRemote(remote),
+      validateTransportTarget(remote),
       `${validateOid(oid)}:${validateBranchRef(ref)}`,
     ]);
     if (result.exitCode !== 0) {

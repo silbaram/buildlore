@@ -47,6 +47,7 @@ export interface PublicationCommitSnapshot {
 
 export interface PublicationPushConfiguration {
   readonly branchRef: string;
+  readonly effectivePushTarget: string;
   readonly remoteAlias: string;
 }
 
@@ -138,6 +139,15 @@ function decodeSingleLine(output: Buffer): string {
     throw invalidOutput();
   }
   return decoded.slice(0, -1);
+}
+
+function bindEffectivePushTarget(repositoryRoot: string, target: string): string {
+  if (
+    isAbsolute(target) ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(target) ||
+    /^(?:[^/@:]+@)?[^/:]+:/u.test(target)
+  ) return target;
+  return resolve(repositoryRoot, target);
 }
 
 function parseIndex(output: Buffer): readonly PublicationIndexEntry[] {
@@ -247,38 +257,57 @@ export class GitPublicationInspector implements PublicationInspectionPort {
   ): Promise<PublicationPushConfiguration> {
     if (!BRANCH_REF_PATTERN.test(localBranchRef)) throw invalidOutput();
     const branch = localBranchRef.slice('refs/heads/'.length);
-    const [remote, merge] = await Promise.all([
-      this.#run(
-        repositoryRoot,
-        ['config', '--local', '--get', `branch.${branch}.remote`],
-        undefined,
-        true,
-      ),
+    const remote = await this.#run(
+      repositoryRoot,
+      ['config', '--local', '--get', `branch.${branch}.remote`],
+      undefined,
+      true,
+    );
+    if (remote.exitCode !== 0) {
+      throw new GitMachineError('GIT_OPERATION_FAILED', 'Configured Git upstream is unavailable.');
+    }
+    const remoteAlias = decodeSingleLine(remote.stdout);
+    if (
+      !REMOTE_PATTERN.test(remoteAlias) ||
+      remoteAlias.startsWith('-') ||
+      remoteAlias.includes('..') ||
+      remoteAlias.includes('//')
+    ) throw invalidOutput();
+    const [merge, target] = await Promise.all([
       this.#run(
         repositoryRoot,
         ['config', '--local', '--get', `branch.${branch}.merge`],
         undefined,
         true,
       ),
+      this.#run(
+        repositoryRoot,
+        ['remote', 'get-url', '--push', '--all', remoteAlias],
+        undefined,
+        true,
+      ),
     ]);
-    if (remote.exitCode !== 0 || merge.exitCode !== 0) {
+    if (merge.exitCode !== 0 || target.exitCode !== 0) {
       throw new GitMachineError('GIT_OPERATION_FAILED', 'Configured Git upstream is unavailable.');
     }
-    const remoteAlias = decodeSingleLine(remote.stdout);
     const branchRef = decodeSingleLine(merge.stdout);
+    const effectivePushTarget = bindEffectivePushTarget(
+      repositoryRoot,
+      decodeSingleLine(target.stdout),
+    );
     if (
-      !REMOTE_PATTERN.test(remoteAlias) ||
-      remoteAlias.startsWith('-') ||
-      remoteAlias.includes('..') ||
-      remoteAlias.includes('//') ||
       !BRANCH_REF_PATTERN.test(branchRef) ||
       branchRef.includes('..') ||
       branchRef.includes('//') ||
-      branchRef.includes('@{')
+      branchRef.includes('@{') ||
+      effectivePushTarget.length === 0 ||
+      Buffer.byteLength(effectivePushTarget, 'utf8') > MAX_PATH_BYTES ||
+      effectivePushTarget.startsWith('-') ||
+      /[\0\r\n]/u.test(effectivePushTarget)
     ) {
       throw invalidOutput();
     }
-    return { branchRef, remoteAlias };
+    return { branchRef, effectivePushTarget, remoteAlias };
   }
 
   async inspectReferenceSnapshot(repositoryRoot: string): Promise<PublicationReferenceSnapshot> {

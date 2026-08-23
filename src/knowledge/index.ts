@@ -53,14 +53,12 @@ export {
 export {
   createKnowledgePublicationPushService,
   KnowledgePublicationPushService,
-  type KnowledgePublicationPushOptions,
 } from './publication-push.js';
 export {
   createKnowledgePublicationService,
   KnowledgePublicationService,
   renderKnowledgeCommitLineage,
   type KnowledgePublicationPort,
-  type KnowledgePublicationServiceOptions,
 } from './publication-service.js';
 export {
   KNOWLEDGE_COMMIT_LINEAGE_SCHEMA_VERSION,
@@ -83,10 +81,8 @@ export {
   type KnowledgePublishPushedResult,
   type KnowledgePublishPushFailedResult,
   type KnowledgePublishResult,
-  type PublicationBlobPolicyPort,
   type PublicationDigest,
   type PublicationFailureCode,
-  type PublicationFaultHooks,
   type PublishBlockReason,
   type PublishForeignCounts,
   type PublishNumstat,

@@ -1,15 +1,20 @@
 import { execFile } from 'node:child_process';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import { GitMachineAdapter, type GitMachinePort } from '../src/knowledge/git-machine.js';
-import { createKnowledgePublicationPushService } from '../src/knowledge/publication-push.js';
-import { createKnowledgePublicationService } from '../src/knowledge/publication-service.js';
+import {
+  createInternalKnowledgePublicationPushService as createKnowledgePublicationPushService,
+} from '../src/knowledge/publication-push.js';
+import {
+  createKnowledgePublicationServiceForTesting as createKnowledgePublicationService,
+} from '../src/knowledge/publication-service.js';
 import { verifyCanonicalManifestRegistration } from '../src/knowledge/publication-validation.js';
+import { RepositoryWriterLeaseManager } from '../src/knowledge/repository-writer-lease.js';
 import type {
   KnowledgePublishCommittedResult,
   KnowledgePublishPlanInput,
@@ -144,11 +149,17 @@ function wrapGit(
   const real = new GitMachineAdapter();
   return {
     addExact: overrides.addExact ?? real.addExact.bind(real),
+    stageValidated: overrides.stageValidated ?? real.stageValidated.bind(real),
+    isExactStageContent: overrides.isExactStageContent ?? real.isExactStageContent.bind(real),
+    worktreeNumstat: overrides.worktreeNumstat ?? real.worktreeNumstat.bind(real),
+    untrackedNumstat: overrides.untrackedNumstat ?? real.untrackedNumstat.bind(real),
     cachedDiff: overrides.cachedDiff ?? real.cachedDiff.bind(real),
     commitTree: overrides.commitTree ?? real.commitTree.bind(real),
     fetchObjectNoRefUpdate: overrides.fetchObjectNoRefUpdate ??
       real.fetchObjectNoRefUpdate.bind(real),
     isAncestor: overrides.isAncestor ?? real.isAncestor.bind(real),
+    proveRemoteReachability: overrides.proveRemoteReachability ??
+      real.proveRemoteReachability.bind(real),
     lsRemoteExact: overrides.lsRemoteExact ?? real.lsRemoteExact.bind(real),
     pushExactNonForce: overrides.pushExactNonForce ?? real.pushExactNonForce.bind(real),
     status: overrides.status ?? real.status.bind(real),
@@ -182,7 +193,7 @@ describe('KnowledgePublicationPushService', () => {
     await expect(git(fixture.remote, ['rev-parse', 'refs/heads/main']))
       .resolves.toBe(fixture.committed.knowledgeRevision);
     await expect(git(fixture.root, ['rev-parse', 'refs/remotes/origin/main']))
-      .resolves.toBe(fixture.committed.knowledgeRevision);
+      .resolves.toBe(fixture.baseline);
     expect(result).toMatchObject({
       state: 'pushed',
       knowledgeRevision: fixture.committed.knowledgeRevision,
@@ -201,6 +212,88 @@ describe('KnowledgePublicationPushService', () => {
     expect(JSON.stringify(equal)).not.toContain(fixture.remote);
   });
 
+  it('[V12-V-04] binds preflight, transport, and postflight to one effective pushurl target', async () => {
+    const fixture = await createPushFixture();
+    const pushTarget = await mkdtemp(join(tmpdir(), 'buildlore-push-target-'));
+    roots.push(pushTarget);
+    await git(pushTarget, ['init', '--bare', '--initial-branch=main']);
+    await git(fixture.root, [
+      'push',
+      pushTarget,
+      `${fixture.baseline}:refs/heads/main`,
+    ]);
+    await git(fixture.root, [
+      'config',
+      'remote.origin.pushurl',
+      relative(fixture.root, pushTarget),
+    ]);
+
+    const result = await createKnowledgePublicationService(
+      fixture.root,
+      { blobPolicy: allowPolicy },
+    ).push({ knowledgeRevision: fixture.committed.knowledgeRevision, projectId: 'alpha' });
+
+    expect(result).toMatchObject({
+      state: 'pushed',
+      remoteRevision: fixture.committed.knowledgeRevision,
+    });
+    await expect(git(pushTarget, ['rev-parse', 'refs/heads/main']))
+      .resolves.toBe(fixture.committed.knowledgeRevision);
+    await expect(git(fixture.remote, ['rev-parse', 'refs/heads/main']))
+      .resolves.toBe(fixture.baseline);
+    expect(JSON.stringify(result)).not.toContain(pushTarget);
+    expect(JSON.stringify(result)).not.toContain(fixture.remote);
+  });
+
+  it('[V12-V-04] rejects multiple effective push targets before remote mutation', async () => {
+    const fixture = await createPushFixture();
+    const second = await mkdtemp(join(tmpdir(), 'buildlore-push-target-'));
+    roots.push(second);
+    await git(second, ['init', '--bare', '--initial-branch=main']);
+    await git(fixture.root, ['config', '--add', 'remote.origin.pushurl', fixture.remote]);
+    await git(fixture.root, ['config', '--add', 'remote.origin.pushurl', second]);
+
+    const result = await createKnowledgePublicationService(
+      fixture.root,
+      { blobPolicy: allowPolicy },
+    ).push({ knowledgeRevision: fixture.committed.knowledgeRevision, projectId: 'alpha' });
+
+    expect(result).toMatchObject({ state: 'blocked', errorCode: 'PUBLISH_REMOTE_UNREADABLE' });
+    await expect(git(fixture.remote, ['rev-parse', 'refs/heads/main']))
+      .resolves.toBe(fixture.baseline);
+    await expect(git(second, ['show-ref', '--verify', 'refs/heads/main'])).rejects.toThrow();
+  });
+
+  it('[V12-V-09] preserves an exact successful push when lease cleanup fails', async () => {
+    const fixture = await createPushFixture();
+    const service = createKnowledgePublicationPushService(fixture.root, {
+      blobPolicy: allowPolicy,
+      lease: new RepositoryWriterLeaseManager({
+        beforeRelease: () => { throw new Error('private cleanup fault'); },
+      }),
+    });
+
+    const result = await service.push({
+      knowledgeRevision: fixture.committed.knowledgeRevision,
+      projectId: 'alpha',
+    });
+
+    expect(result).toMatchObject({
+      state: 'blocked',
+      errorCode: 'PUBLISH_PARTIAL',
+      knowledgeRevision: fixture.committed.knowledgeRevision,
+      remoteRevision: fixture.committed.knowledgeRevision,
+      treeRevision: fixture.committed.treeRevision,
+      localCommitPreserved: true,
+      partial: true,
+      recoveryCommand: ['knowledge', 'status'],
+      warnings: ['REPOSITORY_LEASE_CLEANUP_FAILED'],
+    });
+    await expect(git(fixture.remote, ['rev-parse', 'refs/heads/main']))
+      .resolves.toBe(fixture.committed.knowledgeRevision);
+    expect(JSON.stringify(result)).not.toContain('private cleanup fault');
+  });
+
   it('blocks a missing configured branch without creating it', async () => {
     const fixture = await createPushFixture();
     await git(fixture.remote, ['update-ref', '-d', 'refs/heads/main']);
@@ -215,7 +308,7 @@ describe('KnowledgePublicationPushService', () => {
     await expect(git(fixture.remote, ['show-ref', '--verify', 'refs/heads/main'])).rejects.toThrow();
   });
 
-  it('allows the configured tracking ref to advance from a stale OID to the target', async () => {
+  it('preserves a configured tracking ref while pushing through the frozen effective target', async () => {
     const fixture = await createPushFixture();
     const stale = await git(fixture.root, [
       'commit-tree',
@@ -237,7 +330,7 @@ describe('KnowledgePublicationPushService', () => {
     ).push({ knowledgeRevision: fixture.committed.knowledgeRevision, projectId: 'alpha' });
     expect(result).toMatchObject({ state: 'pushed' });
     await expect(git(fixture.root, ['rev-parse', 'refs/remotes/origin/main']))
-      .resolves.toBe(fixture.committed.knowledgeRevision);
+      .resolves.toBe(stale);
   });
 
   it('re-proves a canonical single-project registration manifest delta before push', async () => {
