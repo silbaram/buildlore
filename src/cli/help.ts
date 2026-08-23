@@ -11,6 +11,11 @@ Usage:
   buildlore search --project <project-id> --query <text> [--mode lexical|semantic|hybrid] [--json]
   buildlore query --project <project-id> --question <text> [--json]
   buildlore context --project <project-id> --prompt <text> [--json]
+  buildlore publish plan --project <project-id> --source-revision <full-oid> [--include-policy-track] [--registration] [--json]
+  buildlore publish commit --project <project-id> --source-revision <full-oid> --expect-plan <sha256> [--include-policy-track] [--registration] [--json]
+  buildlore publish push --project <project-id> --knowledge-revision <full-oid> [--json]
+  buildlore knowledge pin plan --knowledge-revision <full-oid> --iteration <id> --intent iteration-close [--json]
+  buildlore knowledge pin commit --knowledge-revision <full-oid> --iteration <id> --intent iteration-close --expect-plan <sha256> [--json]
   buildlore --help
 
 Common options:

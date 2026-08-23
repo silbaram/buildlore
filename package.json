@@ -22,6 +22,12 @@
     "./schemas/lifecycle-profile.schema.json": "./schemas/lifecycle-profile.schema.json",
     "./schemas/retrieval-corpus.schema.json": "./schemas/retrieval-corpus.schema.json",
     "./schemas/retrieval-evaluation.schema.json": "./schemas/retrieval-evaluation.schema.json",
+    "./schemas/knowledge-tracking-policy.schema.json": "./schemas/knowledge-tracking-policy.schema.json",
+    "./schemas/knowledge-publish-plan.schema.json": "./schemas/knowledge-publish-plan.schema.json",
+    "./schemas/knowledge-publish-result.schema.json": "./schemas/knowledge-publish-result.schema.json",
+    "./schemas/knowledge-commit-lineage.schema.json": "./schemas/knowledge-commit-lineage.schema.json",
+    "./schemas/knowledge-parent-pin-plan.schema.json": "./schemas/knowledge-parent-pin-plan.schema.json",
+    "./schemas/knowledge-parent-pin-result.schema.json": "./schemas/knowledge-parent-pin-result.schema.json",
     "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json"
   },
   "files": [

@@ -13,6 +13,18 @@ import {
 } from '../src/compiler/index.js';
 import { runCli, type CliIo, type CliRuntime } from '../src/cli/index.js';
 import {
+  KNOWLEDGE_PUBLISH_PLAN_SCHEMA_VERSION,
+  KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+  PARENT_KNOWLEDGE_PIN_PLAN_SCHEMA_VERSION,
+  PARENT_KNOWLEDGE_PIN_RESULT_SCHEMA_VERSION,
+  type KnowledgePublishCommitInput,
+  type KnowledgePublishPlan,
+  type KnowledgePublishPlanInput,
+  type KnowledgePublishPushInput,
+  type ParentKnowledgePinInput,
+  type PublicationDigest,
+} from '../src/knowledge/index.js';
+import {
   PROJECT_SYNC_SCHEMA_VERSION,
   type ProjectSyncInput,
   type ProjectSyncSummary,
@@ -29,6 +41,42 @@ import {
 const temporaryRoots: string[] = [];
 const PLAN_FINGERPRINT =
   'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
+const oid = (character: string): string => character.repeat(40);
+const digest = (character: string): PublicationDigest => `sha256:${character.repeat(64)}`;
+
+function publicationPlan(eligible = true): KnowledgePublishPlan {
+  return {
+    schemaVersion: KNOWLEDGE_PUBLISH_PLAN_SCHEMA_VERSION,
+    projectId: 'alpha',
+    repositoryIdentityDigest: digest('1'),
+    baseRevision: oid('a'),
+    localUpstreamRevision: null,
+    sourceRevision: oid('b'),
+    codeRevision: oid('c'),
+    selectedPaths: eligible ? [{
+      classification: 'always-track',
+      contentSha256: digest('2'),
+      mode: '100644',
+      numstat: { added: 1, deleted: null },
+      reasonCode: 'selected',
+      relativePath: 'projects/alpha/sources/entry.md',
+      status: 'modified',
+    }] : [],
+    foreignChanges: {
+      digest: digest('3'),
+      staged: { count: 0, entries: [], overflow: false },
+      unstaged: { count: 0, entries: [], overflow: false },
+      untracked: { count: 0, entries: [], overflow: false },
+    },
+    registrationManifest: null,
+    trackingPolicyDigest: digest('4'),
+    lineageDigest: digest('5'),
+    indexSnapshotDigest: digest('6'),
+    eligible,
+    blockReasons: eligible ? [] : ['EMPTY_SELECTION'],
+    planDigest: digest('7'),
+  };
+}
 
 interface CapturedCli {
   readonly exitCode: number;
@@ -492,5 +540,280 @@ describe('canonical CLI workflow', () => {
     }
     expect(compilerCalls).toBe(0);
     expect(retrievalCalls).toBe(0);
+  });
+
+  it('binds explicit publish and pin commands and presents canonical outcomes with stable exits', async () => {
+    const cwd = await createConfiguredRepository();
+    const planInputs: KnowledgePublishPlanInput[] = [];
+    const commitInputs: KnowledgePublishCommitInput[] = [];
+    const pushInputs: KnowledgePublishPushInput[] = [];
+    const pinPlans: ParentKnowledgePinInput[] = [];
+    const pinCommits: Array<Readonly<{
+      digest: PublicationDigest;
+      input: ParentKnowledgePinInput;
+    }>> = [];
+    let nextPlan = publicationPlan();
+    let pinPlanState: 'ineligible' | 'no-op' | 'planned' = 'planned';
+    const runtime: CliRuntime = {
+      cwd,
+      parentPin: {
+        plan: (input) => {
+          pinPlans.push(input);
+          return Promise.resolve({
+            schemaVersion: PARENT_KNOWLEDGE_PIN_PLAN_SCHEMA_VERSION,
+            intent: 'iteration-close',
+            iterationId: input.iterationId,
+            path: 'knowledge',
+            parentRepositoryIdentityDigest: digest('1'),
+            knowledgeRepositoryIdentityDigest: digest('2'),
+            parentBaseRevision: oid('c'),
+            codeRevision: oid('c'),
+            oldKnowledgeGitlink: pinPlanState === 'no-op' ? input.knowledgeRevision : oid('e'),
+            newKnowledgeGitlink: input.knowledgeRevision,
+            projectId: 'alpha',
+            sourceRevision: oid('b'),
+            lineageDigest: digest('3'),
+            targetRemoteReachability: true,
+            noOp: pinPlanState === 'no-op',
+            eligible: pinPlanState !== 'ineligible',
+            blockReasons: pinPlanState === 'ineligible' ? ['PARENT_DIRTY'] : [],
+            planDigest: digest('8'),
+          });
+        },
+        commit: (input, expectedPlanDigest) => {
+          pinCommits.push({ digest: expectedPlanDigest, input });
+          return Promise.resolve({
+            schemaVersion: PARENT_KNOWLEDGE_PIN_RESULT_SCHEMA_VERSION,
+            intent: 'iteration-close',
+            iterationId: input.iterationId,
+            path: 'knowledge',
+            projectId: 'alpha',
+            sourceRevision: oid('b'),
+            parentBaseRevision: oid('c'),
+            codeRevision: oid('c'),
+            oldKnowledgeGitlink: input.knowledgeRevision,
+            newKnowledgeGitlink: input.knowledgeRevision,
+            targetRemoteReachability: true,
+            planDigest: expectedPlanDigest,
+            state: 'no-op',
+            applied: false,
+            noOp: true,
+            partial: false,
+            resultingParentCommitSha: null,
+            recoveryCommand: ['knowledge', 'status'],
+          });
+        },
+      },
+      publication: {
+        plan: (input) => {
+          planInputs.push(input);
+          return Promise.resolve(nextPlan);
+        },
+        commit: (input) => {
+          commitInputs.push(input);
+          return Promise.resolve({
+            schemaVersion: KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+            state: 'committed',
+            projectId: input.projectId,
+            baseRevision: oid('a'),
+            foreignCounts: { staged: 0, unstaged: 0, untracked: 0 },
+            knowledgeRevision: oid('d'),
+            localCommitPreserved: true,
+            partial: false,
+            pinRequired: true,
+            recoveryCommand: ['publish', 'push', '--project', input.projectId],
+            remoteRevision: null,
+            stagedPaths: ['projects/alpha/sources/entry.md'],
+            treeRevision: oid('e'),
+            warnings: [],
+          });
+        },
+        push: (input) => {
+          pushInputs.push(input);
+          return Promise.resolve({
+            schemaVersion: KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+            state: 'push-failed',
+            projectId: input.projectId,
+            baseRevision: oid('a'),
+            errorCode: 'PUBLISH_PUSH_FAILED',
+            foreignCounts: { staged: 0, unstaged: 0, untracked: 0 },
+            knowledgeRevision: input.knowledgeRevision,
+            localCommitPreserved: true,
+            partial: true,
+            pinRequired: true,
+            recoveryCommand: ['publish', 'push', '--project', input.projectId],
+            remoteRevision: oid('a'),
+            stagedPaths: ['projects/alpha/sources/entry.md'],
+            treeRevision: oid('e'),
+            warnings: [],
+          });
+        },
+      },
+      publicationLineage: {
+        resolve: () => Promise.resolve({
+          codeRevision: oid('c'),
+          embeddingCompatibilityDigest: digest('8'),
+          modelCompatibilityDigest: digest('9'),
+          profileDigest: digest('a'),
+          promptDigest: digest('b'),
+        }),
+      },
+    };
+    const planArgs = [
+      'publish', 'plan', '--project', 'alpha', '--source-revision', oid('b'),
+      '--include-policy-track', '--registration',
+    ];
+    const humanPlan = await capture(planArgs, runtime);
+    const jsonPlan = await capture([...planArgs, '--json'], runtime);
+    expect(humanPlan).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(humanPlan.stdout).toContain('outcome: planned\n');
+    expect(JSON.parse(jsonPlan.stdout)).toMatchObject({
+      command: 'publish.plan',
+      data: { eligible: true, planDigest: digest('7') },
+      ok: true,
+    });
+    expect(planInputs).toEqual([expect.objectContaining({
+      includePolicyTrack: true,
+      projectId: 'alpha',
+      registration: true,
+      sourceRevision: oid('b'),
+    }), expect.objectContaining({ projectId: 'alpha' })]);
+
+    nextPlan = publicationPlan(false);
+    const ineligible = await capture(planArgs, runtime);
+    expect(ineligible.exitCode).toBe(3);
+    expect(ineligible.stderr).toContain('outcome: ineligible\n');
+    nextPlan = {
+      ...publicationPlan(false),
+      blockReasons: ['DIRTY_INDEX'],
+    };
+    const dirty = await capture(planArgs, runtime);
+    expect(dirty.exitCode).toBe(6);
+    expect(dirty.stderr).toContain('error PUBLISH_INELIGIBLE');
+
+    const committed = await capture([
+      'publish', 'commit', '--project', 'alpha', '--source-revision', oid('b'),
+      '--expect-plan', digest('7'), '--json',
+    ], runtime);
+    expect(JSON.parse(committed.stdout)).toMatchObject({
+      data: { state: 'committed' },
+      knowledgeRevision: oid('d'),
+      ok: true,
+    });
+    expect(commitInputs).toEqual([expect.objectContaining({ expectedPlanDigest: digest('7') })]);
+
+    const pushFailed = await capture([
+      'publish', 'push', '--project', 'alpha', '--knowledge-revision', oid('d'), '--json',
+    ], runtime);
+    expect(pushFailed.exitCode).toBe(6);
+    expect(JSON.parse(pushFailed.stderr)).toMatchObject({
+      data: { localCommitPreserved: true, partial: true, state: 'push-failed' },
+      errors: [{ code: 'PUBLISH_PUSH_FAILED' }],
+      ok: false,
+    });
+    expect(pushInputs).toEqual([{ knowledgeRevision: oid('d'), projectId: 'alpha' }]);
+
+    const pinPlan = await capture([
+      'knowledge', 'pin', 'plan', '--knowledge-revision', oid('d'),
+      '--iteration', 'v11-iteration', '--intent', 'iteration-close',
+    ], runtime);
+    expect(pinPlan.stdout).toContain('outcome: planned\n');
+    pinPlanState = 'no-op';
+    const pinNoOpPlan = await capture([
+      'knowledge', 'pin', 'plan', '--knowledge-revision', oid('d'),
+      '--iteration', 'v11-iteration', '--intent', 'iteration-close',
+    ], runtime);
+    expect(pinNoOpPlan.stdout).toContain('outcome: no-op\n');
+    pinPlanState = 'ineligible';
+    const pinIneligible = await capture([
+      'knowledge', 'pin', 'plan', '--knowledge-revision', oid('d'),
+      '--iteration', 'v11-iteration', '--intent', 'iteration-close', '--json',
+    ], runtime);
+    expect(pinIneligible.exitCode).toBe(6);
+    expect(JSON.parse(pinIneligible.stderr)).toMatchObject({
+      data: { eligible: false },
+      errors: [{ code: 'PARENT_PIN_INELIGIBLE' }],
+    });
+    const pinNoOp = await capture([
+      'knowledge', 'pin', 'commit', '--knowledge-revision', oid('d'),
+      '--iteration', 'v11-iteration', '--intent', 'iteration-close',
+      '--expect-plan', digest('8'), '--json',
+    ], runtime);
+    expect(JSON.parse(pinNoOp.stdout)).toMatchObject({ data: { state: 'no-op' }, ok: true });
+    expect(pinPlans).toEqual([{
+      intent: 'iteration-close',
+      iterationId: 'v11-iteration',
+      knowledgeRevision: oid('d'),
+    }, {
+      intent: 'iteration-close',
+      iterationId: 'v11-iteration',
+      knowledgeRevision: oid('d'),
+    }, {
+      intent: 'iteration-close',
+      iterationId: 'v11-iteration',
+      knowledgeRevision: oid('d'),
+    }]);
+    expect(pinCommits).toEqual([{
+      digest: digest('8'),
+      input: {
+        intent: 'iteration-close',
+        iterationId: 'v11-iteration',
+        knowledgeRevision: oid('d'),
+      },
+    }]);
+  });
+
+  it('[V12-V-03] allows publish push only for the expected post-commit gitlink mismatch', async () => {
+    const cwd = await createConfiguredRepository();
+    const knowledge = join(cwd, 'knowledge');
+    await configureIdentity(knowledge);
+    await writeFile(join(knowledge, 'README.md'), '# Published knowledge\n', 'utf8');
+    await git(knowledge, ['add', 'README.md']);
+    await git(knowledge, ['commit', '-m', 'publication commit']);
+    const revision = await git(knowledge, ['rev-parse', 'HEAD']);
+    const treeRevision = await git(knowledge, ['rev-parse', 'HEAD^{tree}']);
+    const pushInputs: KnowledgePublishPushInput[] = [];
+    const runtime: CliRuntime = {
+      cwd,
+      publication: {
+        plan: () => Promise.reject(new Error('plan must not run')),
+        commit: () => Promise.reject(new Error('commit must not run')),
+        push: (input) => {
+          pushInputs.push(input);
+          return Promise.resolve({
+            schemaVersion: KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+            state: 'pushed',
+            projectId: input.projectId,
+            baseRevision: oid('a'),
+            foreignCounts: { staged: 0, unstaged: 0, untracked: 0 },
+            knowledgeRevision: input.knowledgeRevision,
+            localCommitPreserved: true,
+            partial: false,
+            pinRequired: true,
+            recoveryCommand: ['knowledge', 'status'],
+            remoteRevision: input.knowledgeRevision,
+            stagedPaths: ['projects/alpha/sources/entry.md'],
+            treeRevision,
+            warnings: [],
+          });
+        },
+      },
+    };
+
+    const allowed = await capture([
+      'publish', 'push', '--project', 'alpha', '--knowledge-revision', revision, '--json',
+    ], runtime);
+    expect(allowed.exitCode).toBe(0);
+    expect(pushInputs).toEqual([{ knowledgeRevision: revision, projectId: 'alpha' }]);
+
+    const rejected = await capture([
+      'publish', 'push', '--project', 'alpha', '--knowledge-revision', oid('f'), '--json',
+    ], runtime);
+    expect(rejected.exitCode).toBe(6);
+    expect(JSON.parse(rejected.stderr)).toMatchObject({
+      errors: [{ code: 'SUBMODULE_MISMATCH' }],
+      ok: false,
+    });
+    expect(pushInputs).toHaveLength(1);
   });
 });

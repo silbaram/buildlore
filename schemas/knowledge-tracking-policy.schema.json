@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/knowledge-tracking-policy.schema.json",
+  "title": "BuildLore Knowledge Tracking Policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "upstreamPackage",
+    "exactVersion",
+    "packageIntegrity",
+    "packageCommit",
+    "inventoryDigest",
+    "entries",
+    "policyDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.knowledge-tracking-policy.v1" },
+    "upstreamPackage": { "const": "llm-wiki-compiler" },
+    "exactVersion": { "const": "1.1.0" },
+    "packageIntegrity": {
+      "const": "sha512-LJslVmSt8tng8n3t0tw1QEqZJKKD0ualJ/WupdZMCtCzmCNarkP999k6hiNIg5ezvE8B/JQ1C1bUi6eY88Q79A=="
+    },
+    "packageCommit": { "const": "6963a7f8374282de5d4084a324be69b50f62a32d" },
+    "inventoryDigest": { "$ref": "#/$defs/sha256Digest" },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/trackingEntry" }
+    },
+    "policyDigest": { "$ref": "#/$defs/sha256Digest" }
+  },
+  "$defs": {
+    "sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "trackingEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "classification",
+        "defaultDisposition",
+        "id",
+        "mergeRisk",
+        "pattern",
+        "portability",
+        "producer",
+        "rationale",
+        "regenerationSafety",
+        "reproducibility",
+        "secretOrAuthorityRisk"
+      ],
+      "properties": {
+        "classification": {
+          "enum": ["always-ignore", "always-track", "policy-track"]
+        },
+        "defaultDisposition": { "enum": ["exclude", "include"] },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "mergeRisk": { "enum": ["low", "review-required", "unsafe"] },
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9._*~/-]+$"
+        },
+        "portability": { "enum": ["machine-local", "portable"] },
+        "producer": {
+          "enum": ["buildlore", "llm-wiki-compiler@1.1.0", "shared"]
+        },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "regenerationSafety": {
+          "enum": [
+            "from-tracked-state",
+            "must-not-publish",
+            "not-regenerable",
+            "safe-to-regenerate"
+          ]
+        },
+        "reproducibility": {
+          "enum": ["authoritative", "derived", "ephemeral", "incremental", "regenerable"]
+        },
+        "secretOrAuthorityRisk": {
+          "enum": ["authority", "credential", "local-state", "none"]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "classification": { "const": "always-track" } } },
+          "then": { "properties": { "defaultDisposition": { "const": "include" } } },
+          "else": { "properties": { "defaultDisposition": { "const": "exclude" } } }
+        }
+      ]
+    }
+  }
+}

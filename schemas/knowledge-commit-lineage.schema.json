@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/knowledge-commit-lineage.schema.json",
+  "title": "BuildLore Knowledge Commit Lineage v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "projectId", "knowledgeParentRevision", "knowledgeTreeRevision",
+    "sourceRevision", "codeRevision", "compilerPackage", "compilerPackageIntegrity",
+    "compilerVersion", "embeddingCompatibilityDigest", "modelCompatibilityDigest",
+    "planDigest", "profileDigest", "promptDigest", "selectedPathsDigest", "trackingPolicyDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.knowledge-commit-lineage.v1" },
+    "projectId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "knowledgeParentRevision": { "$ref": "#/$defs/oid" },
+    "knowledgeTreeRevision": { "$ref": "#/$defs/oid" },
+    "sourceRevision": { "$ref": "#/$defs/oid" },
+    "codeRevision": { "$ref": "#/$defs/oid" },
+    "compilerPackage": { "const": "llm-wiki-compiler" },
+    "compilerPackageIntegrity": { "const": "sha512-LJslVmSt8tng8n3t0tw1QEqZJKKD0ualJ/WupdZMCtCzmCNarkP999k6hiNIg5ezvE8B/JQ1C1bUi6eY88Q79A==" },
+    "compilerVersion": { "const": "1.1.0" },
+    "embeddingCompatibilityDigest": { "$ref": "#/$defs/digest" },
+    "modelCompatibilityDigest": { "$ref": "#/$defs/digest" },
+    "planDigest": { "$ref": "#/$defs/digest" },
+    "profileDigest": { "$ref": "#/$defs/digest" },
+    "promptDigest": { "$ref": "#/$defs/digest" },
+    "selectedPathsDigest": { "$ref": "#/$defs/digest" },
+    "trackingPolicyDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "oid": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

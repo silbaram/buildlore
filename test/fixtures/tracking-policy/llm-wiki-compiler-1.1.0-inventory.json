@@ -1,0 +1,322 @@
+{
+  "schemaVersion": "buildlore.compiler-output-inventory.v1",
+  "upstreamPackage": "llm-wiki-compiler",
+  "exactVersion": "1.1.0",
+  "packageIntegrity": "sha512-LJslVmSt8tng8n3t0tw1QEqZJKKD0ualJ/WupdZMCtCzmCNarkP999k6hiNIg5ezvE8B/JQ1C1bUi6eY88Q79A==",
+  "packageCommit": "6963a7f8374282de5d4084a324be69b50f62a32d",
+  "entries": [
+    {
+      "classification": "always-ignore",
+      "familyId": "atomic-backup",
+      "operation": "state recovery",
+      "policyEntryId": "always-ignore-backup",
+      "projectRelativePath": ".llmwiki/state.json.bak",
+      "sourceEvidence": "src/utils/state.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "atomic-temporary",
+      "operation": "atomic write",
+      "policyEntryId": "always-ignore-temporary",
+      "projectRelativePath": ".llmwiki/state.json.fixture.tmp",
+      "sourceEvidence": "src/utils/atomic-write.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "compiler-lock",
+      "operation": "compile",
+      "policyEntryId": "always-ignore-compiler-lock",
+      "projectRelativePath": ".llmwiki/lock",
+      "sourceEvidence": "src/utils/constants.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "connector-rate-cache",
+      "operation": "connector run",
+      "policyEntryId": "always-ignore-connector-cache",
+      "projectRelativePath": ".llmwiki/connectors/fixture.last-fetch.json",
+      "sourceEvidence": "src/connectors/rate-limit.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "embedding-cache",
+      "operation": "compile/search/query/context",
+      "policyEntryId": "always-ignore-embeddings",
+      "projectRelativePath": ".llmwiki/embeddings.json",
+      "sourceEvidence": "src/utils/constants.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "embedding-cache-directory",
+      "operation": "embedding cache compatibility",
+      "policyEntryId": "always-ignore-embedding-directory",
+      "projectRelativePath": ".llmwiki/embeddings/index.json",
+      "sourceEvidence": "src/utils/embeddings-store.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "embedding-pending-marker",
+      "operation": "compile",
+      "policyEntryId": "always-ignore-pending-embeddings",
+      "projectRelativePath": ".llmwiki/pending-embeddings.json",
+      "sourceEvidence": "src/utils/constants.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "evaluation-citation-cache",
+      "operation": "eval full",
+      "policyEntryId": "always-ignore-eval-cache",
+      "projectRelativePath": ".llmwiki/eval/citation-cache.jsonl",
+      "sourceEvidence": "src/eval/cache.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "export-output",
+      "operation": "export/rules export",
+      "policyEntryId": "always-ignore-export-output",
+      "projectRelativePath": "dist/exports/wiki.json",
+      "sourceEvidence": "src/commands/export.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "last-lint-cache",
+      "operation": "lint",
+      "policyEntryId": "always-ignore-last-lint",
+      "projectRelativePath": ".llmwiki/last-lint.json",
+      "sourceEvidence": "src/linter/cache.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "mutation-journal",
+      "operation": "trusted write",
+      "policyEntryId": "always-ignore-journal",
+      "projectRelativePath": ".llmwiki/journal/fixture.json",
+      "sourceEvidence": "src/trust/journal.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "mutation-journal-quarantine",
+      "operation": "journal recovery",
+      "policyEntryId": "always-ignore-journal-quarantine",
+      "projectRelativePath": ".llmwiki/journal/quarantine/fixture.json",
+      "sourceEvidence": "src/trust/journal.ts"
+    },
+    {
+      "classification": "always-ignore",
+      "familyId": "workflow-authority-key",
+      "operation": "workflow start",
+      "policyEntryId": "always-ignore-workflow-run-key",
+      "projectRelativePath": ".llmwiki/workflows/.runkey",
+      "sourceEvidence": "src/workflows/integrity.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "activity-log",
+      "operation": "ingest/compile/query/lint",
+      "policyEntryId": "always-track-activity-log",
+      "projectRelativePath": "log.md",
+      "sourceEvidence": "src/utils/activity-log.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "artifact-body",
+      "operation": "artifact write/workflow submit",
+      "policyEntryId": "always-track-artifact",
+      "projectRelativePath": "artifacts/evidence/fixture/report.md",
+      "sourceEvidence": "src/artifacts/store.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "artifact-manifest",
+      "operation": "artifact write/workflow submit",
+      "policyEntryId": "always-track-artifact",
+      "projectRelativePath": "artifacts/evidence/fixture/report.md.manifest.json",
+      "sourceEvidence": "src/artifacts/store.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "compiler-config",
+      "operation": "profile/workflow/connector configuration",
+      "policyEntryId": "always-track-compiler-config",
+      "projectRelativePath": ".llmwiki/config.json",
+      "sourceEvidence": "src/review/config.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "compiler-profile",
+      "operation": "profile/template init",
+      "policyEntryId": "always-track-compiler-profile",
+      "projectRelativePath": ".llmwiki/profile.json",
+      "sourceEvidence": "src/profile/load.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "compiler-schema",
+      "operation": "schema init",
+      "policyEntryId": "always-track-compiler-schema",
+      "projectRelativePath": ".llmwiki/schema.json",
+      "sourceEvidence": "src/commands/schema.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "compiler-state",
+      "operation": "compile",
+      "policyEntryId": "always-track-compiler-state",
+      "projectRelativePath": ".llmwiki/state.json",
+      "sourceEvidence": "src/utils/state.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "evaluation-thresholds",
+      "operation": "eval",
+      "policyEntryId": "always-track-eval-thresholds",
+      "projectRelativePath": ".llmwiki/eval/thresholds.yaml",
+      "sourceEvidence": "src/eval/thresholds.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "relation-store",
+      "operation": "relation mutation/import/workflow submit",
+      "policyEntryId": "always-track-relation-store",
+      "projectRelativePath": "wiki/graph/relations.jsonl",
+      "sourceEvidence": "src/utils/constants.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "rule-state",
+      "operation": "rules extract",
+      "policyEntryId": "always-track-rule-state",
+      "projectRelativePath": ".llmwiki/rule-state.json",
+      "sourceEvidence": "src/compiler/rule-state.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "source-markdown",
+      "operation": "ingest/ingest-session",
+      "policyEntryId": "always-track-source",
+      "projectRelativePath": "sources/fixture.md",
+      "sourceEvidence": "src/utils/source-writer.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "template-lock",
+      "operation": "template init/update",
+      "policyEntryId": "always-track-template-lock",
+      "projectRelativePath": ".llmwiki/template-lock.json",
+      "sourceEvidence": "src/profile/templates/lock.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "wiki-index",
+      "operation": "compile/query save/review approve",
+      "policyEntryId": "always-track-wiki-index",
+      "projectRelativePath": "wiki/index.md",
+      "sourceEvidence": "src/compiler/indexgen.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "wiki-moc",
+      "operation": "compile",
+      "policyEntryId": "always-track-wiki-moc",
+      "projectRelativePath": "wiki/MOC.md",
+      "sourceEvidence": "src/utils/constants.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "wiki-native-page",
+      "operation": "compile/query save/review approve/import",
+      "policyEntryId": "always-track-wiki-page",
+      "projectRelativePath": "wiki/concepts/fixture.md",
+      "sourceEvidence": "src/trust/page-apply.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "wiki-query-page",
+      "operation": "query save",
+      "policyEntryId": "always-track-wiki-page",
+      "projectRelativePath": "wiki/queries/fixture.md",
+      "sourceEvidence": "src/commands/query-save.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "wiki-typed-page",
+      "operation": "trusted write/review approve/import/workflow submit",
+      "policyEntryId": "always-track-wiki-page",
+      "projectRelativePath": "wiki/decisions/fixture.md",
+      "sourceEvidence": "src/trust/page-apply.ts"
+    },
+    {
+      "classification": "always-track",
+      "familyId": "workflow-projection",
+      "operation": "workflow project",
+      "policyEntryId": "always-track-workflow-projection",
+      "projectRelativePath": "wiki/outputs/workflows/fixture.md",
+      "sourceEvidence": "src/workflows/projection.ts"
+    },
+    {
+      "classification": "policy-track",
+      "familyId": "evaluation-history",
+      "operation": "eval record",
+      "policyEntryId": "policy-track-eval-history",
+      "projectRelativePath": ".llmwiki/eval/history.jsonl",
+      "sourceEvidence": "src/eval/stats.ts"
+    },
+    {
+      "classification": "policy-track",
+      "familyId": "event-head",
+      "operation": "lifecycle/relation mutation",
+      "policyEntryId": "policy-track-event-head",
+      "projectRelativePath": ".llmwiki/events.head",
+      "sourceEvidence": "src/events/store.ts"
+    },
+    {
+      "classification": "policy-track",
+      "familyId": "event-store",
+      "operation": "lifecycle/relation mutation",
+      "policyEntryId": "policy-track-event-store",
+      "projectRelativePath": "wiki/graph/events.jsonl",
+      "sourceEvidence": "src/events/store.ts"
+    },
+    {
+      "classification": "policy-track",
+      "familyId": "review-candidate",
+      "operation": "compile review/import/connector run",
+      "policyEntryId": "policy-track-candidate",
+      "projectRelativePath": ".llmwiki/candidates/fixture.json",
+      "sourceEvidence": "src/compiler/candidates.ts"
+    },
+    {
+      "classification": "policy-track",
+      "familyId": "review-candidate-archive",
+      "operation": "review reject/connector supersede",
+      "policyEntryId": "policy-track-candidate-archive",
+      "projectRelativePath": ".llmwiki/candidates/archive/fixture.json",
+      "sourceEvidence": "src/compiler/candidates.ts"
+    },
+    {
+      "classification": "policy-track",
+      "familyId": "rule-candidate",
+      "operation": "rules extract",
+      "policyEntryId": "policy-track-rule-candidate",
+      "projectRelativePath": ".llmwiki/rule-candidates/fixture.json",
+      "sourceEvidence": "src/compiler/rule-candidates.ts"
+    },
+    {
+      "classification": "policy-track",
+      "familyId": "rule-candidate-archive",
+      "operation": "rules reject",
+      "policyEntryId": "policy-track-rule-candidate-archive",
+      "projectRelativePath": ".llmwiki/rule-candidates/archive/fixture.json",
+      "sourceEvidence": "src/compiler/rule-candidates.ts"
+    },
+    {
+      "classification": "policy-track",
+      "familyId": "workflow-run",
+      "operation": "workflow lifecycle",
+      "policyEntryId": "policy-track-workflow-run",
+      "projectRelativePath": ".llmwiki/workflows/runs/fixture.json",
+      "sourceEvidence": "src/workflows/store.ts"
+    }
+  ],
+  "inventoryDigest": "sha256:fe2f373c33c43b87eaefb5b900f0e16e6cb5e775abf1687d04dd0ce86150d8a7"
+}

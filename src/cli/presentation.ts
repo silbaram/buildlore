@@ -32,9 +32,21 @@ function sortForDisplay(value: unknown): unknown {
   );
 }
 
+function outcomeForDisplay(data: unknown): string | null {
+  if (typeof data !== 'object' || data === null) return null;
+  if ('state' in data && typeof data.state === 'string') return data.state;
+  if ('eligible' in data && typeof data.eligible === 'boolean') {
+    if ('noOp' in data && data.noOp === true) return 'no-op';
+    return data.eligible ? 'planned' : 'ineligible';
+  }
+  return null;
+}
+
 function renderHuman(result: CliResult): string {
   if (!result.ok) {
     const lines = [`${result.command}: failed`];
+    const outcome = outcomeForDisplay(result.data);
+    if (outcome !== null) lines.push(`outcome: ${outcome}`);
     for (const error of result.errors) {
       lines.push(`error ${error.code}: ${error.message}`);
       if (error.recoveryCommand !== undefined) {
@@ -42,9 +54,15 @@ function renderHuman(result: CliResult): string {
       }
     }
     if (result.partial === true) lines.push('partial: yes');
+    if (result.data !== undefined && result.data !== null) {
+      lines.push('result:');
+      lines.push(JSON.stringify(sortForDisplay(result.data), null, 2));
+    }
     return `${lines.join('\n')}\n`;
   }
   const lines = [`${result.command}: ok`];
+  const outcome = outcomeForDisplay(result.data);
+  if (outcome !== null) lines.push(`outcome: ${outcome}`);
   if (result.projectId !== undefined && result.projectId !== null) {
     lines.push(`project: ${result.projectId}`);
   }

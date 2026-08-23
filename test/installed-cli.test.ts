@@ -127,7 +127,19 @@ describe('installed CLI', () => {
         : executable;
       const help = await run(process.execPath, [installedCommand, '--help'], consumerRoot);
       expect(help.stderr).toBe('');
-      for (const command of ['sync', 'compile', 'check', 'search', 'query', 'context']) {
+      for (const command of [
+        'sync',
+        'compile',
+        'check',
+        'search',
+        'query',
+        'context',
+        'publish plan',
+        'publish commit',
+        'publish push',
+        'knowledge pin plan',
+        'knowledge pin commit',
+      ]) {
         expect(help.stdout).toContain(`buildlore ${command}`);
       }
 
@@ -192,6 +204,65 @@ describe('installed CLI', () => {
         command: 'project.show',
         ok: true,
         projectId: 'alpha',
+      });
+
+      const knowledgeRoot = join(workspaceRoot, 'knowledge');
+      const pageDirectory = join(knowledgeRoot, 'projects', 'alpha', 'wiki', 'concepts');
+      const page = join(pageDirectory, 'publication.md');
+      await mkdir(pageDirectory, { recursive: true });
+      await writeFile(
+        page,
+        '---\n' +
+        'title: Publication\n' +
+        'summary: Safe publication fixture.\n' +
+        'sources:\n' +
+        '  - source.md\n' +
+        'modelId: fixture-model\n' +
+        'promptVersion: v1\n' +
+        '---\n' +
+        '# Publication\n\nInitial body.\n',
+        'utf8',
+      );
+      await run('git', ['config', 'user.name', 'BuildLore Test'], knowledgeRoot);
+      await run('git', ['config', 'user.email', 'buildlore@example.invalid'], knowledgeRoot);
+      await run('git', ['add', '.'], knowledgeRoot);
+      await run('git', ['commit', '-m', 'seed project knowledge'], knowledgeRoot);
+      await run('git', ['config', 'user.name', 'BuildLore Test'], workspaceRoot);
+      await run('git', ['config', 'user.email', 'buildlore@example.invalid'], workspaceRoot);
+      await run('git', ['add', 'knowledge'], workspaceRoot);
+      await run('git', ['commit', '-m', 'pin project knowledge'], workspaceRoot);
+      await writeFile(
+        page,
+        '---\n' +
+        'title: Publication\n' +
+        'summary: Safe publication fixture.\n' +
+        'sources:\n' +
+        '  - source.md\n' +
+        'modelId: fixture-model\n' +
+        'promptVersion: v1\n' +
+        '---\n' +
+        '# Publication\n\nUpdated body.\n',
+        'utf8',
+      );
+      const planned = await run(
+        process.execPath,
+        [
+          installedCommand,
+          'publish',
+          'plan',
+          '--project',
+          'alpha',
+          '--source-revision',
+          'b'.repeat(40),
+          '--json',
+        ],
+        workspaceRoot,
+      );
+      expect(planned.stderr).toBe('');
+      expect(JSON.parse(planned.stdout)).toMatchObject({
+        command: 'publish.plan',
+        data: { eligible: true, projectId: 'alpha' },
+        ok: true,
       });
 
       const unconfiguredExitCode = await runForExitCode(

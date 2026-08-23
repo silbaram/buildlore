@@ -1,5 +1,6 @@
 export {
   CliOperationUnavailableError,
+  CliPublicationIdentityError,
   CliQualityGateError,
   mapCliError,
 } from './error-map.js';
@@ -11,7 +12,17 @@ export {
   type CliUsageErrorCode,
 } from './parser.js';
 export { renderCliResult, writeRenderedCliResult } from './presentation.js';
-export { runCli, type CliIo, type CliRuntime } from './run-cli.js';
+export {
+  createCliPublicationLineageResolver,
+  type CliPublicationLineageResolverOptions,
+} from './publication-lineage.js';
+export {
+  runCli,
+  type CliIo,
+  type CliPublicationLineage,
+  type CliPublicationLineagePort,
+  type CliRuntime,
+} from './run-cli.js';
 export {
   CLI_ENVELOPE_SCHEMA_VERSION,
   type CliCommandId,

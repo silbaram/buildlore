@@ -14,20 +14,54 @@ import type { CompilerStatusPort } from '../knowledge/types.js';
 import { addProject, listProjects, showProject, validateProjectRegistry } from '../knowledge/workspace.js';
 import { createProjectSyncService, type ProjectSyncPort } from '../projector/index.js';
 import {
+  createKnowledgePublicationService,
+  createParentKnowledgePinService,
+  parseKnowledgePublishPlan,
+  parseKnowledgePublishResult,
+  parseParentKnowledgePinPlan,
+  parseParentKnowledgePinResult,
+  renderKnowledgePublishPlan,
+  renderKnowledgePublishResult,
+  renderParentKnowledgePinPlan,
+  renderParentKnowledgePinResult,
+  type KnowledgePublicationPort,
+  type KnowledgePublishPlanInput,
+  type ParentKnowledgePinPort,
+  type PublicationDigest,
+} from '../knowledge/index.js';
+import {
   createProjectRetrieval,
   type ProjectRetrievalPort,
   type RetrievalMode,
 } from '../retrieval/index.js';
-import { CliQualityGateError, mapCliError } from './error-map.js';
+import {
+  CliQualityGateError,
+  mapCliError,
+} from './error-map.js';
 import { HELP_TEXT } from './help.js';
 import { CliUsageError, inferCliCommand, parseCliArguments } from './parser.js';
 import { renderCliResult, writeRenderedCliResult } from './presentation.js';
+import { createCliPublicationLineageResolver } from './publication-lineage.js';
 import type {
   CliOutputMode,
+  CliFailureResult,
   CliPresentationContext,
   CliSuccessResult,
   ParsedCliCommand,
 } from './types.js';
+
+export type CliPublicationLineage = Readonly<Pick<
+  KnowledgePublishPlanInput,
+  | 'codeRevision'
+  | 'embeddingCompatibilityDigest'
+  | 'modelCompatibilityDigest'
+  | 'profileDigest'
+  | 'promptDigest'
+>>;
+
+export interface CliPublicationLineagePort {
+  resolve(projectId: string): Promise<CliPublicationLineage>;
+}
 
 export interface CliIo {
   stdout(message: string): void;
@@ -40,8 +74,32 @@ export interface CliRuntime {
   readonly cwd: string;
   readonly compiler?: CompilerStatusPort;
   readonly projectCompiler?: ProjectCompilerPort;
+  readonly parentPin?: ParentKnowledgePinPort;
+  readonly publication?: KnowledgePublicationPort;
+  readonly publicationLineage?: CliPublicationLineagePort;
   readonly retrieval?: ProjectRetrievalPort;
   readonly sync?: ProjectSyncPort;
+}
+
+async function publicationInput(
+  command: ParsedCliCommand,
+  runtime: CliRuntime,
+): Promise<KnowledgePublishPlanInput> {
+  const projectId = requiredStringOption(command, '--project');
+  await assertProjectCommandsReady(runtime, projectId);
+  const lineage = await (runtime.publicationLineage ??
+    createCliPublicationLineageResolver(runtime.cwd)).resolve(projectId);
+  return {
+    codeRevision: lineage.codeRevision,
+    embeddingCompatibilityDigest: lineage.embeddingCompatibilityDigest,
+    includePolicyTrack: command.options['--include-policy-track'] === true,
+    modelCompatibilityDigest: lineage.modelCompatibilityDigest,
+    profileDigest: lineage.profileDigest,
+    projectId,
+    promptDigest: lineage.promptDigest,
+    registration: command.options['--registration'] === true,
+    sourceRevision: requiredStringOption(command, '--source-revision'),
+  };
 }
 
 function stringOption(command: ParsedCliCommand, option: string): string | undefined {
@@ -103,6 +161,27 @@ async function assertProjectCommandsReady(
   if (projectId !== undefined) {
     await showProject(join(runtime.cwd, 'knowledge'), projectId);
   }
+}
+
+async function assertPublicationPushReady(
+  runtime: CliRuntime,
+  projectId: string,
+  knowledgeRevision: string,
+): Promise<void> {
+  const status = await getKnowledgeStatus(runtime.cwd);
+  const expectedPinMismatch =
+    status.knowledge.state === 'commit-mismatch' &&
+    status.knowledge.checkedOutCommit === knowledgeRevision;
+  if (!status.ok && !expectedPinMismatch) {
+    throw new KnowledgeError(
+      statusErrorCode(status.knowledge.state),
+      'Knowledge repository requires recovery before publication push.',
+      status.recoveryCommand === undefined
+        ? {}
+        : { recoveryCommand: status.recoveryCommand },
+    );
+  }
+  await showProject(join(runtime.cwd, 'knowledge'), projectId);
 }
 
 function retrievalMode(command: ParsedCliCommand): RetrievalMode {
@@ -239,6 +318,49 @@ async function executeCommand(
         prompt: requiredStringOption(command, '--prompt'),
       });
     }
+    case 'publish.plan': {
+      const service = runtime.publication ?? createKnowledgePublicationService(
+        join(runtime.cwd, 'knowledge'),
+      );
+      return service.plan(await publicationInput(command, runtime));
+    }
+    case 'publish.commit': {
+      const service = runtime.publication ?? createKnowledgePublicationService(
+        join(runtime.cwd, 'knowledge'),
+      );
+      return service.commit({
+        ...await publicationInput(command, runtime),
+        expectedPlanDigest: requiredStringOption(command, '--expect-plan') as PublicationDigest,
+      });
+    }
+    case 'publish.push': {
+      const projectId = requiredStringOption(command, '--project');
+      const knowledgeRevision = requiredStringOption(command, '--knowledge-revision');
+      await assertPublicationPushReady(runtime, projectId, knowledgeRevision);
+      const service = runtime.publication ?? createKnowledgePublicationService(
+        join(runtime.cwd, 'knowledge'),
+      );
+      return service.push({
+        knowledgeRevision,
+        projectId,
+      });
+    }
+    case 'knowledge.pin.plan': {
+      const service = runtime.parentPin ?? createParentKnowledgePinService(runtime.cwd);
+      return service.plan({
+        intent: 'iteration-close',
+        iterationId: requiredStringOption(command, '--iteration'),
+        knowledgeRevision: requiredStringOption(command, '--knowledge-revision'),
+      });
+    }
+    case 'knowledge.pin.commit': {
+      const service = runtime.parentPin ?? createParentKnowledgePinService(runtime.cwd);
+      return service.commit({
+        intent: 'iteration-close',
+        iterationId: requiredStringOption(command, '--iteration'),
+        knowledgeRevision: requiredStringOption(command, '--knowledge-revision'),
+      }, requiredStringOption(command, '--expect-plan') as PublicationDigest);
+    }
   }
 }
 
@@ -251,6 +373,10 @@ function safeStringField(value: unknown, key: string): string | null {
 function safeKnowledgeRevision(value: unknown): string | null {
   const direct = safeStringField(value, 'currentCommit');
   if (direct !== null) return direct;
+  const publication = safeStringField(value, 'knowledgeRevision');
+  if (publication !== null) return publication;
+  const pin = safeStringField(value, 'newKnowledgeGitlink');
+  if (pin !== null) return pin;
   if (typeof value !== 'object' || value === null || !('knowledge' in value)) return null;
   return safeStringField(value.knowledge, 'checkedOutCommit');
 }
@@ -259,6 +385,9 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
   if (typeof data !== 'object' || data === null || !('warnings' in data) ||
       !Array.isArray(data.warnings)) return [];
   const codes = data.warnings.map((warning: unknown) => {
+    if (typeof warning === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(warning)) {
+      return warning;
+    }
     if (typeof warning !== 'object' || warning === null || !('code' in warning) ||
         typeof warning.code !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(warning.code)) {
       return null;
@@ -270,6 +399,115 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
     code,
     message: 'The command completed with a structured warning.',
   }));
+}
+
+function normalizeDomainData(command: ParsedCliCommand, data: unknown): unknown {
+  switch (command.operation) {
+    case 'publish.plan':
+      return parseKnowledgePublishPlan(renderKnowledgePublishPlan(
+        data as Parameters<typeof renderKnowledgePublishPlan>[0],
+      ));
+    case 'publish.commit':
+    case 'publish.push':
+      return parseKnowledgePublishResult(renderKnowledgePublishResult(
+        data as Parameters<typeof renderKnowledgePublishResult>[0],
+      ));
+    case 'knowledge.pin.plan':
+      return parseParentKnowledgePinPlan(renderParentKnowledgePinPlan(
+        data as Parameters<typeof renderParentKnowledgePinPlan>[0],
+      ));
+    case 'knowledge.pin.commit':
+      return parseParentKnowledgePinResult(renderParentKnowledgePinResult(
+        data as Parameters<typeof renderParentKnowledgePinResult>[0],
+      ));
+    default:
+      return data;
+  }
+}
+
+function safeRecovery(data: unknown): readonly string[] | undefined {
+  if (typeof data !== 'object' || data === null || !('recoveryCommand' in data) ||
+      !Array.isArray(data.recoveryCommand) || data.recoveryCommand.length === 0 ||
+      data.recoveryCommand.some((part: unknown) =>
+        typeof part !== 'string' || !/^(?:--)?[A-Za-z0-9._:-]+$/u.test(part))) return undefined;
+  return Object.freeze(data.recoveryCommand.map((part: unknown) => String(part)));
+}
+
+function publicationExitCode(code: string): 3 | 6 {
+  return code === 'PUBLISH_INELIGIBLE' || code === 'PUBLISH_PATH_DRIFT' ||
+    code === 'PUBLISH_POLICY_BLOCKED'
+    ? 3
+    : 6;
+}
+
+function domainFailureResult(
+  command: ParsedCliCommand,
+  data: unknown,
+): CliFailureResult | null {
+  if (typeof data !== 'object' || data === null || !('state' in data) ||
+      (data.state !== 'blocked' && data.state !== 'push-failed')) return null;
+  const code = 'errorCode' in data && typeof data.errorCode === 'string'
+    ? data.errorCode
+    : 'INTERNAL_ERROR';
+  const isPin = command.operation === 'knowledge.pin.commit';
+  const exitCode = isPin ? 6 : publicationExitCode(code);
+  const recoveryCommand = safeRecovery(data);
+  return Object.freeze({
+    command: command.command,
+    data,
+    errors: Object.freeze([Object.freeze({
+      code,
+      message: exitCode === 3
+        ? 'Publication input or policy was rejected safely.'
+        : isPin
+          ? 'Parent knowledge pin state requires recovery.'
+          : 'Git publication state requires recovery.',
+      ...(recoveryCommand === undefined ? {} : { recoveryCommand }),
+    })]),
+    exitCode,
+    knowledgeRevision: safeKnowledgeRevision(data),
+    ok: false,
+    partial: dataIsPartial(data),
+    projectId: command.projectId,
+    warnings: Object.freeze(safeWarnings(data)),
+    workspacePath: null,
+  });
+}
+
+function ineligiblePlanFailureResult(
+  command: ParsedCliCommand,
+  data: unknown,
+): CliFailureResult | null {
+  if ((command.operation !== 'publish.plan' && command.operation !== 'knowledge.pin.plan') ||
+      typeof data !== 'object' || data === null || !('eligible' in data) ||
+      data.eligible !== false || !('blockReasons' in data) || !Array.isArray(data.blockReasons)) {
+    return null;
+  }
+  const pin = command.operation === 'knowledge.pin.plan';
+  const repositoryConflict = data.blockReasons.some((reason: unknown) =>
+    reason === 'DIRTY_INDEX' || reason === 'FOREIGN_STAGED_CHANGE' ||
+    reason === 'UNMERGED_CHANGE');
+  const exitCode = pin || repositoryConflict ? 6 : 3;
+  const code = pin ? 'PARENT_PIN_INELIGIBLE' : 'PUBLISH_INELIGIBLE';
+  return Object.freeze({
+    command: command.command,
+    data,
+    errors: Object.freeze([Object.freeze({
+      code,
+      message: exitCode === 3
+        ? 'Publication input or policy was rejected safely.'
+        : pin
+          ? 'Parent knowledge pin state requires recovery.'
+          : 'Git publication state requires recovery.',
+    })]),
+    exitCode,
+    knowledgeRevision: safeKnowledgeRevision(data),
+    ok: false,
+    partial: false,
+    projectId: command.projectId,
+    warnings: Object.freeze([]),
+    workspacePath: null,
+  });
 }
 
 function dataIsPartial(data: unknown): boolean {
@@ -315,7 +553,14 @@ export async function runCli(
     }
     outputMode = invocation.outputMode;
     context = { command: invocation.command, projectId: invocation.projectId };
-    const data = await executeCommand(invocation, runtime);
+    const data = normalizeDomainData(invocation, await executeCommand(invocation, runtime));
+    const domainFailure = domainFailureResult(invocation, data) ??
+      ineligiblePlanFailureResult(invocation, data);
+    if (domainFailure !== null) {
+      const rendered = renderCliResult(domainFailure, outputMode);
+      writeRenderedCliResult(io, rendered);
+      return rendered.exitCode;
+    }
     const unhealthyStatus = unhealthyKnowledgeStatus(data);
     if (unhealthyStatus !== null) {
       const error = new KnowledgeError(

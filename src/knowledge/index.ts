@@ -14,13 +14,128 @@ export {
   type ModeAInitializationStage,
 } from './initialization.js';
 export { resolveKnowledgeRoot, resolveProjectWorkspace } from './paths.js';
+export {
+  MAX_PARENT_PIN_ARTIFACT_BYTES,
+  parseParentKnowledgePinPlan,
+  parseParentKnowledgePinResult,
+  renderParentKnowledgePinPlan,
+  renderParentKnowledgePinResult,
+} from './parent-pin-codec.js';
+export {
+  createParentKnowledgePinService,
+  ParentKnowledgePinService,
+} from './parent-pin-service.js';
+export {
+  PARENT_KNOWLEDGE_PIN_PLAN_SCHEMA_VERSION,
+  PARENT_KNOWLEDGE_PIN_RESULT_SCHEMA_VERSION,
+  ParentKnowledgePinError,
+  type ParentKnowledgePinAppliedResult,
+  type ParentKnowledgePinBlockedResult,
+  type ParentKnowledgePinBlockReason,
+  type ParentKnowledgePinFailureCode,
+  type ParentKnowledgePinFaultHooks,
+  type ParentKnowledgePinInput,
+  type ParentKnowledgePinNoOpResult,
+  type ParentKnowledgePinPlan,
+  type ParentKnowledgePinPort,
+  type ParentKnowledgePinResult,
+  type ParentKnowledgePinServiceOptions,
+} from './parent-pin-types.js';
+export {
+  MAX_PUBLISH_ARTIFACT_BYTES,
+  parseKnowledgeCommitLineage,
+  parseKnowledgePublishPlan,
+  parseKnowledgePublishResult,
+  renderKnowledgeCommitLineageJson,
+  renderKnowledgePublishPlan,
+  renderKnowledgePublishResult,
+} from './publication-codec.js';
+export {
+  createKnowledgePublicationPushService,
+  KnowledgePublicationPushService,
+} from './publication-push.js';
+export {
+  createKnowledgePublicationService,
+  KnowledgePublicationService,
+  renderKnowledgeCommitLineage,
+  type KnowledgePublicationPort,
+} from './publication-service.js';
+export {
+  KNOWLEDGE_COMMIT_LINEAGE_SCHEMA_VERSION,
+  KNOWLEDGE_PUBLISH_PLAN_SCHEMA_VERSION,
+  KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
+  PublicationError,
+  type ForeignChangeBucket,
+  type ForeignChangeKind,
+  type ForeignChangeSummary,
+  type ForeignPathSummary,
+  type GitObjectId,
+  type KnowledgeCommitLineageV1,
+  type KnowledgePublishBlockedResult,
+  type KnowledgePublishCommitInput,
+  type KnowledgePublishCommittedResult,
+  type KnowledgePublishOptions,
+  type KnowledgePublishPlan,
+  type KnowledgePublishPlanInput,
+  type KnowledgePublishPushInput,
+  type KnowledgePublishPushedResult,
+  type KnowledgePublishPushFailedResult,
+  type KnowledgePublishResult,
+  type PublicationDigest,
+  type PublicationFailureCode,
+  type PublishBlockReason,
+  type PublishForeignCounts,
+  type PublishNumstat,
+  type PublishPathEntry,
+  type PublishPathStatus,
+  type RegistrationManifestEntry,
+} from './publication-types.js';
 export { emptyManifest, readManifest, writeManifest } from './registry.js';
 export { getKnowledgeStatus, getProjectKnowledgeStatus } from './status.js';
 export {
+  assessSemanticCacheState,
+  classifyProjectTrackingPath,
+  classifyTrackingPath,
+  createKnowledgeTrackingPolicy,
   ensureKnowledgeIgnorePolicy,
+  KNOWLEDGE_TRACKING_POLICY,
   KNOWLEDGE_GITIGNORE,
   LLWIKI_TRACKING_MATRIX,
+  TrackingPolicyClassifier,
 } from './tracking-policy.js';
+export {
+  MAX_COMPILER_INVENTORY_BYTES,
+  MAX_TRACKING_POLICY_BYTES,
+  parseCompilerOutputInventory,
+  parseKnowledgeTrackingPolicy,
+  renderKnowledgeTrackingPolicy,
+} from './tracking-codec.js';
+export {
+  createCompilerOutputInventory,
+  LLM_WIKI_COMPILER_OUTPUT_INVENTORY,
+  renderCompilerOutputInventory,
+} from './tracking-inventory.js';
+export {
+  COMPILER_OUTPUT_INVENTORY_SCHEMA_VERSION,
+  KNOWLEDGE_TRACKING_POLICY_SCHEMA_VERSION,
+  LLM_WIKI_COMPILER_COMMIT,
+  LLM_WIKI_COMPILER_INTEGRITY,
+  LLM_WIKI_COMPILER_PACKAGE,
+  LLM_WIKI_COMPILER_VERSION,
+  TrackingContractError,
+  type CompilerInventoryEntry,
+  type CompilerOutputInventoryV1,
+  type CompilerPackageIdentity,
+  type KnowledgeTrackingPolicyV1,
+  type SemanticCacheState,
+  type Sha256Digest,
+  type TrackingClassification,
+  type TrackingClassificationResult,
+  type TrackingDisposition,
+  type TrackingEntry,
+  type TrackingFailureCode,
+  type TrackingSelectionOptions,
+} from './tracking-types.js';
 export {
   addProject,
   listProjects,

@@ -59,6 +59,16 @@ describe('package contract', () => {
     expect(packageJson.exports['./schemas/retrieval-evaluation.schema.json']).toBe(
       './schemas/retrieval-evaluation.schema.json',
     );
+    for (const schema of [
+      'knowledge-tracking-policy.schema.json',
+      'knowledge-publish-plan.schema.json',
+      'knowledge-publish-result.schema.json',
+      'knowledge-commit-lineage.schema.json',
+      'knowledge-parent-pin-plan.schema.json',
+      'knowledge-parent-pin-result.schema.json',
+    ]) {
+      expect(packageJson.exports[`./schemas/${schema}`]).toBe(`./schemas/${schema}`);
+    }
     expect(packageJson.exports['./profiles/buildlore.profile.v1.json']).toBe(
       './profiles/buildlore.profile.v1.json',
     );
@@ -190,5 +200,68 @@ describe('package contract', () => {
     expect(cliSource).not.toMatch(/from\s+['"]llm-wiki-compiler(?:\/|['"])/u);
     expect(cliSource).not.toMatch(/node:child_process|\b(?:exec|execFile|spawn|fork)\s*\(/u);
     expect(cliSource).not.toMatch(/JSON\.parse\s*\([^)]*\.stdout|\.stdout\s*\.\s*(?:match|split|trim)\s*\(/u);
+  });
+
+  it('[V12-V-02][V12-V-10] keeps publication authority internal and exports every schema', async () => {
+    const knowledgeIndex = await readFile(
+      new URL('../src/knowledge/index.ts', import.meta.url),
+      'utf8',
+    );
+    expect(knowledgeIndex).not.toMatch(
+      /KnowledgePublication(?:Service|Push)(?:Test|Internal)?Options|PublicationBlobPolicyPort|PublicationFaultHooks/u,
+    );
+    expect(knowledgeIndex).not.toContain('createKnowledgePublicationServiceForTesting');
+    expect(knowledgeIndex).not.toContain('createInternalKnowledgePublicationPushService');
+
+    const packageJson = JSON.parse(
+      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as PackageContract;
+    for (const schema of [
+      'knowledge-tracking-policy.schema.json',
+      'knowledge-publish-plan.schema.json',
+      'knowledge-publish-result.schema.json',
+      'knowledge-commit-lineage.schema.json',
+      'knowledge-parent-pin-plan.schema.json',
+      'knowledge-parent-pin-result.schema.json',
+    ]) {
+      const subpath = `./schemas/${schema}`;
+      expect(packageJson.exports[subpath]).toBe(subpath);
+      expect(() => new URL(`../schemas/${schema}`, import.meta.url)).not.toThrow();
+      expect((await readFile(new URL(`../schemas/${schema}`, import.meta.url), 'utf8')).length)
+        .toBeGreaterThan(0);
+    }
+  });
+
+  it('[V11-V-23] forbids Git authority, unsafe commands, services, and dependency expansion outside knowledge', async () => {
+    const sourceRoot = new URL('../src/', import.meta.url);
+    const sourcePaths = (await readdir(sourceRoot, { recursive: true }))
+      .filter((path) => path.endsWith('.ts'));
+    const readSources = async (prefixes: readonly string[]): Promise<string> => (
+      await Promise.all(sourcePaths
+        .filter((path) => prefixes.some((prefix) => path.startsWith(prefix)))
+        .map(async (path) => readFile(
+          new URL(path.replaceAll('\\', '/'), sourceRoot),
+          'utf8',
+        )))
+    ).join('\n');
+    const nonKnowledgeGitConsumers = await readSources(['compiler/', 'projector/', 'retrieval/']);
+    expect(nonKnowledgeGitConsumers).not.toMatch(
+      /knowledge\/(?:git-machine|parent-pin|publication|repository-writer-lease)/u,
+    );
+
+    const allSource = await readSources(['']);
+    expect(allSource).not.toMatch(/from\s+['"]llm-wiki-compiler\//u);
+    expect(allSource).not.toMatch(/\bGIT_INDEX_FILE\b/u);
+    expect(allSource).not.toMatch(/['"](?:pull|rebase|stash)['"]/u);
+    expect(allSource).not.toMatch(/['"]--force(?:-with-lease)?['"]/u);
+    expect(allSource).not.toMatch(
+      /from\s+['"](?:express|fastify|pg|postgres|sqlite3|better-sqlite3|node:http|node:http2)['"]/u,
+    );
+    expect(allSource).not.toMatch(/['"](?:checkout|switch)['"][\s\S]{0,80}['"]-(?:b|c)['"]/u);
+
+    const packageJson = JSON.parse(
+      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as PackageContract;
+    expect(packageJson.dependencies).toEqual(approvedRuntimeDependencies);
   });
 });

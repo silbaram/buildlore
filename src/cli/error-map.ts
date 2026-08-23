@@ -3,6 +3,8 @@ import { ProjectCheckError } from '../compiler/check.js';
 import { ProjectCorpusError } from '../compiler/corpus.js';
 import { KnowledgeError, type KnowledgeErrorCode } from '../knowledge/errors.js';
 import { ModeAInitializationError } from '../knowledge/initialization.js';
+import { ParentKnowledgePinError } from '../knowledge/parent-pin-types.js';
+import { PublicationError } from '../knowledge/publication-types.js';
 import { ProfileOperationError } from '../profile/errors.js';
 import { ProjectionError, SourceDocumentError } from '../projector/errors.js';
 import { ProjectSyncError } from '../projector/sync.js';
@@ -27,6 +29,22 @@ export class CliQualityGateError extends Error {
     super('Quality gate did not pass.');
     this.name = 'CliQualityGateError';
   }
+}
+
+export class CliPublicationIdentityError extends Error {
+  readonly code = 'PUBLISH_IDENTITY_UNAVAILABLE' as const;
+
+  constructor() {
+    super('Publication lineage identity is unavailable.');
+    this.name = 'CliPublicationIdentityError';
+  }
+}
+
+function publicationExitCode(code: PublicationError['code']): 3 | 6 {
+  return code === 'PUBLISH_INELIGIBLE' || code === 'PUBLISH_PATH_DRIFT' ||
+    code === 'PUBLISH_POLICY_BLOCKED'
+    ? 3
+    : 6;
 }
 
 function safeRecoveryCommand(
@@ -136,6 +154,38 @@ export function mapCliError(
       safeKnowledgeMessage(error.code),
       safeRecoveryCommand(error.recoveryCommand),
     );
+  }
+  if (error instanceof CliPublicationIdentityError) {
+    return baseFailure(
+      context,
+      3,
+      error.code,
+      'Publication lineage identity is unavailable or unsafe.',
+    );
+  }
+  if (error instanceof PublicationError) {
+    return Object.freeze({
+      ...baseFailure(
+        context,
+        publicationExitCode(error.code),
+        error.code,
+        publicationExitCode(error.code) === 3
+          ? 'Publication input or policy was rejected safely.'
+          : 'Git publication state requires recovery.',
+      ),
+      partial: error.partial,
+    });
+  }
+  if (error instanceof ParentKnowledgePinError) {
+    return Object.freeze({
+      ...baseFailure(
+        context,
+        6,
+        error.code,
+        'Parent knowledge pin state requires recovery.',
+      ),
+      partial: error.partial,
+    });
   }
   if (error instanceof CompilerOperationError) {
     if (error.code === 'COMPILER_EGRESS_DENIED') {
