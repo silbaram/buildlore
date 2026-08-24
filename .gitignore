@@ -7,6 +7,11 @@
 # Keep these files in the local workspace or project knowledge repository, not in Git.
 plans/
 
+# BuildLore hub-local project bindings (never commit machine paths)
+/.buildlore/local-projects.json
+/.buildlore/local-projects.json.lock
+/.buildlore/.local-projects.json.*.tmp
+
 # Dependencies / build outputs
 node_modules/
 .test-tmp/

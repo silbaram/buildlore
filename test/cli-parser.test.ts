@@ -17,8 +17,15 @@ describe('CLI argument parser', () => {
   it.each([
     { args: ['init', '--knowledge-repo', '../knowledge.git'], command: 'init' },
     {
-      args: ['project', 'add', '--id', 'alpha', '--source-repo', '../alpha'],
+      args: [
+        'project', 'add', '--id', 'alpha', '--source-repo', '../alpha',
+        '--source-root', '/workspace/alpha',
+      ],
       command: 'project.add',
+    },
+    {
+      args: ['project', 'bind', '--project', 'alpha', '--source-root', '/workspace/alpha'],
+      command: 'project.bind',
     },
     { args: ['project', 'list'], command: 'project.list' },
     { args: ['project', 'show', '--project', 'alpha'], command: 'project.show' },
@@ -79,6 +86,8 @@ describe('CLI argument parser', () => {
         'alpha',
         '--source-repository',
         '../alpha',
+        '--source-root',
+        '/workspace/alpha',
         '--display-name',
         'Alpha',
       ]),
@@ -89,6 +98,7 @@ describe('CLI argument parser', () => {
       options: {
         '--id': 'alpha',
         '--source-repo': '../alpha',
+        '--source-root': '/workspace/alpha',
         '--name': 'Alpha',
       },
       outputMode: 'human',
@@ -117,6 +127,10 @@ describe('CLI argument parser', () => {
   });
 
   it('requires explicit project selection and validates search mode', () => {
+    expectUsageError(
+      ['project', 'add', '--id', 'alpha', '--source-repo', '../alpha'],
+      'CLI_OPTION_MISSING',
+    );
     expectUsageError(['compile'], 'CLI_OPTION_MISSING');
     expectUsageError(['check', '--project', 'TOKEN=do-not-reflect'], 'CLI_ARGUMENT_INVALID');
     expectUsageError(

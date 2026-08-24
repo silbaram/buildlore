@@ -28,6 +28,8 @@
     "./schemas/knowledge-commit-lineage.schema.json": "./schemas/knowledge-commit-lineage.schema.json",
     "./schemas/knowledge-parent-pin-plan.schema.json": "./schemas/knowledge-parent-pin-plan.schema.json",
     "./schemas/knowledge-parent-pin-result.schema.json": "./schemas/knowledge-parent-pin-result.schema.json",
+    "./schemas/local-project-registry.schema.json": "./schemas/local-project-registry.schema.json",
+    "./schemas/source-collection-manifest.schema.json": "./schemas/source-collection-manifest.schema.json",
     "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json"
   },
   "files": [

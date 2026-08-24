@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/source-collection-manifest.schema.json",
+  "title": "BuildLore Source Collection Manifest v1",
+  "description": "Portable, project-owned declarations for source documents collected by a BuildLore hub.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["projectId", "schemaVersion", "sourceRepository", "sources"],
+  "properties": {
+    "projectId": { "$ref": "#/$defs/projectId" },
+    "schemaVersion": { "const": "buildlore.sources.v1" },
+    "sourceRepository": { "$ref": "#/$defs/sourceRepository" },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/fileDeclaration" },
+          { "$ref": "#/$defs/directoryDeclaration" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "projectId": {
+      "allOf": [
+        { "$ref": "#/$defs/safeId" },
+        { "not": { "enum": ["knowledge", "manifest", "projects", "shared"] } }
+      ]
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "documentKind": {
+      "enum": ["markdown", "p2a-planning"]
+    },
+    "sourceRepository": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "anyOf": [
+        {
+          "description": "Credential-free HTTPS or SSH URL without query or fragment",
+          "pattern": "^(?:https|ssh)://(?![^/]*@)[^\\s?#]+$"
+        },
+        {
+          "description": "SSH SCP-style locator",
+          "pattern": "^(?![A-Za-z]:)(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:[^\\s@?#]+$"
+        },
+        {
+          "description": "Trimmed relative repository locator",
+          "pattern": "^(?!-)(?!/)(?!\\\\)(?![A-Za-z]:)(?!.*://)(?!.*::)(?!.*[?@#])(?=\\S(?:.*\\S)?$)[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+        }
+      ]
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*%)(?!.*//)(?!.*\\/$)(?!(?:[^/]+/){64})(?!\\.(?:/|$))(?!.*\\/\\.(?:/|$))(?!\\.\\.(?:/|$))(?!.*\\/\\.\\.(?:/|$))(?!\\.git(?:/|$))(?!.*\\/\\.git(?:/|$))(?!.*\\p{Cf})(?!.*(?:^|[/_.-])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh][-_]?[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt][Ss]?|[Tt][Oo][Kk][Ee][Nn][Ss]?|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn])(?:$|[/_.-]))[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "fileDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentKind", "id", "path", "pathType"],
+      "properties": {
+        "documentKind": { "$ref": "#/$defs/documentKind" },
+        "id": { "$ref": "#/$defs/safeId" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "pathType": { "const": "file" }
+      }
+    },
+    "directoryDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentKind", "id", "path", "pathType"],
+      "properties": {
+        "documentKind": { "$ref": "#/$defs/documentKind" },
+        "id": { "$ref": "#/$defs/safeId" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "pathType": { "const": "directory" },
+        "recursive": { "type": "boolean" }
+      }
+    }
+  }
+}

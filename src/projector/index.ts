@@ -1,8 +1,11 @@
 export {
   ProjectionError,
+  SourceSelectionError,
   SourceDocumentError,
   type ProjectionErrorCode,
   type SourceDocumentErrorCode,
+  type SourceSelectionErrorCode,
+  type SourceSelectionField,
 } from './errors.js';
 export {
   createSourceDocument,
@@ -21,12 +24,15 @@ export {
   type ProjectSyncDecisionCounts,
   type ProjectSyncErrorCode,
   type ProjectSyncFailurePhase,
+  type HubProjectSyncInput,
+  type LegacyProjectSyncInput,
   type ProjectSyncInput,
   type ProjectSyncPlanEntrySummary,
   type ProjectSyncPlanSummary,
   type ProjectSyncPort,
   type ProjectSyncRecoveryAction,
   type ProjectSyncSummary,
+  type ProjectSyncWarning,
   type ProjectSyncWriteSummary,
 } from './sync.js';
 export {
@@ -56,6 +62,8 @@ export {
   PROJECTION_PLAN_SCHEMA_VERSION,
   type CreateP2aPlanningProjectorOptions,
   type PlanningDocumentKind,
+  type P2aCompatibilityWarning,
+  type P2aCompatibilityWarningCode,
   type PlanningProjectionInput,
   type PlanningProjectorPort,
   type ProjectionApplyResult,
@@ -78,3 +86,21 @@ export {
   type SourceDocument,
   type SourceType,
 } from './types.js';
+export {
+  MAX_SOURCE_DECLARATIONS,
+  MAX_SOURCE_MANIFEST_BYTES,
+  MAX_SOURCE_PATH_LENGTH,
+  SOURCE_COLLECTION_MANIFEST_SCHEMA_VERSION,
+  parseSourceCollectionManifest,
+  type SourceCollectionManifestV1,
+  type SourceDeclaration,
+  type SourceDocumentKind,
+  type SourceDirectoryDeclaration,
+  type SourceFileDeclaration,
+} from './source-manifest.js';
+export {
+  inspectLocalSourceStatus,
+  type LocalSourceManifestStatus,
+  type LocalSourceState,
+  type LocalSourceStatus,
+} from './local-source-status.js';

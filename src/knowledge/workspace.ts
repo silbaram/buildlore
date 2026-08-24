@@ -1,5 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, realpath, rename, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 
 import { serializeCanonicalJson, syncDirectory } from './atomic-file.js';
@@ -23,6 +33,11 @@ import {
 } from './validation.js';
 
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
+
+/** Package-internal coordination seam for committing a related local binding. */
+export interface ProjectRegistrationHooks {
+  readonly afterRegistration?: (project: ProjectRecord) => Promise<void> | void;
+}
 
 function isContained(root: string, candidate: string): boolean {
   const difference = relative(root, candidate);
@@ -161,6 +176,44 @@ async function validateWorkspaceShape(workspace: string): Promise<ProjectDescrip
   return readDescriptor(workspace);
 }
 
+async function removeUnchangedNewWorkspace(
+  projectsRoot: string,
+  workspace: string,
+  expectedDescriptor: ProjectDescriptor,
+): Promise<void> {
+  try {
+    const actualDescriptor = await validateWorkspaceShape(workspace);
+    const [rootEntries, sourceEntries, wikiEntries, stateEntries, descriptorBytes, logBytes] =
+      await Promise.all([
+        readdir(workspace),
+        readdir(join(workspace, 'sources')),
+        readdir(join(workspace, 'wiki')),
+        readdir(join(workspace, '.llmwiki')),
+        readFile(join(workspace, 'project.json'), 'utf8'),
+        readFile(join(workspace, 'log.md'), 'utf8'),
+      ]);
+    if (
+      !descriptorMatches(actualDescriptor, expectedDescriptor) ||
+      serializeCanonicalJson(actualDescriptor) !== descriptorBytes ||
+      logBytes !== '# BuildLore project log\n' ||
+      sourceEntries.length > 0 ||
+      wikiEntries.length > 0 ||
+      stateEntries.length > 0 ||
+      rootEntries.sort().join('\n') !== '.llmwiki\nlog.md\nproject.json\nsources\nwiki'
+    ) {
+      throw new Error('Workspace changed before registration rollback.');
+    }
+    await rm(workspace, { recursive: true });
+    await syncDirectory(projectsRoot);
+  } catch {
+    throw new KnowledgeError(
+      'REGISTRY_WRITE_FAILED',
+      'Project workspace rollback could not be completed safely.',
+      { recoveryCommand: ['project', 'validate'] },
+    );
+  }
+}
+
 function descriptorMatches(
   actual: ProjectDescriptor,
   expected: ProjectDescriptor,
@@ -228,6 +281,7 @@ async function projectRecordForEntry(
 export async function addProject(
   knowledgeRoot: string,
   input: AddProjectInput,
+  hooks: ProjectRegistrationHooks = {},
 ): Promise<ProjectRecord> {
   const root = await resolveKnowledgeRoot(knowledgeRoot);
   const projectId = validateProjectId(input.projectId);
@@ -302,7 +356,25 @@ export async function addProject(
       projects: [...manifest.projects, entry],
       schemaVersion: manifest.schemaVersion,
     });
-    return { descriptor, entry, workspacePath: entry.path };
+    const project = Object.freeze({ descriptor, entry, workspacePath: entry.path });
+    try {
+      await hooks.afterRegistration?.(project);
+    } catch (error) {
+      try {
+        await writeManifest(root, manifest);
+        if (!workspaceExists) {
+          await removeUnchangedNewWorkspace(projectsRoot, workspace, descriptor);
+        }
+      } catch {
+        throw new KnowledgeError(
+          'REGISTRY_WRITE_FAILED',
+          'Project registration rollback could not be completed safely.',
+          { recoveryCommand: ['project', 'validate'] },
+        );
+      }
+      throw error;
+    }
+    return project;
   });
 }
 

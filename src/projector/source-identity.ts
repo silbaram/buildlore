@@ -1,5 +1,20 @@
 import { posix } from 'node:path';
 
+import { ProjectionError } from './errors.js';
+
+export interface CollectionSourceIdentityInput {
+  readonly declarationId: string;
+  readonly documentKind: 'markdown' | 'p2a-planning';
+  readonly projectId: string;
+  readonly repository: string;
+  readonly sourceRef: string;
+}
+
+export type CollectionSourceIdentityBinding = Pick<
+  CollectionSourceIdentityInput,
+  'documentKind' | 'projectId' | 'repository'
+>;
+
 export interface P2aSourceIdentityInput {
   readonly artifactPath?: string;
   readonly documentKind?:
@@ -33,6 +48,80 @@ function portablePath(value: string): boolean {
 
 function portableIdentifier(value: string): boolean {
   return /^[a-z0-9][a-z0-9._-]{0,127}$/u.test(value);
+}
+
+function collectionIdentityParts(
+  source: string,
+): readonly [string, string, string, string, string] | null {
+  const segments = source.split('/');
+  if (segments.length !== 6 || segments[0] !== 'buildlore+source:') return null;
+  const decoded = segments.slice(1).map(decodeCanonicalSegment);
+  if (decoded.some((value) => value === null)) return null;
+  return decoded as unknown as readonly [string, string, string, string, string];
+}
+
+function validatedCollectionIdentityParts(
+  input: CollectionSourceIdentityBinding,
+  source: string,
+): readonly [string, string, string, string, string] | null {
+  const parts = collectionIdentityParts(source);
+  if (parts === null) return null;
+  const [repository, projectId, documentKind, declarationId, sourceRef] = parts;
+  if (
+    repository !== input.repository ||
+    projectId !== input.projectId ||
+    documentKind !== input.documentKind ||
+    !portableIdentifier(projectId) ||
+    !portableIdentifier(declarationId) ||
+    (documentKind !== 'markdown' && documentKind !== 'p2a-planning') ||
+    !portablePath(sourceRef)
+  ) return null;
+  return parts;
+}
+
+export function createCollectionSourceIdentity(input: CollectionSourceIdentityInput): string {
+  if (
+    input.repository.length < 1 ||
+    input.repository.length > 2_048 ||
+    !portableIdentifier(input.projectId) ||
+    !portableIdentifier(input.declarationId) ||
+    !portablePath(input.sourceRef)
+  ) {
+    throw new ProjectionError('PROJECTION_ARTIFACT_INVALID', 'Collection source identity is invalid.');
+  }
+  const source = [
+    'buildlore+source:',
+    encodeURIComponent(input.repository),
+    encodeURIComponent(input.projectId),
+    encodeURIComponent(input.documentKind),
+    encodeURIComponent(input.declarationId),
+    encodeURIComponent(input.sourceRef),
+  ].join('/');
+  if (source.length > 4_096 || validateCollectionSourceIdentity(input, source) === null) {
+    throw new ProjectionError('PROJECTION_ARTIFACT_INVALID', 'Collection source identity is invalid.');
+  }
+  return source;
+}
+
+export function validateCollectionSourceIdentity(
+  input: CollectionSourceIdentityInput,
+  source: string,
+): string | null {
+  const parts = validatedCollectionIdentityParts(input, source);
+  if (parts === null) return null;
+  const [, , , declarationId, sourceRef] = parts;
+  if (
+    declarationId !== input.declarationId ||
+    sourceRef !== input.sourceRef
+  ) return null;
+  return parts.join('\n');
+}
+
+export function validateCollectionSourceIdentityBinding(
+  input: CollectionSourceIdentityBinding,
+  source: string,
+): string | null {
+  return validatedCollectionIdentityParts(input, source)?.join('\n') ?? null;
 }
 
 function canonicalPlanningArtifact(

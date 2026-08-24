@@ -152,6 +152,34 @@ async function createConfiguredRepository(): Promise<string> {
   if (initialized.exitCode !== 0) throw new Error('Canonical workspace initialization failed.');
   await configureIdentity(code);
   for (const projectId of ['alpha', 'beta']) {
+    const sourceRepository = `https://example.test/${projectId}.git`;
+    const sourceRoot = join(root, `${projectId}-source`);
+    await mkdir(sourceRoot);
+    await git(sourceRoot, ['init', '--initial-branch=main']);
+    await configureIdentity(sourceRoot);
+    await Promise.all([
+      mkdir(join(sourceRoot, '.buildlore')),
+      mkdir(join(sourceRoot, 'docs')),
+    ]);
+    await writeFile(join(sourceRoot, 'docs', 'overview.md'), `# ${projectId}\n`, 'utf8');
+    await writeFile(
+      join(sourceRoot, '.buildlore', 'sources.json'),
+      JSON.stringify({
+        projectId,
+        schemaVersion: 'buildlore.sources.v1',
+        sourceRepository,
+        sources: [{
+          documentKind: 'markdown',
+          id: 'docs',
+          path: 'docs',
+          pathType: 'directory',
+          recursive: true,
+        }],
+      }, null, 2) + '\n',
+      'utf8',
+    );
+    await git(sourceRoot, ['add', '.']);
+    await git(sourceRoot, ['commit', '-m', 'seed source']);
     const added = await capture(
       [
         'project',
@@ -159,11 +187,15 @@ async function createConfiguredRepository(): Promise<string> {
         '--id',
         projectId,
         '--source-repo',
-        `https://example.test/${projectId}.git`,
+        sourceRepository,
+        '--source-root',
+        sourceRoot,
       ],
       bootstrapRuntime,
     );
-    if (added.exitCode !== 0) throw new Error('Project fixture creation failed.');
+    if (added.exitCode !== 0) {
+      throw new Error(`Project fixture creation failed: ${added.stderr}`);
+    }
   }
   return code;
 }
@@ -285,6 +317,7 @@ function syncSummary(input: ProjectSyncInput): ProjectSyncSummary {
     projectId: input.projectId,
     remainingCount: 0,
     schemaVersion: PROJECT_SYNC_SCHEMA_VERSION,
+    warnings: [],
     writes: [],
   };
 }
@@ -355,7 +388,6 @@ describe('canonical CLI workflow', () => {
       status: () => Promise.resolve({ pendingChanges: [], pendingChangesCount: 0, stateStatus: 'ok' }),
     };
     const runtime: CliRuntime = {
-      artifactRoot: join(cwd, 'artifacts'),
       check: { check: (projectId) => Promise.resolve(checkSummary(projectId)) },
       cwd,
       projectCompiler,
@@ -439,15 +471,13 @@ describe('canonical CLI workflow', () => {
 
     expect(syncInputs).toEqual([
       {
-        artifactRoot: join(cwd, 'artifacts'),
         dryRun: true,
-        knowledgeRoot: join(cwd, 'knowledge'),
+        hubRoot: cwd,
         projectId: 'alpha',
       },
       {
-        artifactRoot: join(cwd, 'artifacts'),
         dryRun: false,
-        knowledgeRoot: join(cwd, 'knowledge'),
+        hubRoot: cwd,
         projectId: 'alpha',
       },
     ]);
@@ -459,6 +489,42 @@ describe('canonical CLI workflow', () => {
       { mode: 'hybrid', projectId: 'alpha', query: 'failure' },
     ]);
     expect(contextRequests).toEqual([{ projectId: 'beta', prompt: 'fix it' }]);
+  });
+
+  it('[V13-V-04] presents compatibility warnings as a successful partial sync', async () => {
+    const cwd = await createConfiguredRepository();
+    const runtime: CliRuntime = {
+      cwd,
+      sync: {
+        sync: (input) => Promise.resolve({
+          ...syncSummary(input),
+          partial: true,
+          warnings: [{
+            code: 'p2a-additive-field-ignored',
+            fieldName: 'future_summary',
+            sourceKind: 'planning',
+            sourceRef: 'iterations/v1/gate-b-spec/spec.json',
+          }],
+        }),
+      },
+    };
+
+    const json = await capture(['sync', '--project', 'alpha', '--dry-run', '--json'], runtime);
+    expect(json).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      data: {
+        partial: true,
+        warnings: [{ code: 'p2a-additive-field-ignored' }],
+      },
+      ok: true,
+      partial: true,
+      warnings: [{ code: 'p2a-additive-field-ignored' }],
+    });
+
+    const human = await capture(['sync', '--project', 'alpha', '--dry-run'], runtime);
+    expect(human).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(human.stdout).toContain('partial: yes\n');
+    expect(human.stdout).toContain('warning p2a-additive-field-ignored:');
   });
 
   it('returns quality exit 5 and rejects an unknown project before domain execution', async () => {

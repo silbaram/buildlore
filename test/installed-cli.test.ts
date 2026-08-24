@@ -173,6 +173,41 @@ describe('installed CLI', () => {
       );
       expect(initialized.stderr).toBe('');
       expect(JSON.parse(initialized.stdout)).toMatchObject({ command: 'init', ok: true });
+      for (const localPath of [
+        '.buildlore/local-projects.json',
+        '.buildlore/local-projects.json.lock',
+        '.buildlore/.local-projects.json.probe.tmp',
+      ]) {
+        await run('git', ['check-ignore', '--quiet', '--no-index', '--', localPath], workspaceRoot);
+      }
+
+      const sourceRoot = join(runtimeRoot, 'alpha-source');
+      const sourceRepository = 'https://example.test/alpha.git';
+      await mkdir(sourceRoot);
+      await run('git', ['init', '--initial-branch=main'], sourceRoot);
+      await run('git', ['config', 'user.name', 'BuildLore Test'], sourceRoot);
+      await run('git', ['config', 'user.email', 'buildlore@example.invalid'], sourceRoot);
+      await mkdir(join(sourceRoot, '.buildlore'));
+      await mkdir(join(sourceRoot, 'docs'));
+      await writeFile(join(sourceRoot, 'docs', 'overview.md'), '# Alpha\n', 'utf8');
+      await writeFile(
+        join(sourceRoot, '.buildlore', 'sources.json'),
+        JSON.stringify({
+          projectId: 'alpha',
+          schemaVersion: 'buildlore.sources.v1',
+          sourceRepository,
+          sources: [{
+            documentKind: 'markdown',
+            id: 'docs',
+            path: 'docs',
+            pathType: 'directory',
+            recursive: true,
+          }],
+        }, null, 2) + '\n',
+        'utf8',
+      );
+      await run('git', ['add', '.'], sourceRoot);
+      await run('git', ['commit', '-m', 'seed source'], sourceRoot);
 
       const added = await run(
         process.execPath,
@@ -183,7 +218,9 @@ describe('installed CLI', () => {
           '--id',
           'alpha',
           '--source-repo',
-          'https://example.test/alpha.git',
+          sourceRepository,
+          '--source-root',
+          sourceRoot,
           '--json',
         ],
         workspaceRoot,

@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { runCli, type CliIo, type CliRuntime } from '../src/cli/index.js';
+import { readLocalProjectRegistry } from '../src/knowledge/local-project-registry.js';
+import { addProject } from '../src/knowledge/workspace.js';
 
 const temporaryRoots: string[] = [];
 const compiler: NonNullable<CliRuntime['compiler']> = {
@@ -71,9 +73,44 @@ async function createConfiguredRepository(): Promise<string> {
   return code;
 }
 
+async function createSourceRepository(
+  hubRoot: string,
+  projectId: string,
+  sourceRepository: string,
+  checkoutName = projectId,
+): Promise<string> {
+  const sourceRoot = join(hubRoot, '..', `${checkoutName}-source`);
+  await mkdir(sourceRoot);
+  await git(sourceRoot, ['init', '--initial-branch=main']);
+  await configureIdentity(sourceRoot);
+  await mkdir(join(sourceRoot, '.buildlore'));
+  await mkdir(join(sourceRoot, 'docs'));
+  await writeFile(join(sourceRoot, 'docs', 'overview.md'), `# ${projectId}\n`, 'utf8');
+  await writeFile(
+    join(sourceRoot, '.buildlore', 'sources.json'),
+    JSON.stringify({
+      projectId,
+      schemaVersion: 'buildlore.sources.v1',
+      sourceRepository,
+      sources: [{
+        documentKind: 'markdown',
+        id: 'docs',
+        path: 'docs',
+        pathType: 'directory',
+        recursive: true,
+      }],
+    }, null, 2) + '\n',
+    'utf8',
+  );
+  await git(sourceRoot, ['add', '.']);
+  await git(sourceRoot, ['commit', '-m', 'seed source']);
+  return sourceRoot;
+}
+
 async function capture(
   args: readonly string[],
   cwd: string,
+  overrides: Partial<CliRuntime> = {},
 ): Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }> {
   let stderr = '';
   let stdout = '';
@@ -86,7 +123,7 @@ async function capture(
     },
   };
   return {
-    exitCode: await runCli(args, io, { compiler, cwd }),
+    exitCode: await runCli(args, io, { compiler, cwd, ...overrides }),
     stderr,
     stdout,
   };
@@ -99,8 +136,35 @@ afterEach(async () => {
 });
 
 describe('knowledge and project CLI', () => {
+  it('initializes ignored hub-local state without changing a sibling source checkout', async () => {
+    const root = await createConfiguredRepository();
+    const sourceRoot = await createSourceRepository(
+      root,
+      'source-probe',
+      'https://example.test/source-probe.git',
+    );
+    const before = await git(sourceRoot, ['status', '--porcelain=v2', '--untracked-files=all']);
+
+    const initialized = await capture(
+      ['init', '--knowledge-repo', '../knowledge.git', '--branch', 'main', '--json'],
+      root,
+    );
+
+    expect(initialized).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(JSON.parse(initialized.stdout)).toMatchObject({
+      data: { localProjects: { bindingCount: 0, outcome: 'created' } },
+      ok: true,
+    });
+    expect(JSON.parse(await readFile(join(root, '.buildlore/local-projects.json'), 'utf8')))
+      .toEqual({ bindings: [], schemaVersion: 'buildlore.local-projects.v1' });
+    expect(await git(sourceRoot, ['status', '--porcelain=v2', '--untracked-files=all']))
+      .toBe(before);
+  });
+
   it('adds, lists, shows, and validates a project with deterministic JSON', async () => {
     const root = await createConfiguredRepository();
+    const sourceRepository = 'https://example.test/alpha.git';
+    const sourceRoot = await createSourceRepository(root, 'alpha', sourceRepository);
     const added = await capture(
       [
         'project',
@@ -110,7 +174,9 @@ describe('knowledge and project CLI', () => {
         '--display-name',
         'Alpha',
         '--source-repository',
-        'https://example.test/alpha.git',
+        sourceRepository,
+        '--source-root',
+        sourceRoot,
         '--json',
       ],
       root,
@@ -118,7 +184,11 @@ describe('knowledge and project CLI', () => {
     expect(added.exitCode).toBe(0);
     expect(added.stderr).toBe('');
     expect(JSON.parse(added.stdout)).toMatchObject({
-      data: { entry: { path: 'projects/alpha', projectId: 'alpha' } },
+      data: {
+        binding: { outcome: 'created' },
+        entry: { path: 'projects/alpha', projectId: 'alpha' },
+        localSource: { manifestStatus: 'ready', state: 'ready' },
+      },
       ok: true,
     });
 
@@ -151,6 +221,53 @@ describe('knowledge and project CLI', () => {
         pinState: 'matched',
         projectId: 'alpha',
         workspacePath: 'projects/alpha',
+      },
+      ok: true,
+    });
+  });
+
+  it('rolls back portable registration when the local binding commit fails', async () => {
+    const root = await createConfiguredRepository();
+    const sourceRepository = 'https://example.test/atomic.git';
+    const sourceRoot = await createSourceRepository(root, 'atomic', sourceRepository);
+    const command = [
+      'project',
+      'add',
+      '--id',
+      'atomic',
+      '--source-repo',
+      sourceRepository,
+      '--source-root',
+      sourceRoot,
+      '--json',
+    ] as const;
+
+    const failed = await capture(command, root, {
+      localProjectRegistryHooks: {
+        beforeRename: () => Promise.reject(new Error('injected local registry failure')),
+      },
+    });
+    expect(failed).toMatchObject({ exitCode: 4, stdout: '' });
+    expect(failed.stderr).not.toContain(sourceRoot);
+    expect(JSON.parse(failed.stderr)).toMatchObject({
+      errors: [{ code: 'SOURCE_BINDING_WRITE_FAILED' }],
+      ok: false,
+    });
+    expect((await readLocalProjectRegistry(root, { allowMissing: true })).bindings).toEqual([]);
+    await expect(stat(join(root, 'knowledge/projects/atomic'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    const afterFailure = JSON.parse(
+      (await capture(['project', 'list', '--json'], root)).stdout,
+    ) as { readonly data: readonly { readonly projectId: string }[] };
+    expect(afterFailure.data.map((project) => project.projectId)).not.toContain('atomic');
+
+    const retried = await capture(command, root);
+    expect(retried).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(JSON.parse(retried.stdout)).toMatchObject({
+      data: {
+        binding: { outcome: 'created' },
+        entry: { projectId: 'atomic' },
       },
       ok: true,
     });
@@ -216,6 +333,8 @@ describe('knowledge and project CLI', () => {
         'Private',
         '--source-repository',
         secret,
+        '--source-root',
+        '/not-used',
       ],
       root,
     );
@@ -243,6 +362,8 @@ describe('knowledge and project CLI', () => {
         'Alpha',
         '--source-repository',
         'https://example.test/alpha.git',
+        '--source-root',
+        '/not-used',
         '--json',
       ],
       root,
@@ -266,6 +387,8 @@ describe('knowledge and project CLI', () => {
         'Alpha',
         '--source-repository',
         'https://example.test/alpha.git',
+        '--source-root',
+        '/not-used',
         '--profile-version',
         'future.profile.v2',
       ],
@@ -317,6 +440,8 @@ describe('knowledge and project CLI', () => {
 
   it('returns a domain validation error for an incomplete project workspace', async () => {
     const root = await createConfiguredRepository();
+    const sourceRepository = 'https://example.test/alpha.git';
+    const sourceRoot = await createSourceRepository(root, 'alpha', sourceRepository);
     await capture(
       [
         'project',
@@ -326,7 +451,9 @@ describe('knowledge and project CLI', () => {
         '--display-name',
         'Alpha',
         '--source-repository',
-        'https://example.test/alpha.git',
+        sourceRepository,
+        '--source-root',
+        sourceRoot,
       ],
       root,
     );
@@ -340,5 +467,152 @@ describe('knowledge and project CLI', () => {
       errors: [{ code: 'MANIFEST_INVALID', recoveryCommand: ['project', 'validate'] }],
       ok: false,
     });
+  });
+
+  it('adds, binds, rebinds, reports, and synchronizes explicit sibling sources without path disclosure or implicit compilation', async () => {
+    const root = await createConfiguredRepository();
+    await capture(
+      ['init', '--knowledge-repo', '../knowledge.git', '--branch', 'main'],
+      root,
+    );
+    const alphaRepository = 'https://example.test/alpha.git';
+    const alphaSource = await createSourceRepository(root, 'alpha', alphaRepository);
+    const compilerRequests: unknown[] = [];
+    const projectCompiler: NonNullable<CliRuntime['projectCompiler']> = {
+      execute: (request) => {
+        compilerRequests.push(request);
+        if (request.capability !== 'compile') throw new Error('Unexpected compiler capability.');
+        return Promise.resolve({
+          capability: 'compile',
+          data: {
+            candidateCount: 0,
+            candidates: [],
+            compiled: 1,
+            deleted: 0,
+            pageIds: ['overview'],
+            skipped: 0,
+          },
+          ok: true,
+          outcome: 'succeeded',
+          projectId: request.projectId,
+          warnings: [],
+        });
+      },
+      status: () => Promise.resolve({
+        pendingChanges: [],
+        pendingChangesCount: 0,
+        stateStatus: 'ok',
+      }),
+    };
+
+    const added = await capture([
+      'project', 'add', '--id', 'alpha', '--source-repo', alphaRepository,
+      '--source-root', alphaSource, '--json',
+    ], root, { projectCompiler });
+    expect(added).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(added.stdout).not.toContain(alphaSource);
+    expect(JSON.parse(added.stdout)).toMatchObject({
+      data: {
+        binding: { outcome: 'created' },
+        entry: { projectId: 'alpha' },
+        localSource: { manifestStatus: 'ready', reasonCode: 'READY', state: 'ready' },
+      },
+    });
+
+    const betaRepository = 'https://example.test/beta.git';
+    await addProject(join(root, 'knowledge'), {
+      displayName: 'Beta',
+      projectId: 'beta',
+      sourceRepository: betaRepository,
+    });
+    const betaSourceOne = await createSourceRepository(
+      root,
+      'beta',
+      betaRepository,
+      'beta-one',
+    );
+    const betaSourceTwo = await createSourceRepository(
+      root,
+      'beta',
+      betaRepository,
+      'beta-two',
+    );
+    const bound = await capture([
+      'project', 'bind', '--project', 'beta', '--source-root', betaSourceOne, '--json',
+    ], root);
+    const rebound = await capture([
+      'project', 'bind', '--project', 'beta', '--source-root', betaSourceTwo, '--json',
+    ], root);
+    expect(JSON.parse(bound.stdout)).toMatchObject({ data: { binding: { outcome: 'created' } } });
+    expect(JSON.parse(rebound.stdout)).toMatchObject({ data: { binding: { outcome: 'replaced' } } });
+
+    for (const reported of [
+      await capture(['project', 'list', '--json'], root),
+      await capture(['project', 'show', '--project', 'beta', '--json'], root),
+    ]) {
+      expect(reported.stdout).not.toContain(alphaSource);
+      expect(reported.stdout).not.toContain(betaSourceOne);
+      expect(reported.stdout).not.toContain(betaSourceTwo);
+      expect(reported.stdout).toContain('"localSource"');
+    }
+
+    const beforeDryRun = await readdir(join(root, 'knowledge/projects/alpha/sources'));
+    const dryRun = await capture(
+      ['sync', '--project', 'alpha', '--dry-run', '--json'],
+      root,
+      { projectCompiler },
+    );
+    expect(dryRun).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(await readdir(join(root, 'knowledge/projects/alpha/sources'))).toEqual(beforeDryRun);
+    expect(compilerRequests).toEqual([]);
+
+    const synchronized = await capture(
+      ['sync', '--project', 'alpha', '--json'],
+      root,
+      { projectCompiler },
+    );
+    expect(synchronized).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(await readdir(join(root, 'knowledge/projects/alpha/sources'))).toHaveLength(1);
+    expect(compilerRequests).toEqual([]);
+
+    const compiled = await capture(
+      ['compile', '--project', 'alpha', '--json'],
+      root,
+      { projectCompiler },
+    );
+    expect(compiled).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(compilerRequests).toEqual([{ capability: 'compile', projectId: 'alpha' }]);
+
+    const deltaRepository = 'https://example.test/delta.git';
+    const deltaSource = await createSourceRepository(root, 'delta', deltaRepository, 'delta');
+    const bindingLock = join(root, '.buildlore/local-projects.json.lock');
+    await writeFile(bindingLock, 'concurrent binding mutation\n', { mode: 0o600 });
+    const busyRegistration = await capture([
+      'project', 'add', '--id', 'delta', '--source-repo', deltaRepository,
+      '--source-root', deltaSource, '--json',
+    ], root);
+    await rm(bindingLock, { force: true });
+    expect(busyRegistration).toMatchObject({ exitCode: 4, stdout: '' });
+    expect(JSON.parse(busyRegistration.stderr)).toMatchObject({
+      errors: [{ code: 'SOURCE_BINDING_BUSY' }],
+      ok: false,
+    });
+    const listedAfterBusyRegistration = JSON.parse(
+      (await capture(['project', 'list', '--json'], root)).stdout,
+    ) as { readonly data: readonly { readonly projectId: string }[] };
+    expect(listedAfterBusyRegistration.data.map((project) => project.projectId))
+      .not.toContain('delta');
+
+    const secretPath = join(root, '..', 'missing-do-not-reflect');
+    const rejected = await capture([
+      'project', 'add', '--id', 'gamma', '--source-repo', 'https://example.test/gamma.git',
+      '--source-root', secretPath, '--json',
+    ], root);
+    expect(rejected.exitCode).toBe(3);
+    expect(rejected.stderr).not.toContain(secretPath);
+    const listed = JSON.parse((await capture(['project', 'list', '--json'], root)).stdout) as {
+      readonly data: readonly { readonly projectId: string }[];
+    };
+    expect(listed.data.map((project) => project.projectId)).not.toContain('gamma');
   });
 });

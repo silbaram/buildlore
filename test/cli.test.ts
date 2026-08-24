@@ -42,6 +42,7 @@ describe('BuildLore CLI', () => {
     for (const command of [
       'init',
       'project add',
+      'project bind',
       'project list',
       'project show',
       'sync',

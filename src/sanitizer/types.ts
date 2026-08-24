@@ -12,6 +12,7 @@ export type SecurityOverrideReason =
 export type SecuritySourceKind =
   | 'compiler-cache'
   | 'execution'
+  | 'markdown'
   | 'planning'
   | 'profile'
   | 'provider-request'

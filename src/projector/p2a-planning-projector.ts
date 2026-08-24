@@ -21,6 +21,7 @@ import {
 } from './p2a-artifacts.js';
 import {
   type CreateP2aPlanningProjectorOptions,
+  type P2aCompatibilityWarning,
   type PlanningProjectionInput,
   type PlanningProjectorPort,
   PROJECTION_PLAN_SCHEMA_VERSION,
@@ -82,6 +83,7 @@ function frozenPlan(
   bindings: readonly P2aArtifactBinding[],
   candidates: readonly PlannedCandidate[],
   scannedFiles: readonly string[],
+  compatibilityWarnings: readonly P2aCompatibilityWarning[],
 ): ProjectionPlan {
   const sorted = [...entries].sort((left, right) => {
     const byPath = compareText(left.sourceArtifact, right.sourceArtifact);
@@ -101,6 +103,7 @@ function frozenPlan(
     entries: sorted,
     projectId,
     scannedFiles,
+    compatibilityWarnings,
     targets: candidates.map(({ input, report, targetSnapshot }) => ({
       contentDigest: targetSnapshot.contentDigest,
       outputDigest: report.outputDigest,
@@ -110,6 +113,9 @@ function frozenPlan(
     })),
   }));
   return Object.freeze({
+    compatibilityWarnings: Object.freeze(
+      compatibilityWarnings.map((warning) => Object.freeze(warning)),
+    ),
     counts: Object.freeze(counts),
     entries: Object.freeze(sorted.map((entry) => Object.freeze(entry))),
     planFingerprint: fingerprint,
@@ -146,6 +152,7 @@ function preparedInput(
   return {
     body: binding.approvedBody.slice(separator + 1),
     ingestedAt: source.ingestedAt,
+    producer: 'p2a',
     sourceKind: 'planning',
     sourceRevision: source.sourceRevision,
     sourceUri: source.sourceUri,
@@ -292,6 +299,7 @@ export function createP2aPlanningProjector(
         selection.bindings,
         candidates,
         selection.scannedFiles,
+        selection.compatibilityWarnings,
       );
       privatePlans.set(plan, {
         artifactRoot: selection.artifactRoot,

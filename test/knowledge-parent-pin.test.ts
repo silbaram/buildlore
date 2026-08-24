@@ -220,6 +220,7 @@ async function runPreparationWorkflow(
           projectId: input.projectId,
           remainingCount: 0,
           schemaVersion: PROJECT_SYNC_SCHEMA_VERSION,
+          warnings: [],
           writes: [{
             sourceKind: 'planning',
             sourceRevision,

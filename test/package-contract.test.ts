@@ -66,6 +66,8 @@ describe('package contract', () => {
       'knowledge-commit-lineage.schema.json',
       'knowledge-parent-pin-plan.schema.json',
       'knowledge-parent-pin-result.schema.json',
+      'local-project-registry.schema.json',
+      'source-collection-manifest.schema.json',
     ]) {
       expect(packageJson.exports[`./schemas/${schema}`]).toBe(`./schemas/${schema}`);
     }
@@ -223,6 +225,8 @@ describe('package contract', () => {
       'knowledge-commit-lineage.schema.json',
       'knowledge-parent-pin-plan.schema.json',
       'knowledge-parent-pin-result.schema.json',
+      'local-project-registry.schema.json',
+      'source-collection-manifest.schema.json',
     ]) {
       const subpath = `./schemas/${schema}`;
       expect(packageJson.exports[subpath]).toBe(subpath);
