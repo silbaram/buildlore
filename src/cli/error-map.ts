@@ -6,7 +6,11 @@ import { ModeAInitializationError } from '../knowledge/initialization.js';
 import { ParentKnowledgePinError } from '../knowledge/parent-pin-types.js';
 import { PublicationError } from '../knowledge/publication-types.js';
 import { ProfileOperationError } from '../profile/errors.js';
-import { ProjectionError, SourceDocumentError } from '../projector/errors.js';
+import {
+  ProjectionError,
+  SourceDocumentError,
+  SourceSelectionError,
+} from '../projector/errors.js';
 import { ProjectSyncError } from '../projector/sync.js';
 import { RetrievalOperationError } from '../retrieval/index.js';
 import { SecurityOperationError } from '../sanitizer/errors.js';
@@ -63,15 +67,20 @@ function safeRecoveryCommand(
 function knowledgeExitCode(code: KnowledgeErrorCode): 2 | 3 | 4 | 6 {
   switch (code) {
     case 'PROJECT_NOT_FOUND':
+    case 'SOURCE_BINDING_REQUIRED':
     case 'WORKSPACE_NOT_EMPTY':
       return 2;
     case 'MANIFEST_INVALID':
     case 'PATH_OUTSIDE_KNOWLEDGE':
     case 'PROJECT_EXISTS':
+    case 'SOURCE_BINDING_CONFLICT':
+    case 'SOURCE_BINDING_INVALID':
       return 3;
     case 'COMPILER_STATUS_UNSAFE':
     case 'REGISTRY_BUSY':
     case 'REGISTRY_WRITE_FAILED':
+    case 'SOURCE_BINDING_BUSY':
+    case 'SOURCE_BINDING_WRITE_FAILED':
       return 4;
     case 'GIT_ACCESS_DENIED':
     case 'GIT_NOT_AVAILABLE':
@@ -86,6 +95,15 @@ function knowledgeExitCode(code: KnowledgeErrorCode): 2 | 3 | 4 | 6 {
 function safeKnowledgeMessage(code: KnowledgeErrorCode): string {
   if (code === 'WORKSPACE_NOT_EMPTY') {
     return 'A non-Git workspace must be empty before initialization.';
+  }
+  if (code === 'SOURCE_BINDING_REQUIRED') {
+    return 'The selected project requires an explicit local source binding.';
+  }
+  if (code === 'SOURCE_BINDING_CONFLICT' || code === 'SOURCE_BINDING_INVALID') {
+    return 'The local source binding is invalid or conflicts with existing state.';
+  }
+  if (code === 'SOURCE_BINDING_BUSY' || code === 'SOURCE_BINDING_WRITE_FAILED') {
+    return 'The local source binding could not be updated safely.';
   }
   switch (knowledgeExitCode(code)) {
     case 2:
@@ -229,13 +247,22 @@ export function mapCliError(
     );
   }
   if (error instanceof ProjectSyncError) {
-    const validationFailure = error.code === 'SYNC_PLAN_BLOCKED' ||
+    const bindingFailure = error.code === 'SYNC_BINDING_FAILED';
+    const validationFailure = error.code === 'SYNC_INPUT_DRIFT' ||
+      error.code === 'SYNC_MANIFEST_FAILED' ||
+      error.code === 'SYNC_PLAN_BLOCKED' ||
+      error.code === 'SYNC_SANITIZATION_FAILED' ||
+      error.code === 'SYNC_SELECTION_FAILED' ||
       error.code === 'SYNC_TARGET_COLLISION';
     const failure = baseFailure(
       context,
-      validationFailure ? 3 : 4,
+      bindingFailure ? 2 : validationFailure ? 3 : 4,
       error.code,
-      validationFailure ? 'Synchronization plan was rejected safely.' : 'Synchronization failed safely.',
+      bindingFailure
+        ? 'Synchronization requires a valid explicit local source binding.'
+        : validationFailure
+          ? 'Synchronization input or plan was rejected safely.'
+          : 'Synchronization failed safely.',
     );
     return Object.freeze({
       ...failure,
@@ -246,6 +273,14 @@ export function mapCliError(
       }),
       partial: error.partial,
     });
+  }
+  if (error instanceof SourceSelectionError) {
+    return baseFailure(
+      context,
+      3,
+      error.code,
+      'Source collection manifest or selection was rejected safely.',
+    );
   }
   if (error instanceof ProjectionError || error instanceof SourceDocumentError) {
     const validationFailure = error.code.includes('INVALID') ||

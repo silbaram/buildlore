@@ -13,13 +13,16 @@ import {
 } from './source-document.js';
 
 const MAX_TARGET_BYTES = 512 * 1024;
-const TARGET_PATTERN = /^(?:execution|planning)--[a-f0-9]{64}\.md$/u;
+const TARGET_PATTERN = /^(?:execution|markdown|planning)--[a-f0-9]{64}\.md$/u;
 
-export type ProjectSourceKind = 'execution' | 'planning';
+export type ProjectSourceProducer = 'buildlore' | 'p2a';
+export type ProjectSourceKind = 'execution' | 'markdown' | 'planning';
 
 export interface ProjectSourceInput {
   readonly body: string;
   readonly ingestedAt: string;
+  /** Omitted only by legacy planning/execution callers, which remain P2A-owned. */
+  readonly producer?: ProjectSourceProducer;
   readonly sourceRevision: `sha256:${string}`;
   readonly sourceKind: ProjectSourceKind;
   readonly sourceUri: string;
@@ -83,7 +86,19 @@ function isContained(root: string, candidate: string): boolean {
   return difference === '' || (!difference.startsWith('..') && !isAbsolute(difference));
 }
 
+export function projectSourceProducer(input: ProjectSourceInput): ProjectSourceProducer {
+  const producer = input.producer ?? 'p2a';
+  const compatible =
+    (producer === 'buildlore' && input.sourceKind === 'markdown') ||
+    (producer === 'p2a' && (input.sourceKind === 'execution' || input.sourceKind === 'planning'));
+  if (!compatible) {
+    fail('PROJECTION_ARTIFACT_INVALID', 'The source producer and kind are incompatible.');
+  }
+  return producer;
+}
+
 function assertDerivedTarget(input: ProjectSourceInput): void {
+  projectSourceProducer(input);
   const expectedTarget = `${input.sourceKind}--${
     sha256(input.sourceUri).slice('sha256:'.length)
   }.md`;
@@ -165,6 +180,7 @@ async function readExistingTarget(
   projectId: string,
 ): Promise<ExistingTarget | null> {
   assertDerivedTarget(input);
+  const producer = projectSourceProducer(input);
   await assertDirectoryIdentity(sources);
   const path = join(sources.path, input.target);
   let status: Awaited<ReturnType<typeof lstat>>;
@@ -199,7 +215,7 @@ async function readExistingTarget(
     if (
       parsed.source !== input.sourceUri ||
       parsed.sourceType !== 'file' ||
-      parsed.buildlore.producer !== 'p2a' ||
+      parsed.buildlore.producer !== producer ||
       parsed.buildlore.projectId !== projectId ||
       parsed.buildlore.sourceKind !== input.sourceKind
     ) {
@@ -223,10 +239,11 @@ async function readExistingTarget(
 }
 
 function expectedMarkdown(input: ProjectSourceInput, projectId: string): string {
+  const producer = projectSourceProducer(input);
   return renderSourceDocument(createSourceDocument({
     body: input.body,
     ingestedAt: input.ingestedAt,
-    producer: 'p2a',
+    producer,
     projectId,
     source: input.sourceUri,
     sourceKind: input.sourceKind,
@@ -241,6 +258,7 @@ function assertWritableMarkdown(
   projectId: string,
   markdown: string,
 ): void {
+  const producer = projectSourceProducer(input);
   let parsed;
   try {
     parsed = parseSourceDocument(markdown);
@@ -253,7 +271,7 @@ function assertWritableMarkdown(
     parsed.source !== input.sourceUri ||
     parsed.sourceType !== 'file' ||
     parsed.title !== input.title ||
-    parsed.buildlore.producer !== 'p2a' ||
+    parsed.buildlore.producer !== producer ||
     parsed.buildlore.projectId !== projectId ||
     parsed.buildlore.sourceKind !== input.sourceKind ||
     parsed.buildlore.sourceRevision !== input.sourceRevision

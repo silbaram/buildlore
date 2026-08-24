@@ -15,6 +15,11 @@ interface GitResult {
 const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const STATUS_LINE_PATTERN = /^([ +\-U])([0-9a-f]{40}|[0-9a-f]{64})\s+knowledge(?:\s|$)/u;
 
+export interface GitRevisionSnapshot {
+  readonly committedAt: string;
+  readonly head: string;
+}
+
 function runGit(
   cwd: string,
   args: readonly string[],
@@ -80,6 +85,29 @@ export async function resolveGitWorktreeRoot(repositoryRoot: string): Promise<st
       recoveryCommand: ['knowledge', 'status'],
     });
   }
+}
+
+/** Read-only, bounded revision metadata for an already validated Git checkout. */
+export async function readGitRevisionSnapshot(
+  repositoryRoot: string,
+): Promise<GitRevisionSnapshot> {
+  const [headResult, timestampResult] = await Promise.all([
+    runGit(repositoryRoot, ['rev-parse', '--verify', 'HEAD^{commit}']),
+    runGit(repositoryRoot, ['show', '-s', '--format=%cI', 'HEAD']),
+  ]);
+  const head = headResult.stdout.trim();
+  const committedAt = timestampResult.stdout.trim();
+  if (
+    !OBJECT_ID_PATTERN.test(head) ||
+    headResult.stdout.trimEnd() !== head ||
+    committedAt.length < 1 || committedAt.length > 64 ||
+    timestampResult.stdout.trimEnd() !== committedAt
+  ) {
+    throw new KnowledgeError('GIT_ACCESS_DENIED', 'Git returned invalid revision metadata.', {
+      recoveryCommand: ['knowledge', 'status'],
+    });
+  }
+  return Object.freeze({ committedAt, head });
 }
 
 export async function initializeGitSuperproject(repositoryRoot: string): Promise<void> {

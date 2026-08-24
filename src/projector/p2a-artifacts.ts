@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, posix, relative, sep } from 'node:path';
-import { isDeepStrictEqual, TextDecoder } from 'node:util';
+import { isDeepStrictEqual } from 'node:util';
 
+import { decodeUtf8Strict, parseJsonStrict } from '../knowledge/strict-json.js';
 import { ProjectionError } from './errors.js';
 import {
+  type P2aCompatibilityWarning,
   type PlanningDocumentKind,
   type PlanningProjectionInput,
   type ProjectionPlanEntry,
@@ -23,6 +25,7 @@ import { matchingP2aApproval, parseP2aDecisionLedger } from './p2a-decision-ledg
 import {
   asP2aRecord,
   isP2aRecord,
+  P2aDocumentCompatibilityError,
   requireP2aString,
   validP2aTaskStatusCounts,
   validateP2aClosedIteration,
@@ -64,14 +67,25 @@ export interface P2aPlanningSelection {
   readonly artifactRoot: string;
   readonly bindings: readonly P2aArtifactBinding[];
   readonly candidates: readonly P2aPlanningCandidate[];
+  readonly compatibilityWarnings: readonly P2aCompatibilityWarning[];
   readonly entries: readonly ProjectionPlanEntry[];
   readonly scannedFiles: readonly string[];
 }
 
+export type P2aArtifactReadInput = Pick<
+  PlanningProjectionInput,
+  'artifactRoot' | 'explicitTimestamp' | 'projectId'
+>;
+
+export interface P2aArtifactFileSelection {
+  readonly selectedFiles: readonly string[];
+}
+
 export interface P2aArtifactAdapter {
   read(
-    input: PlanningProjectionInput,
+    input: P2aArtifactReadInput,
     repository: string,
+    selection?: P2aArtifactFileSelection,
   ): Promise<P2aPlanningSelection>;
   verify(
     artifactRoot: string,
@@ -82,6 +96,49 @@ export interface P2aArtifactAdapter {
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function normalizedCompatibilityWarnings(
+  values: readonly P2aCompatibilityWarning[],
+): readonly P2aCompatibilityWarning[] {
+  const sorted = [...values].sort((left, right) => {
+    const bySource = compareText(left.sourceArtifact, right.sourceArtifact);
+    if (bySource !== 0) return bySource;
+    const byField = compareText(left.fieldName ?? '', right.fieldName ?? '');
+    return byField === 0 ? compareText(left.code, right.code) : byField;
+  });
+  const unique = sorted.filter((value, index) => index === 0 ||
+    value.code !== sorted[index - 1]?.code ||
+    value.sourceArtifact !== sorted[index - 1]?.sourceArtifact ||
+    value.fieldName !== sorted[index - 1]?.fieldName);
+  if (unique.length <= 31) return Object.freeze(unique.map((value) => Object.freeze(value)));
+  const omitted = unique[31];
+  if (omitted === undefined) return fail('PROJECTION_ARTIFACT_INVALID', 'Warnings are invalid.');
+  return Object.freeze([
+    ...unique.slice(0, 31).map((value) => Object.freeze(value)),
+    Object.freeze({
+      code: 'p2a-compatibility-warning-overflow',
+      sourceArtifact: omitted.sourceArtifact,
+    } as const),
+  ]);
+}
+
+function additiveWarnings(
+  sourceArtifact: string,
+  findings: readonly Readonly<{ readonly fieldName?: string }>[],
+): readonly P2aCompatibilityWarning[] {
+  return findings.map((finding) => Object.freeze({
+    code: 'p2a-additive-field-ignored' as const,
+    ...(finding.fieldName === undefined ? {} : { fieldName: finding.fieldName }),
+    sourceArtifact,
+  }));
+}
+
+function excludedCompatibilityWarning(sourceArtifact: string): P2aCompatibilityWarning {
+  return Object.freeze({
+    code: 'p2a-document-compatibility-excluded',
+    sourceArtifact,
+  });
 }
 
 function fail(
@@ -158,6 +215,33 @@ async function listArtifactFiles(root: string): Promise<readonly string[]> {
   return files;
 }
 
+function selectedArtifactFiles(selection: P2aArtifactFileSelection): readonly string[] {
+  if (selection.selectedFiles.length < 1) {
+    return fail('PROJECTION_ARTIFACT_INVALID', 'Selected planning artifacts are missing.');
+  }
+  const files = [...selection.selectedFiles].sort(compareText);
+  for (let index = 0; index < files.length; index += 1) {
+    const path = files[index];
+    const segments = path?.split('/') ?? [];
+    if (
+      path === undefined ||
+      path.length < 1 ||
+      path.length > 4_096 ||
+      path.includes('\\') ||
+      path.startsWith('/') ||
+      /^[A-Za-z]:\//u.test(path) ||
+      posix.normalize(path) !== path ||
+      path.startsWith('../') ||
+      segments.includes('runs') ||
+      segments.at(-1) === 'run-index.json' ||
+      path === files[index - 1]
+    ) {
+      return fail('PROJECTION_PATH_UNSAFE', 'Selected planning artifact paths are unsafe.');
+    }
+  }
+  return Object.freeze(files);
+}
+
 async function readArtifact(
   root: string,
   relativePath: string,
@@ -224,8 +308,7 @@ async function readArtifact(
 
 function parseJson(artifact: SafeArtifact): Record<string, unknown> {
   try {
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(artifact.bytes);
-    return asP2aRecord(JSON.parse(text) as unknown);
+    return asP2aRecord(parseJsonStrict(decodeUtf8Strict(artifact.bytes)));
   } catch (error) {
     if (error instanceof ProjectionError) throw error;
     return fail('PROJECTION_ARTIFACT_INVALID', 'A planning artifact is not valid JSON.');
@@ -279,6 +362,7 @@ function createCandidate(
     body: normalizedBody,
     documentKind,
     ingestedAt: timestamp.value,
+    producer: 'p2a',
     sourceArtifact: artifact.relativePath,
     sourceRevision: artifact.digest,
     sourceKind: 'planning',
@@ -372,12 +456,15 @@ export function createP2aArtifactAdapter(
   revisionClock?: RevisionTimestampPort,
 ): P2aArtifactAdapter {
   return {
-    async read(input, repository): Promise<P2aPlanningSelection> {
+    async read(input, repository, selection): Promise<P2aPlanningSelection> {
       const root = await canonicalArtifactRoot(input.artifactRoot);
-      const files = await listArtifactFiles(root);
+      const files = selection === undefined
+        ? await listArtifactFiles(root)
+        : selectedArtifactFiles(selection);
       const knownFiles = new Set(files);
       const artifacts = new Map<string, SafeArtifact>();
       const bindingMap = new Map<string, P2aArtifactBinding>();
+      const compatibilityWarnings: P2aCompatibilityWarning[] = [];
       const read = async (path: string): Promise<SafeArtifact> => {
         const cached = artifacts.get(path);
         if (cached !== undefined) return cached;
@@ -397,10 +484,10 @@ export function createP2aArtifactAdapter(
       if (current.project_id !== input.projectId) {
         return fail('PROJECTION_PROJECT_MISMATCH', 'P2A artifacts do not match the selected project.');
       }
-      validateP2aCurrentSpec(current, input.projectId);
+      const currentState = validateP2aCurrentSpec(current, input.projectId);
       const decisions = parseP2aDecisionLedger((await read('decisions.jsonl')).bytes);
       const closedRecords = new Map<string, Record<string, unknown>>();
-      for (const value of current.closed_iterations) {
+      for (const value of currentState.closedIterations) {
         const closed = asP2aRecord(value);
         validateP2aClosedIteration(closed);
         const iterationId = requireP2aString(closed, 'iteration_id');
@@ -422,6 +509,24 @@ export function createP2aArtifactAdapter(
           'PROJECTION_ARTIFACT_INVALID',
           'The current specification references a missing iteration.',
         );
+      }
+      for (const [iterationId, binding] of currentState.gateBPromotionBindings) {
+        if (!iterationIdSet.has(iterationId)) {
+          return fail(
+            'PROJECTION_ARTIFACT_INVALID',
+            'A Gate B promotion binding references a missing iteration.',
+          );
+        }
+        const specArtifact = await read(binding.sourceSpecRef);
+        const iterationArtifact = await read(`iterations/${iterationId}/iteration.json`);
+        const iteration = parseJson(iterationArtifact);
+        validateP2aIteration(iteration, input.projectId, iterationId);
+        if (
+          specArtifact.digest.slice('sha256:'.length) !== binding.sourceSpecSha256 ||
+          iteration.promoted_at !== binding.promotedAt
+        ) {
+          return fail('PROJECTION_ARTIFACT_INVALID', 'A Gate B promotion binding is invalid.');
+        }
       }
       if (
         current.active_iteration !== undefined &&
@@ -490,7 +595,19 @@ export function createP2aArtifactAdapter(
             }]);
             continue;
           }
-          const views = validateP2aSpec(spec, input.projectId);
+          let views: ReturnType<typeof validateP2aSpec> | null = null;
+          try {
+            views = validateP2aSpec(spec, input.projectId);
+            compatibilityWarnings.push(...additiveWarnings(specPath, views.findings));
+          } catch (error) {
+            if (!(error instanceof P2aDocumentCompatibilityError)) throw error;
+            selected.set(specPath, [{
+              decision: 'exclude',
+              reasonCode: 'unsupported_schema',
+              sourceArtifact: specPath,
+            }]);
+            compatibilityWarnings.push(excludedCompatibilityWarning(specPath));
+          }
           const specApproval = matchingP2aApproval(decisions, specPath, specArtifact.digest);
           const intakeApproval = matchingP2aApproval(decisions, intakePath, intakeArtifact.digest);
           if (specApproval === null) {
@@ -502,15 +619,20 @@ export function createP2aArtifactAdapter(
             continue;
           }
           let intakeEligible = true;
+          let intakeView: Record<string, unknown> | null = null;
           try {
-            validateP2aIntake(intake);
-          } catch {
+            const validated = validateP2aIntake(intake);
+            intakeView = validated.intake;
+            compatibilityWarnings.push(...additiveWarnings(intakePath, validated.findings));
+          } catch (error) {
+            if (!(error instanceof P2aDocumentCompatibilityError)) throw error;
             intakeEligible = false;
             selected.set(intakePath, [{
-              decision: 'error',
+              decision: 'exclude',
               reasonCode: 'unsupported_schema',
               sourceArtifact: intakePath,
             }]);
+            compatibilityWarnings.push(excludedCompatibilityWarning(intakePath));
           }
           if (intakeApproval === null) {
             intakeEligible = false;
@@ -612,16 +734,18 @@ export function createP2aArtifactAdapter(
             }
           }
 
-          const specTimestamp = await resolveTimestamp(
-            root,
-            specArtifact,
-            [
-              { source: 'approval', value: specApproval.at },
-              { source: 'promotion', value: iteration.promoted_at },
-            ],
-            input.explicitTimestamp,
-            revisionClock,
-          );
+          const specTimestamp = views === null
+            ? null
+            : await resolveTimestamp(
+              root,
+              specArtifact,
+              [
+                { source: 'approval', value: specApproval.at },
+                { source: 'promotion', value: iteration.promoted_at },
+              ],
+              input.explicitTimestamp,
+              revisionClock,
+            );
           const intakeTimestamp = intakeEligible && intakeApproval !== null
             ? await resolveTimestamp(
               root,
@@ -631,7 +755,7 @@ export function createP2aArtifactAdapter(
               revisionClock,
             )
             : null;
-          if (specTimestamp === null) {
+          if (views !== null && specTimestamp === null) {
             selected.set(specPath, [{
               decision: 'error',
               reasonCode: 'timestamp_unavailable',
@@ -646,7 +770,7 @@ export function createP2aArtifactAdapter(
             }]);
           }
 
-          if (specTimestamp !== null) {
+          if (views !== null && specTimestamp !== null) {
             candidates.push(
               createCandidate(
               repository,
@@ -670,7 +794,7 @@ export function createP2aArtifactAdapter(
             ),
             );
           }
-          if (intakeEligible && intakeTimestamp !== null) {
+          if (intakeEligible && intakeTimestamp !== null && intakeView !== null) {
             candidates.push(createCandidate(
               repository,
               input.projectId,
@@ -679,10 +803,10 @@ export function createP2aArtifactAdapter(
               intakeArtifact,
               intakeTimestamp,
               `승인된 인테이크 — ${iterationId}`,
-              renderP2aIntake(intake, iterationId),
+              renderP2aIntake(intakeView, iterationId),
             ));
           }
-          if (archive !== null) {
+          if (archive !== null && views !== null) {
             candidates.push(createCandidate(
               repository,
               input.projectId,
@@ -732,6 +856,7 @@ export function createP2aArtifactAdapter(
         candidates,
         entries,
         scannedFiles: files,
+        compatibilityWarnings: normalizedCompatibilityWarnings(compatibilityWarnings),
       };
     },
 

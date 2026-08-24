@@ -89,6 +89,7 @@ function approvedInput(candidate: ExecutionCandidate, prepared: PreparedSource):
   return {
     body: binding.approvedBody.slice(separator + 1),
     ingestedAt: candidate.ingestedAt,
+    producer: 'p2a',
     sourceKind: 'execution',
     sourceRevision: candidate.sourceRevision,
     sourceUri: candidate.sourceUri,

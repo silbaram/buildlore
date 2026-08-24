@@ -1,0 +1,4 @@
+[submodule "knowledge"]
+	path = knowledge
+	url = https://github.com/silbaram/llm-wiki-knowledge.git
+	branch = main

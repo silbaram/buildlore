@@ -1,5 +1,7 @@
 # BuildLore
 
+[English](README.md) | [한국어](README.ko.md)
+
 BuildLore is local-first, Git-backed tooling for turning a code repository into a
 reviewable development wiki. The v0.1 foundation is a reusable TypeScript CLI and a
 set of explicit architecture boundaries; it does not require a database or a
@@ -13,21 +15,22 @@ long-running service.
 4. Retrieval reads the committed knowledge files for local agent use.
 5. Git review and history remain the source of collaboration and provenance.
 
-The code repository owns source code and BuildLore configuration. The separate
-knowledge repository owns generated and curated wiki content. In **Mode A**, one
-knowledge repository is checked out at `knowledge/` as a Git submodule of one code
-repository, and each isolated compiler workspace lives under
-`projects/<project-id>/`. The top-level `knowledge/` directory is only the registry
-and Git boundary; it is never a compiler workspace.
+Each source repository owns its code and a portable source-selection manifest. A
+separate BuildLore hub owns one knowledge repository checked out at `knowledge/` as
+a Git submodule plus machine-local source bindings. In **Mode A**, one hub can bind
+multiple independent source checkouts, while each isolated compiler workspace lives
+under `knowledge/projects/<project-id>/`. The top-level `knowledge/` directory is
+only the registry and Git boundary; it is never a compiler workspace.
 
 `source` means an input selected from the code repository. `wiki` means the
 sanitized, compiled knowledge artifact. A `project-id` is the stable isolation key
 that binds those inputs and outputs.
 
-## Requirements and setup
+## Install and run locally
 
 - Node.js 24 or newer (Node.js 24 LTS is the reference runtime)
 - npm 11, specifically the repository-declared `npm@11.19.0`
+- Git, plus access to an existing knowledge repository
 
 From a clean clone:
 
@@ -37,53 +40,293 @@ npm run build
 node dist/cli/bin.js --help
 ```
 
+Run commands from the BuildLore hub root. The examples below use
+`node dist/cli/bin.js`; replace it with `buildlore` when the package bin is linked or
+installed.
+
 The lockfile and every direct dependency use exact versions.
 `llm-wiki-compiler@1.1.0` is consumed only through the replaceable `src/compiler`
 package-root adapter; BuildLore does not fork it or import its internal modules.
-Compiler operations accept only a registered `projectId`. Provider-backed compile,
-full evaluation, search, query, and semantic context operations deny egress unless
-the caller supplies an explicit project-and-capability authorizer; provider
-credentials remain external. Context with `topChunks: 0` stays local and requires no
-provider permit.
 
-`query` always uses `save: false`, but upstream still appends query activity to the
-selected project's `log.md`; callers should treat it as a project-local log write.
+## Quick start
+
+### 1. Create the central hub
+
+Assume BuildLore is installed in `/d` and the independent Git projects are checked
+out at `/a`, `/b`, and `/c`. Run every BuildLore command from `/d`. Mode A keeps one
+knowledge repository at `/d/knowledge`; that repository must already exist and be
+accessible through the user's Git credential helper or SSH agent.
+
+```sh
+cd /d
+node dist/cli/bin.js init \
+  --knowledge-repo https://github.com/acme/example-knowledge.git \
+  --branch main
+node dist/cli/bin.js knowledge status
+```
+
+Initialization creates the hub-local `.buildlore/local-projects.json` registry. It is
+Git-ignored because it contains machine-specific absolute checkout roots. Portable
+project identities remain in the knowledge repository.
+
+### 2. Declare documents in each source project
+
+Each source project owns and commits `.buildlore/sources.json`. The hub reads only
+the declared project-root-relative regular files. For example, `/a/.buildlore/sources.json`
+can collect Markdown documentation and approved Plan2Agent planning documents:
+
+```json
+{
+  "projectId": "a",
+  "schemaVersion": "buildlore.sources.v1",
+  "sourceRepository": "https://github.com/acme/a.git",
+  "sources": [
+    {
+      "documentKind": "markdown",
+      "id": "docs",
+      "path": "docs",
+      "pathType": "directory",
+      "recursive": true
+    },
+    {
+      "documentKind": "p2a-planning",
+      "id": "planning",
+      "path": ".plan2agent",
+      "pathType": "directory",
+      "recursive": true
+    }
+  ]
+}
+```
+
+Create corresponding manifests in `/b` and `/c` with their own `projectId`,
+repository identity, and selections. BuildLore does not crawl undeclared directories,
+and planning-only selection does not read `.plan2agent/runs` or `run-index.json`.
+
+### 3. Register and bind projects from the hub
+
+Every operation uses an explicit project ID; BuildLore never infers a default project.
+
+```sh
+node dist/cli/bin.js project add \
+  --id a \
+  --name "Project A" \
+  --source-repo https://github.com/acme/a.git \
+  --source-root /a
+node dist/cli/bin.js project add \
+  --id b \
+  --source-repo https://github.com/acme/b.git \
+  --source-root /b
+node dist/cli/bin.js project add \
+  --id c \
+  --source-repo https://github.com/acme/c.git \
+  --source-root /c
+node dist/cli/bin.js project list
+node dist/cli/bin.js project show --project a
+```
+
+This creates isolated compiler workspaces under `knowledge/projects/a/`, `b/`, and
+`c/`. Repository locators may not contain embedded
+credentials, query strings, fragments, custom remote helpers, or absolute personal
+paths. The `--source-root` value is validated and stored only in the ignored local
+registry; list, show, JSON output, errors, and knowledge files never expose it.
+
+For a portable project created by an older BuildLore version, or after moving a
+checkout, migrate only its local binding:
+
+```sh
+node dist/cli/bin.js project bind --project a --source-root /a
+```
+
+`project bind` validates the existing portable repository identity and the source
+manifest. It never guesses a checkout and does not rewrite the source project.
+
+### 4. Preview, synchronize, then compile explicitly
+
+`sync` resolves the selected local binding, reads only that project's declared files,
+sanitizes them, and writes approved canonical source documents into the matching
+knowledge workspace. Preview the complete selection and security path before writing:
+
+```sh
+node dist/cli/bin.js sync --project a --dry-run
+node dist/cli/bin.js sync --project a
+node dist/cli/bin.js compile --project a
+```
+
+Synchronization never compiles, publishes, or contacts a provider. Compilation is a
+separate explicit project-scoped operation. Neither command reads or changes project
+B or C while project A is selected.
+
+Source checkouts are read-only to BuildLore. Traversal, symlinks, non-regular files,
+identity mismatches, size/count limits, drift, and suspected secrets fail closed
+before persistence. Rejected values and absolute source roots are not echoed. The
+sanitized source, wiki, and compiler state remain confined to
+`/d/knowledge/projects/<project-id>/`.
+
+### 5. Configure provider access when needed
+
+Local project, sync, check, and lexical search commands need no model provider.
+Compilation and query require one. Semantic or hybrid search and context use a
+provider only when their requested path needs embeddings or model work.
+
+Provider credentials stay in the process environment and must not be written to the
+code or knowledge repository. For example, an OpenAI-compatible provider uses:
+
+```sh
+export LLMWIKI_PROVIDER=openai
+export OPENAI_API_KEY=<value-from-your-secret-manager>
+```
+
+Provider access is also controlled by
+`knowledge/projects/example/security-policy.json`. A newly registered project is
+fail-closed (`restricted` with no egress rules). Review the data classification and
+explicitly allow only the capabilities and `public` or `internal` classifications that
+may leave the machine. `restricted` data can never be authorized for egress.
+
+For example, after confirming that every projected input is suitable for `internal`
+provider processing, the reviewed policy can allow only the operations in use:
+
+```json
+{
+  "schemaVersion": "buildlore.security-policy.v1",
+  "projectId": "example",
+  "defaultClassification": "internal",
+  "classificationRules": [],
+  "egressRules": [
+    {
+      "allowedClassifications": ["internal", "public"],
+      "capability": "compile"
+    },
+    {
+      "allowedClassifications": ["internal", "public"],
+      "capability": "context"
+    },
+    {
+      "allowedClassifications": ["internal", "public"],
+      "capability": "query"
+    },
+    {
+      "allowedClassifications": ["internal", "public"],
+      "capability": "search"
+    }
+  ],
+  "overrides": []
+}
+```
+
+The policy file is canonical JSON: preserve its field and rule order. Omit any egress
+rule that the project does not need.
+
+### 6. Compile and verify the wiki
+
+Review mode writes generated pages to the compiler candidate queue without changing
+the live wiki. A normal compile writes live compiled output and incremental state.
+
+```sh
+node dist/cli/bin.js compile --project example --review
+node dist/cli/bin.js compile --project example
+node dist/cli/bin.js check --project example
+```
+
+The isolated project workspace contains flat sanitized sources under `sources/`,
+generated pages under `wiki/`, compiler state under `.llmwiki/`, and the applied
+language-neutral lifecycle profile.
+
+## Read and retrieve knowledge
+
+Lexical search is deterministic and works without credentials:
+
+```sh
+node dist/cli/bin.js search \
+  --project example \
+  --query "실패 원인" \
+  --mode lexical
+```
+
+Semantic and hybrid search can use the configured embedding provider. If compatible
+embedding state or provider access is unavailable, the result explicitly reports its
+lexical fallback or recovery action instead of silently rebuilding the index.
+
+```sh
+node dist/cli/bin.js search --project example --query "authentication decision" --mode hybrid
+node dist/cli/bin.js query --project example --question "Why was this design selected?"
+node dist/cli/bin.js context --project example --prompt "Prepare an implementation plan"
+```
+
+`query` always requests `save: false`, but the upstream compiler still appends query
+activity to the selected project's `log.md`. Context can explicitly fall back to a
+local lexical path when embeddings or provider access are unavailable. Add `--json`
+to any command to receive one deterministic
+`buildlore.cli-envelope.v1` object suitable for automation.
+
+## Publish knowledge through Git
+
+Publication is deliberately split into reviewable operations. First obtain the full
+source revision with `git rev-parse HEAD`, then plan and commit only the selected
+project's allowed knowledge paths:
+
+```sh
+node dist/cli/bin.js publish plan \
+  --project example \
+  --source-revision <full-source-git-oid> \
+  --json
+
+node dist/cli/bin.js publish commit \
+  --project example \
+  --source-revision <same-full-source-git-oid> \
+  --expect-plan <plan-digest-from-the-plan-result> \
+  --json
+```
+
+Copy the returned knowledge revision into the explicit non-force push, then plan and
+commit the parent repository's submodule pin:
+
+```sh
+node dist/cli/bin.js publish push \
+  --project example \
+  --knowledge-revision <full-knowledge-git-oid>
+
+node dist/cli/bin.js knowledge pin plan \
+  --knowledge-revision <same-full-knowledge-git-oid> \
+  --iteration <iteration-id> \
+  --intent iteration-close \
+  --json
+
+node dist/cli/bin.js knowledge pin commit \
+  --knowledge-revision <same-full-knowledge-git-oid> \
+  --iteration <same-iteration-id> \
+  --intent iteration-close \
+  --expect-plan <pin-plan-digest> \
+  --json
+```
+
+Planning is mutation-free. Knowledge commit, remote push, and parent pin are separate
+transactions; no command performs all three. The pin command creates only the local
+parent commit and never pushes the code repository. Use `--registration` when the
+reviewed publication includes the new project registry entry, and
+`--include-policy-track` only when review candidates or other policy-tracked artifacts
+must be included.
+
+## Command summary
+
+```text
+init -> project add -> sync --dry-run -> sync -> compile -> check
+                                         |                    |
+                                         +-> search/query/context
+                                         +-> publish plan -> commit -> push -> knowledge pin
+```
+
+Compatibility aliases remain available for `knowledge clone`, `knowledge init`,
+`knowledge status`, and `project validate`.
+
+Compiler operations accept only a registered `projectId`. Provider-backed compile,
+full evaluation, search, query, and semantic context operations deny egress unless the
+project security policy allows the exact capability and every input classification.
+Context with `topChunks: 0` stays local and requires no provider permit.
+
 The upstream SDK has no active cancellation, overall deadline, or progress callback,
 so BuildLore does not claim those behaviors. A host may translate process signals
 into the adapter's `AbortSignal`; the adapter itself installs no global handlers.
-
-## Mode A commands
-
-Connect or restore one knowledge submodule and inspect its Git-native pin:
-
-```sh
-buildlore knowledge clone --repository <https-ssh-or-relative-local-locator> --branch main
-buildlore knowledge init
-buildlore knowledge status
-```
-
-Register and inspect an isolated project workspace:
-
-```sh
-buildlore project add \
-  --project-id example \
-  --display-name "Example" \
-  --source-repository https://example.invalid/example.git
-buildlore project list
-buildlore project show --project-id example
-buildlore project validate --project-id example
-buildlore knowledge status --project-id example
-```
-
-Project commands require the `knowledge/` submodule to be initialized at the
-superproject's pinned commit. `knowledge status` uses schema
-`buildlore.status.v1` and reports `initialized`, `currentCommit`, `pinnedCommit`,
-`pinState`, and, when selected, `projectId`, `workspacePath`, and compiler status.
-
-New product commands return deterministic JSON. Repository locators may not contain
-embedded credentials, query strings, fragments, custom remote helpers, or absolute
-personal paths. Authentication remains the responsibility of the user's existing
-Git credential helper or SSH agent.
 
 `knowledge/manifest.json` uses `buildlore.knowledge.v1`; each project descriptor
 uses `buildlore.project.v1`. Project paths are always `projects/<project-id>`, and

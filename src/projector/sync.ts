@@ -15,9 +15,12 @@ import type {
 import { EXECUTION_INCLUSION_POLICY_VERSION, EXECUTION_PROJECTION_PLAN_SCHEMA_VERSION } from './execution-types.js';
 import { createP2aExecutionKnowledgeProjector } from './p2a-execution-projector.js';
 import { createP2aPlanningProjector } from './p2a-planning-projector.js';
+import { runHubProjectSync } from './hub-sync.js';
+import { isSafeP2aCompatibilityFieldName } from './p2a-codecs.js';
 import {
   PROJECTION_PLAN_SCHEMA_VERSION,
   type PlanningProjectorPort,
+  type P2aCompatibilityWarningCode,
   type ProjectionApplyResult,
   type ProjectionPlan,
   type ProjectionPlanEntry,
@@ -26,25 +29,44 @@ import {
 export const PROJECT_SYNC_SCHEMA_VERSION = 'buildlore.project-sync.v1' as const;
 
 export type ProjectSyncFailurePhase =
+  | 'binding'
+  | 'drift'
   | 'execution-apply'
   | 'execution-plan'
+  | 'manifest'
   | 'planning-apply'
-  | 'planning-plan';
+  | 'planning-plan'
+  | 'sanitization'
+  | 'selection'
+  | 'write';
 
 export type ProjectSyncErrorCode =
   | 'SYNC_APPLY_FAILED'
+  | 'SYNC_BINDING_FAILED'
+  | 'SYNC_INPUT_DRIFT'
+  | 'SYNC_MANIFEST_FAILED'
   | 'SYNC_PLAN_BLOCKED'
   | 'SYNC_PLAN_FAILED'
+  | 'SYNC_SANITIZATION_FAILED'
+  | 'SYNC_SELECTION_FAILED'
   | 'SYNC_TARGET_COLLISION';
 
 export type ProjectSyncRecoveryAction = 'inspect-plan' | 'retry-sync';
 
-export interface ProjectSyncInput {
+export interface LegacyProjectSyncInput {
   readonly artifactRoot: string;
   readonly dryRun: boolean;
   readonly knowledgeRoot: string;
   readonly projectId: string;
 }
+
+export interface HubProjectSyncInput {
+  readonly dryRun: boolean;
+  readonly hubRoot: string;
+  readonly projectId: string;
+}
+
+export type ProjectSyncInput = LegacyProjectSyncInput | HubProjectSyncInput;
 
 export interface ProjectSyncDecisionCounts {
   readonly blocked: number;
@@ -58,7 +80,7 @@ export interface ProjectSyncPlanEntrySummary {
   readonly decision: 'blocked' | 'error' | 'exclude' | 'include' | 'quarantine';
   readonly reasonCode: string;
   readonly security?: SanitizationReport;
-  readonly sourceKind: 'execution' | 'planning';
+  readonly sourceKind: 'execution' | 'markdown' | 'planning';
   readonly sourceRef: string | null;
   readonly sourceRevision: `sha256:${string}` | null;
   readonly target: string | null;
@@ -72,22 +94,36 @@ export interface ProjectSyncPlanSummary {
 }
 
 export interface ProjectSyncWriteSummary {
-  readonly sourceKind: 'execution' | 'planning';
+  readonly sourceKind: 'execution' | 'markdown' | 'planning';
   readonly sourceRevision: `sha256:${string}`;
   readonly target: string;
   readonly writeStatus: 'create' | 'unchanged' | 'update';
+}
+
+export interface ProjectSyncWarning {
+  readonly code: P2aCompatibilityWarningCode;
+  readonly fieldName?: string;
+  readonly sourceKind: 'planning';
+  readonly sourceRef: string;
 }
 
 export interface ProjectSyncSummary {
   readonly appliedCount: number;
   readonly dryRun: boolean;
   readonly execution: ProjectSyncPlanSummary;
-  readonly partial: false;
+  readonly partial: boolean;
   readonly planning: ProjectSyncPlanSummary;
   readonly projectId: string;
   readonly remainingCount: number;
   readonly schemaVersion: typeof PROJECT_SYNC_SCHEMA_VERSION;
+  readonly warnings: readonly ProjectSyncWarning[];
   readonly writes: readonly ProjectSyncWriteSummary[];
+  /** Present for hub-bound source collection syncs. */
+  readonly collection?: ProjectSyncPlanSummary;
+  readonly bindingDigest?: `sha256:${string}`;
+  readonly inventoryDigest?: `sha256:${string}`;
+  readonly manifestDigest?: `sha256:${string}`;
+  readonly sourceHead?: string;
 }
 
 export interface ProjectSyncPort {
@@ -144,7 +180,7 @@ export class ProjectSyncError extends Error {
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const RULE_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
-const TARGET_PATTERN = /^(?:execution|planning)--[a-f0-9]{64}\.md$/u;
+const TARGET_PATTERN = /^(?:execution|markdown|planning)--[a-f0-9]{64}\.md$/u;
 const PLANNING_DECISIONS = new Set(['blocked', 'error', 'exclude', 'include', 'quarantine']);
 const EXECUTION_DECISIONS = new Set(['blocked', 'exclude', 'include', 'quarantine']);
 const WRITE_STATUSES = new Set(['create', 'unchanged', 'update']);
@@ -168,6 +204,10 @@ function fail(
     partial: options.partial ?? false,
     recoveryAction: options.recoveryAction ?? 'inspect-plan',
   });
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function isSafeRelativeRef(value: string): boolean {
@@ -299,6 +339,60 @@ function planningSummary(plan: ProjectionPlan, projectId: string): ProjectSyncPl
     }),
     failedPhase,
   );
+}
+
+function planningWarnings(
+  plan: ProjectionPlan,
+  projectId: string,
+): readonly ProjectSyncWarning[] {
+  const rawWarnings: unknown = plan.compatibilityWarnings;
+  if (!Array.isArray(rawWarnings) || rawWarnings.length > 32) {
+    return fail('SYNC_PLAN_FAILED', 'planning-plan');
+  }
+  const warnings = rawWarnings.map((warning: unknown): ProjectSyncWarning => {
+    if (
+      typeof warning !== 'object' || warning === null || Array.isArray(warning) ||
+      Object.keys(warning).some((key) =>
+        key !== 'code' && key !== 'fieldName' && key !== 'sourceArtifact') ||
+      !('code' in warning) || !isCompatibilityWarningCode(warning.code) ||
+      !('sourceArtifact' in warning) || typeof warning.sourceArtifact !== 'string' ||
+      !isSafeRelativeRef(warning.sourceArtifact)
+    ) return fail('SYNC_PLAN_FAILED', 'planning-plan');
+    const fieldName: unknown = 'fieldName' in warning ? warning.fieldName : undefined;
+    if (fieldName !== undefined &&
+        (typeof fieldName !== 'string' || !isSafeP2aCompatibilityFieldName(fieldName))) {
+      return fail('SYNC_PLAN_FAILED', 'planning-plan');
+    }
+    return Object.freeze({
+      code: warning.code,
+      ...(typeof fieldName === 'string' ? { fieldName } : {}),
+      sourceKind: 'planning' as const,
+      sourceRef: warning.sourceArtifact,
+    });
+  });
+  const sorted = [...warnings].sort((left, right) => {
+    const bySource = compareText(left.sourceRef, right.sourceRef);
+    if (bySource !== 0) return bySource;
+    const byField = compareText(left.fieldName ?? '', right.fieldName ?? '');
+    return byField === 0 ? compareText(left.code, right.code) : byField;
+  });
+  if (plan.projectId !== projectId) return fail('SYNC_PLAN_FAILED', 'planning-plan');
+  const unique = sorted.filter((warning, index) => index === 0 ||
+    warning.code !== sorted[index - 1]?.code ||
+    warning.sourceRef !== sorted[index - 1]?.sourceRef ||
+    warning.fieldName !== sorted[index - 1]?.fieldName);
+  const overflowCount = unique.filter((warning) =>
+    warning.code === 'p2a-compatibility-warning-overflow').length;
+  if (overflowCount > 1 || unique.length - overflowCount > 31) {
+    return fail('SYNC_PLAN_FAILED', 'planning-plan');
+  }
+  return Object.freeze(unique);
+}
+
+function isCompatibilityWarningCode(value: unknown): value is P2aCompatibilityWarningCode {
+  return value === 'p2a-additive-field-ignored' ||
+    value === 'p2a-compatibility-warning-overflow' ||
+    value === 'p2a-document-compatibility-excluded';
 }
 
 function executionSummary(
@@ -479,6 +573,14 @@ export function createProjectSyncService(
     createP2aExecutionKnowledgeProjector();
   return {
     async sync(input): Promise<ProjectSyncSummary> {
+      if ('hubRoot' in input) {
+        return runHubProjectSync(input, {
+          failure: {
+            fail: (code, phase, failureOptions = {}) =>
+              fail(code, phase, failureOptions),
+          },
+        });
+      }
       let planningPlan: ProjectionPlan;
       try {
         planningPlan = await planningProjector.plan(input);
@@ -486,6 +588,7 @@ export function createProjectSyncService(
         return fail('SYNC_PLAN_FAILED', 'planning-plan', { cause: error });
       }
       const planning = planningSummary(planningPlan, input.projectId);
+      const warnings = planningWarnings(planningPlan, input.projectId);
 
       let executionPlan: ExecutionProjectionPlan;
       try {
@@ -503,11 +606,12 @@ export function createProjectSyncService(
           appliedCount: 0,
           dryRun: true,
           execution,
-          partial: false,
+          partial: warnings.length > 0,
           planning,
           projectId: input.projectId,
           remainingCount: plannedRemaining(planning, execution),
           schemaVersion: PROJECT_SYNC_SCHEMA_VERSION,
+          warnings,
           writes: Object.freeze([]),
         });
       }
@@ -546,11 +650,12 @@ export function createProjectSyncService(
         appliedCount: writes.filter((write) => write.writeStatus !== 'unchanged').length,
         dryRun: false,
         execution,
-        partial: false,
+        partial: warnings.length > 0,
         planning,
         projectId: input.projectId,
         remainingCount: 0,
         schemaVersion: PROJECT_SYNC_SCHEMA_VERSION,
+        warnings,
         writes,
       });
     },

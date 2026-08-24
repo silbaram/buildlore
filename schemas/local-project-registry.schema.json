@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/local-project-registry.schema.json",
+  "title": "BuildLore Hub-local Project Registry v1",
+  "description": "Machine-local bindings. This document must be Git-ignored and must never be copied into portable knowledge output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bindings", "schemaVersion"],
+  "properties": {
+    "bindings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/binding" }
+    },
+    "schemaVersion": { "const": "buildlore.local-projects.v1" }
+  },
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "sourceRepositoryDigest", "sourceRoot"],
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "not": { "enum": ["knowledge", "manifest", "projects", "shared"] }
+        },
+        "sourceRepositoryDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "sourceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "oneOf": [
+            {
+              "description": "Canonical POSIX absolute path",
+              "pattern": "^/(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[\\u0000-\\u001f\\u007f-\\u009f])(?:[^/\\u0000-\\u001f\\u007f-\\u009f]+(?:/[^/\\u0000-\\u001f\\u007f-\\u009f]+)*)?$"
+            },
+            {
+              "description": "Canonical Windows drive-absolute path",
+              "pattern": "^[A-Za-z]:\\\\(?!.*\\\\\\\\)(?!.*(?:^|\\\\)\\.{1,2}(?:\\\\|$))(?!.*[\\u0000-\\u001f\\u007f-\\u009f])(?:[^\\\\/\\u0000-\\u001f\\u007f-\\u009f]+(?:\\\\[^\\\\/\\u0000-\\u001f\\u007f-\\u009f]+)*)?$"
+            },
+            {
+              "description": "Canonical Windows UNC path with server and share",
+              "pattern": "^\\\\\\\\(?!.*\\\\\\\\)(?!.*(?:^|\\\\)\\.{1,2}(?:\\\\|$))(?!.*[\\u0000-\\u001f\\u007f-\\u009f])[^\\\\/\\u0000-\\u001f\\u007f-\\u009f]+\\\\[^\\\\/\\u0000-\\u001f\\u007f-\\u009f]+(?:\\\\[^\\\\/\\u0000-\\u001f\\u007f-\\u009f]+)*$"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

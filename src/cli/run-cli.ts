@@ -9,10 +9,27 @@ import {
 import { KnowledgeError, type KnowledgeErrorCode } from '../knowledge/errors.js';
 import { cloneKnowledge, initKnowledge } from '../knowledge/git.js';
 import { initializeModeAWorkspace } from '../knowledge/initialization.js';
+import {
+  bindLocalProject,
+  ensureLocalProjectRegistryIgnored,
+  initializeLocalProjectRegistry,
+  inspectLocalProjectBindingCandidate,
+  type LocalProjectRegistryHooks,
+} from '../knowledge/local-project-registry.js';
 import { getKnowledgeStatus } from '../knowledge/status.js';
-import type { CompilerStatusPort } from '../knowledge/types.js';
+import type {
+  CompilerStatusPort,
+  ProjectRecord,
+  ProjectRegistryEntry,
+} from '../knowledge/types.js';
 import { addProject, listProjects, showProject, validateProjectRegistry } from '../knowledge/workspace.js';
-import { createProjectSyncService, type ProjectSyncPort } from '../projector/index.js';
+import {
+  createProjectSyncService,
+  inspectLocalSourceStatus,
+  type LocalSourceStatus,
+  type ProjectSyncPort,
+} from '../projector/index.js';
+import { readSourceCollectionManifest } from '../projector/source-manifest.js';
 import {
   createKnowledgePublicationService,
   createParentKnowledgePinService,
@@ -73,6 +90,8 @@ export interface CliRuntime {
   readonly check?: ProjectCheckPort;
   readonly cwd: string;
   readonly compiler?: CompilerStatusPort;
+  /** @internal Fault seam for local registry integration tests. */
+  readonly localProjectRegistryHooks?: LocalProjectRegistryHooks;
   readonly projectCompiler?: ProjectCompilerPort;
   readonly parentPin?: ParentKnowledgePinPort;
   readonly publication?: KnowledgePublicationPort;
@@ -205,10 +224,13 @@ async function executeCommand(
   switch (command.operation) {
     case 'init': {
       const branch = stringOption(command, '--branch');
-      return initializeModeAWorkspace(runtime.cwd, {
+      const workspace = await initializeModeAWorkspace(runtime.cwd, {
         ...(branch === undefined ? {} : { branch }),
         repository: requiredStringOption(command, '--knowledge-repo'),
       });
+      await ensureLocalProjectRegistryIgnored(runtime.cwd);
+      const localProjects = await initializeLocalProjectRegistry(runtime.cwd);
+      return Object.freeze({ ...workspace, localProjects });
     }
     case 'knowledge.clone': {
       const branch = stringOption(command, '--branch');
@@ -231,19 +253,89 @@ async function executeCommand(
     }
     case 'project.add': {
       const projectId = requiredStringOption(command, '--id');
+      const sourceRepository = requiredStringOption(command, '--source-repo');
+      const sourceRoot = requiredStringOption(command, '--source-root');
       await assertProjectCommandsReady(runtime);
-      return addProject(join(runtime.cwd, 'knowledge'), {
+      await ensureLocalProjectRegistryIgnored(runtime.cwd);
+      const candidate = await inspectLocalProjectBindingCandidate(runtime.cwd, {
+        allowReplacement: false,
+        projectId,
+        sourceRepository,
+        sourceRoot,
+      });
+      await readSourceCollectionManifest(candidate.checkout, projectId);
+      let binding: Awaited<ReturnType<typeof bindLocalProject>> | undefined;
+      const project = await addProject(join(runtime.cwd, 'knowledge'), {
         displayName: stringOption(command, '--name') ?? projectId,
         projectId,
-        sourceRepository: requiredStringOption(command, '--source-repo'),
+        sourceRepository,
+      }, {
+        afterRegistration: async () => {
+          await readSourceCollectionManifest(candidate.checkout, projectId);
+          binding = await bindLocalProject(runtime.cwd, {
+            expectedBindingDigest: null,
+            projectId,
+            sourceRepository,
+            sourceRoot,
+          }, runtime.localProjectRegistryHooks);
+        },
       });
+      if (binding === undefined) {
+        throw new KnowledgeError(
+          'REGISTRY_WRITE_FAILED',
+          'Project registration did not complete safely.',
+        );
+      }
+      return projectCliView(
+        project,
+        await inspectLocalSourceStatus(runtime.cwd, project.entry),
+        binding,
+      );
     }
-    case 'project.list':
+    case 'project.bind': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      await ensureLocalProjectRegistryIgnored(runtime.cwd);
+      const project = await showProject(join(runtime.cwd, 'knowledge'), projectId);
+      const sourceRoot = requiredStringOption(command, '--source-root');
+      const candidate = await inspectLocalProjectBindingCandidate(runtime.cwd, {
+        allowReplacement: true,
+        projectId,
+        sourceRepository: project.entry.sourceRepository,
+        sourceRoot,
+      });
+      await readSourceCollectionManifest(candidate.checkout, projectId);
+      const binding = await bindLocalProject(runtime.cwd, {
+        ...(candidate.currentBindingDigest === null
+          ? {}
+          : { expectedBindingDigest: candidate.currentBindingDigest }),
+        projectId,
+        sourceRepository: project.entry.sourceRepository,
+        sourceRoot,
+      }, runtime.localProjectRegistryHooks);
+      return projectCliView(
+        project,
+        await inspectLocalSourceStatus(runtime.cwd, project.entry),
+        binding,
+      );
+    }
+    case 'project.list': {
       await assertProjectCommandsReady(runtime);
-      return listProjects(join(runtime.cwd, 'knowledge'));
-    case 'project.show':
+      const projects = await listProjects(join(runtime.cwd, 'knowledge'));
+      return Promise.all(projects.map(async (project) =>
+        projectListCliView(project, await inspectLocalSourceStatus(runtime.cwd, project))));
+    }
+    case 'project.show': {
       await assertProjectCommandsReady(runtime);
-      return showProject(join(runtime.cwd, 'knowledge'), requiredStringOption(command, '--project'));
+      const project = await showProject(
+        join(runtime.cwd, 'knowledge'),
+        requiredStringOption(command, '--project'),
+      );
+      return projectCliView(
+        project,
+        await inspectLocalSourceStatus(runtime.cwd, project.entry),
+      );
+    }
     case 'project.validate':
       await assertProjectCommandsReady(runtime);
       return validateProjectRegistry(
@@ -255,10 +347,8 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const service = runtime.sync ?? createProjectSyncService();
       return service.sync({
-        artifactRoot: runtime.artifactRoot ??
-          join(runtime.cwd, '.plan2agent', 'artifacts', projectId),
         dryRun: command.options['--dry-run'] === true,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        hubRoot: runtime.cwd,
         projectId,
       });
     }
@@ -362,6 +452,37 @@ async function executeCommand(
       }, requiredStringOption(command, '--expect-plan') as PublicationDigest);
     }
   }
+}
+
+function projectCliView(
+  project: ProjectRecord,
+  localSource: LocalSourceStatus,
+  binding?: {
+    readonly bindingDigest: string;
+    readonly outcome: 'created' | 'replaced' | 'unchanged';
+  },
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    descriptor: project.descriptor,
+    entry: project.entry,
+    localSource,
+    workspacePath: project.workspacePath,
+    ...(binding === undefined
+      ? {}
+      : {
+          binding: Object.freeze({
+            bindingDigest: binding.bindingDigest,
+            outcome: binding.outcome,
+          }),
+        }),
+  });
+}
+
+function projectListCliView(
+  project: ProjectRegistryEntry,
+  localSource: LocalSourceStatus,
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({ ...project, localSource });
 }
 
 function safeStringField(value: unknown, key: string): string | null {

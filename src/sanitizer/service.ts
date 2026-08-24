@@ -37,6 +37,7 @@ const TOKEN_PATTERN = /[A-Za-z0-9_+./=-]{20,512}/gu;
 const SOURCE_KINDS = new Set([
   'compiler-cache',
   'execution',
+  'markdown',
   'planning',
   'profile',
   'provider-request',

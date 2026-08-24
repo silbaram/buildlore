@@ -8,6 +8,7 @@ export type CliCommandId =
   | 'knowledge.pin.commit'
   | 'knowledge.pin.plan'
   | 'project.add'
+  | 'project.bind'
   | 'project.list'
   | 'project.show'
   | 'publish.commit'

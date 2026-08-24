@@ -14,6 +14,17 @@ export type ProjectionDecision = 'blocked' | 'error' | 'exclude' | 'include' | '
 export type ProjectionWriteStatus = 'create' | 'unchanged' | 'update';
 export type TimestampSource = 'approval' | 'close' | 'explicit' | 'promotion' | 'revision';
 
+export type P2aCompatibilityWarningCode =
+  | 'p2a-additive-field-ignored'
+  | 'p2a-compatibility-warning-overflow'
+  | 'p2a-document-compatibility-excluded';
+
+export interface P2aCompatibilityWarning {
+  readonly code: P2aCompatibilityWarningCode;
+  readonly fieldName?: string;
+  readonly sourceArtifact: string;
+}
+
 export type ProjectionReasonCode =
   | 'approval_invalid'
   | 'approved_implementation_plan'
@@ -51,6 +62,7 @@ export interface ProjectionPlanEntry {
 }
 
 export interface ProjectionPlan {
+  readonly compatibilityWarnings: readonly P2aCompatibilityWarning[];
   readonly counts: Readonly<Record<ProjectionDecision, number>>;
   readonly entries: readonly ProjectionPlanEntry[];
   readonly planFingerprint: `sha256:${string}`;

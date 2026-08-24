@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { validateP2aSourceIdentity } from '../src/projector/source-identity.js';
+import {
+  createCollectionSourceIdentity,
+  validateCollectionSourceIdentityBinding,
+  validateP2aSourceIdentity,
+} from '../src/projector/source-identity.js';
 
 const repository = 'https://example.test/alpha.git';
 
@@ -74,5 +78,36 @@ describe('P2A source identity binding', () => {
       taskContractSha256: contract,
       taskId: 'task-001',
     })).toBeNull();
+  });
+});
+
+describe('collected source identity binding', () => {
+  it('accepts only canonical identities bound to the selected project, repository, and kind', () => {
+    const source = createCollectionSourceIdentity({
+      declarationId: 'project-docs',
+      documentKind: 'markdown',
+      projectId: 'alpha',
+      repository,
+      sourceRef: 'docs/guide.md',
+    });
+    const binding = {
+      documentKind: 'markdown' as const,
+      projectId: 'alpha',
+      repository,
+    };
+
+    expect(validateCollectionSourceIdentityBinding(binding, source)).not.toBeNull();
+    expect(validateCollectionSourceIdentityBinding({
+      ...binding,
+      projectId: 'beta',
+    }, source)).toBeNull();
+    expect(validateCollectionSourceIdentityBinding(
+      binding,
+      source.replace('docs%2Fguide.md', '..%2Fsecret.md'),
+    )).toBeNull();
+    expect(validateCollectionSourceIdentityBinding(
+      binding,
+      `${source}/extra`,
+    )).toBeNull();
   });
 });

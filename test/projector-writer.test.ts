@@ -218,6 +218,52 @@ describe('project source writer', () => {
     });
   });
 
+  it('confines generic producer-kind targets and rejects incompatible contracts', async () => {
+    const fixture = await createFixture();
+    const writer = await createProjectSourceWriter(
+      join(fixture.knowledgeRoot, 'projects', 'alpha'),
+      'alpha',
+    );
+    const sourceUri = 'buildlore+source:/repository/alpha/markdown/docs/guide.md';
+    const target = `markdown--${sha256(sourceUri)}.md`;
+    const input = {
+      body: 'portable Markdown body',
+      ingestedAt: '2026-08-24T00:00:00.000Z',
+      producer: 'buildlore' as const,
+      sourceKind: 'markdown' as const,
+      sourceRevision: `sha256:${'b'.repeat(64)}` as const,
+      sourceUri,
+      target,
+      title: 'Portable Markdown',
+    };
+    const snapshot = await writer.inspect(input);
+    const markdown = renderSourceDocument(createSourceDocument({
+      body: input.body,
+      ingestedAt: input.ingestedAt,
+      producer: input.producer,
+      projectId: 'alpha',
+      source: sourceUri,
+      sourceKind: input.sourceKind,
+      sourceRevision: input.sourceRevision,
+      sourceType: 'file',
+      title: input.title,
+    }));
+    await expect(writer.write(input, markdown, snapshot)).resolves.toBe('create');
+    expect(await readFile(join(fixture.sources, target), 'utf8')).toBe(markdown);
+
+    await expect(writer.inspect({
+      ...input,
+      producer: 'p2a',
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+    await expect(writer.inspect({
+      ...input,
+      producer: 'buildlore',
+      sourceKind: 'planning',
+      target: `planning--${sha256(sourceUri)}.md`,
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+    expect(await readFile(fixture.outside, 'utf8')).toBe('OUTSIDE-SENTINEL\n');
+  });
+
   it('rejects a symlink target without touching the linked file or sibling sources', async () => {
     const fixture = await createFixture();
     const projector = createP2aPlanningProjector();

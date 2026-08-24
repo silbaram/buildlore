@@ -14,7 +14,10 @@ import {
   type SecuritySourceKind,
 } from '../sanitizer/index.js';
 import { parseSourceDocument, renderSourceDocument } from '../projector/source-document.js';
-import { validateP2aSourceIdentity } from '../projector/source-identity.js';
+import {
+  validateCollectionSourceIdentityBinding,
+  validateP2aSourceIdentity,
+} from '../projector/source-identity.js';
 import { showProject } from '../knowledge/index.js';
 import type { CompilerRequest, EgressCapability } from './types.js';
 
@@ -225,18 +228,26 @@ async function providerInputs(
         return denied();
       }
       const sourceKind = document.buildlore.sourceKind;
-      if ((sourceKind !== 'planning' && sourceKind !== 'execution') ||
+      if ((sourceKind !== 'markdown' && sourceKind !== 'planning' && sourceKind !== 'execution') ||
           document.buildlore.projectId !== request.projectId ||
-          document.buildlore.producer !== 'p2a' ||
           basename(path) !== `${sourceKind}--${sha256(document.source).slice('sha256:'.length)}.md`) {
         return denied();
       }
-      const sourceIdentity = validateP2aSourceIdentity({
-        projectId: request.projectId,
-        repository,
-        source: document.source,
-        sourceKind,
-      });
+      const sourceIdentity = document.buildlore.producer === 'buildlore' && sourceKind === 'markdown'
+        ? validateCollectionSourceIdentityBinding({
+            documentKind: 'markdown',
+            projectId: request.projectId,
+            repository,
+          }, document.source)
+        : document.buildlore.producer === 'p2a' &&
+            (sourceKind === 'planning' || sourceKind === 'execution')
+          ? validateP2aSourceIdentity({
+              projectId: request.projectId,
+              repository,
+              source: document.source,
+              sourceKind,
+            })
+          : null;
       if (sourceIdentity === null) return denied();
       const scanBody = [document.title, sourceIdentity, document.body].join('\n');
       inputs.push({

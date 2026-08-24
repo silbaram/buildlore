@@ -47,10 +47,12 @@ function securityReport(decision: 'blocked' | 'include'): SanitizationReport {
 function planningPlan(options: {
   readonly blocked?: boolean;
   readonly target?: string;
+  readonly compatibilityWarnings?: ProjectionPlan['compatibilityWarnings'];
   readonly writeStatus?: 'create' | 'unchanged' | 'update';
 } = {}): ProjectionPlan {
   const blocked = options.blocked ?? false;
   return {
+    compatibilityWarnings: options.compatibilityWarnings ?? [],
     counts: {
       blocked: blocked ? 1 : 0,
       error: 0,
@@ -193,6 +195,214 @@ describe('project sync orchestration', () => {
       writes: [],
     });
     expect(JSON.stringify(first)).not.toContain('/not-exposed');
+  });
+
+  it('[V13-V-03] returns a successful partial summary for bounded planning warnings', async () => {
+    const events: string[] = [];
+    const service = createProjectSyncService(ports({
+      events,
+      planningPlan: planningPlan({
+        compatibilityWarnings: [{
+          code: 'p2a-additive-field-ignored',
+          fieldName: 'future_summary',
+          sourceArtifact: 'iterations/v1/gate-b-spec/spec.json',
+        }],
+      }),
+    }));
+
+    await expect(service.sync({ ...input, dryRun: true })).resolves.toMatchObject({
+      appliedCount: 0,
+      partial: true,
+      warnings: [{
+        code: 'p2a-additive-field-ignored',
+        fieldName: 'future_summary',
+        sourceKind: 'planning',
+        sourceRef: 'iterations/v1/gate-b-spec/spec.json',
+      }],
+      writes: [],
+    });
+    expect(events).toEqual(['planning-plan', 'execution-plan']);
+  });
+
+  it('[V13-EDGE-06] treats a warning-only empty planning candidate set as partial success', async () => {
+    const events: string[] = [];
+    const service = createProjectSyncService(ports({
+      events,
+      planningPlan: {
+        ...planningPlan(),
+        compatibilityWarnings: [{
+          code: 'p2a-document-compatibility-excluded',
+          sourceArtifact: 'iterations/v1/gate-b-spec/spec.json',
+        }],
+        counts: { blocked: 0, error: 0, exclude: 0, include: 0, quarantine: 0 },
+        entries: [],
+      },
+    }));
+
+    await expect(service.sync({ ...input, dryRun: true })).resolves.toMatchObject({
+      partial: true,
+      planning: { counts: { include: 0 } },
+      warnings: [{ code: 'p2a-document-compatibility-excluded' }],
+    });
+    expect(events).toEqual(['planning-plan', 'execution-plan']);
+  });
+
+  it('[V13-V-03] keeps a thrown planning projection failure as SYNC_PLAN_FAILED', async () => {
+    const events: string[] = [];
+    const planningProjector: PlanningProjectorPort = {
+      apply: () => Promise.reject(new Error('apply must not run')),
+      plan: () => {
+        events.push('planning-plan');
+        return Promise.reject(new Error('projection-value-must-not-be-reflected'));
+      },
+    };
+    const service = createProjectSyncService({
+      ...ports({ events }),
+      planningProjector,
+    });
+
+    let failure: unknown;
+    try {
+      await service.sync({ ...input, dryRun: true });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: 'SYNC_PLAN_FAILED',
+      failedPhase: 'planning-plan',
+    });
+    expect(JSON.stringify(failure)).not.toContain('projection-value-must-not-be-reflected');
+    expect(events).toEqual(['planning-plan']);
+  });
+
+  it('[V13-V-08] sorts and deduplicates planning warning tuples', async () => {
+    const events: string[] = [];
+    const repeated = {
+      code: 'p2a-additive-field-ignored' as const,
+      fieldName: 'future_summary',
+      sourceArtifact: 'iterations/v1/gate-b-spec/spec.json',
+    };
+    const service = createProjectSyncService(ports({
+      events,
+      planningPlan: planningPlan({
+        compatibilityWarnings: [repeated, { ...repeated }],
+      }),
+    }));
+
+    await expect(service.sync({ ...input, dryRun: true })).resolves.toMatchObject({
+      partial: true,
+      warnings: [{
+        code: repeated.code,
+        fieldName: repeated.fieldName,
+        sourceKind: 'planning',
+        sourceRef: repeated.sourceArtifact,
+      }],
+    });
+    expect(events).toEqual(['planning-plan', 'execution-plan']);
+  });
+
+  it('[V13-V-07] rejects extra warning fields without reflecting their values', async () => {
+    const events: string[] = [];
+    const invalidWarning = {
+      code: 'p2a-additive-field-ignored' as const,
+      sourceArtifact: 'iterations/v1/gate-b-spec/spec.json',
+      unexpected: 'warning-value-must-not-be-reflected',
+    };
+    const service = createProjectSyncService(ports({
+      events,
+      planningPlan: {
+        ...planningPlan(),
+        compatibilityWarnings: [invalidWarning],
+      },
+    }));
+
+    let failure: unknown;
+    try {
+      await service.sync({ ...input, dryRun: true });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: 'SYNC_PLAN_FAILED',
+      failedPhase: 'planning-plan',
+    });
+    expect(JSON.stringify(failure)).not.toContain(invalidWarning.unexpected);
+    expect(events).toEqual(['planning-plan']);
+  });
+
+  it('[V13-V-05] rejects credential-like warning field names without reflecting them', async () => {
+    const events: string[] = [];
+    const credentialLikeField = 'accessToken';
+    const service = createProjectSyncService(ports({
+      events,
+      planningPlan: planningPlan({
+        compatibilityWarnings: [{
+          code: 'p2a-additive-field-ignored',
+          fieldName: credentialLikeField,
+          sourceArtifact: 'iterations/v1/gate-b-spec/spec.json',
+        }],
+      }),
+    }));
+
+    let failure: unknown;
+    try {
+      await service.sync({ ...input, dryRun: true });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: 'SYNC_PLAN_FAILED',
+      failedPhase: 'planning-plan',
+    });
+    expect(JSON.stringify(failure)).not.toContain(credentialLikeField);
+    expect(events).toEqual(['planning-plan']);
+  });
+
+  it('[V13-V-05] rejects absolute warning source refs without reflecting them', async () => {
+    const events: string[] = [];
+    const unsafeSource = '/private/location/value-must-not-be-reflected.json';
+    const service = createProjectSyncService(ports({
+      events,
+      planningPlan: planningPlan({
+        compatibilityWarnings: [{
+          code: 'p2a-additive-field-ignored',
+          sourceArtifact: unsafeSource,
+        }],
+      }),
+    }));
+
+    let failure: unknown;
+    try {
+      await service.sync({ ...input, dryRun: true });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: 'SYNC_PLAN_FAILED',
+      failedPhase: 'planning-plan',
+    });
+    expect(JSON.stringify(failure)).not.toContain(unsafeSource);
+    expect(events).toEqual(['planning-plan']);
+  });
+
+  it('[V13-V-08] rejects more than 31 detailed warnings without an overflow marker', async () => {
+    const events: string[] = [];
+    const service = createProjectSyncService(ports({
+      events,
+      planningPlan: planningPlan({
+        compatibilityWarnings: Array.from({ length: 32 }, (_, index) => ({
+          code: 'p2a-additive-field-ignored' as const,
+          fieldName: `future_${String(index).padStart(2, '0')}`,
+          sourceArtifact: 'iterations/v1/gate-b-spec/spec.json',
+        })),
+      }),
+    }));
+
+    await expect(service.sync({ ...input, dryRun: true })).rejects.toMatchObject({
+      code: 'SYNC_PLAN_FAILED',
+      failedPhase: 'planning-plan',
+    });
+    expect(events).toEqual(['planning-plan']);
   });
 
   it('plans both producers and rejects a secret-blocked plan before either apply', async () => {

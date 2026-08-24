@@ -2,7 +2,8 @@ export const HELP_TEXT = `BuildLore — local-first, Git-backed development wiki
 
 Usage:
   buildlore init --knowledge-repo <url-or-path> [--branch <name>] [--json]
-  buildlore project add --id <project-id> --source-repo <path-or-url> [--name <display-name>] [--json]
+  buildlore project add --id <project-id> --source-repo <portable-id> --source-root <absolute-path> [--name <display-name>] [--json]
+  buildlore project bind --project <project-id> --source-root <absolute-path> [--json]
   buildlore project list [--json]
   buildlore project show --project <project-id> [--json]
   buildlore sync --project <project-id> [--dry-run] [--json]
@@ -30,6 +31,7 @@ Provider requirements:
 Compatibility aliases:
   knowledge clone, knowledge init, knowledge status, project validate
 
+Source roots are explicit local-only bindings and are never written to knowledge or command output.
 Project-scoped commands require --project and never infer a default project.
 Output never includes credentials, source bodies, or stack traces.
 `;

@@ -31,6 +31,7 @@ const RULE_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 const SOURCE_KINDS = new Set<SecuritySourceKind>([
   'compiler-cache',
   'execution',
+  'markdown',
   'planning',
   'profile',
   'provider-request',

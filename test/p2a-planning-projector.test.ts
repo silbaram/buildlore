@@ -20,6 +20,7 @@ import {
 } from '../src/projector/index.js';
 import type { ProjectionError } from '../src/projector/index.js';
 import { createP2aArtifactAdapter } from '../src/projector/p2a-artifacts.js';
+import { validateP2aCurrentSpec } from '../src/projector/p2a-codecs.js';
 import { createProjectSourceWriter } from '../src/projector/project-source-writer.js';
 import { startFakeOpenAiServer } from './fixtures/fake-openai.js';
 import { writeSecurityPolicy } from './fixtures/security-policy.js';
@@ -32,6 +33,10 @@ function digest(value: string): string {
 
 function canonicalJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 interface ApprovalEvent {
@@ -273,6 +278,60 @@ async function addFeatureIteration(
   }
 }
 
+async function rewriteApprovedSpec(
+  item: Awaited<ReturnType<typeof fixture>>,
+  update: (spec: Record<string, unknown>) => void,
+): Promise<string> {
+  const intake = await readFile(item.intakePath, 'utf8');
+  const spec = JSON.parse(await readFile(item.specPath, 'utf8')) as Record<string, unknown>;
+  update(spec);
+  const specBytes = canonicalJson(spec);
+  await Promise.all([
+    writeFile(item.specPath, specBytes, 'utf8'),
+    writeFile(item.decisionsPath, serializeDecisions(decisionRecords([
+      {
+        at: '2026-08-19T01:00:00.000Z',
+        scope_ref: 'iterations/v1-source-contract/gate-a-intake/intake.json',
+        sha256: digest(intake),
+      },
+      {
+        at: '2026-08-19T02:00:00.000Z',
+        scope_ref: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+        sha256: digest(specBytes),
+      },
+    ])), 'utf8'),
+  ]);
+  return specBytes;
+}
+
+async function rewriteApprovedIntake(
+  item: Awaited<ReturnType<typeof fixture>>,
+  update: (intake: Record<string, unknown>) => void,
+): Promise<void> {
+  const intake = JSON.parse(await readFile(item.intakePath, 'utf8')) as Record<string, unknown>;
+  update(intake);
+  const intakeBytes = canonicalJson(intake);
+  const spec = JSON.parse(await readFile(item.specPath, 'utf8')) as Record<string, unknown>;
+  spec.source_intake_sha256 = digest(intakeBytes);
+  const specBytes = canonicalJson(spec);
+  await Promise.all([
+    writeFile(item.intakePath, intakeBytes, 'utf8'),
+    writeFile(item.specPath, specBytes, 'utf8'),
+    writeFile(item.decisionsPath, serializeDecisions(decisionRecords([
+      {
+        at: '2026-08-19T01:00:00.000Z',
+        scope_ref: 'iterations/v1-source-contract/gate-a-intake/intake.json',
+        sha256: digest(intakeBytes),
+      },
+      {
+        at: '2026-08-19T02:00:00.000Z',
+        scope_ref: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+        sha256: digest(specBytes),
+      },
+    ])), 'utf8'),
+  ]);
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryRoots.splice(0).map(async (root) => rm(root, { force: true, recursive: true })),
@@ -342,6 +401,524 @@ describe('P2A planning projector', () => {
       expect.objectContaining({ reasonCode: 'maintenance' }),
       expect.objectContaining({ reasonCode: 'task_or_run' }),
     ]));
+  });
+
+  it('[V13-V-01] validates Gate B promotion bindings without rendering them', async () => {
+    const promotedAt = '2026-08-19T02:30:00.000Z';
+    const item = await fixture({ promotedAt });
+    const specBytes = await readFile(item.specPath, 'utf8');
+    const current = JSON.parse(
+      await readFile(item.currentSpecPath, 'utf8'),
+    ) as Record<string, unknown>;
+    current.gate_b_promotion_bindings = {
+      'v1-source-contract': {
+        promoted_at: promotedAt,
+        source_spec_ref: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+        source_spec_sha256: digest(specBytes),
+      },
+    };
+    await writeFile(item.currentSpecPath, canonicalJson(current), 'utf8');
+
+    const projector = createP2aPlanningProjector();
+    const plan = await projector.plan({
+      artifactRoot: item.artifactRoot,
+      knowledgeRoot: item.knowledgeRoot,
+      projectId: 'alpha',
+    });
+    expect(plan.compatibilityWarnings).toEqual([]);
+    await projector.apply(plan);
+    const generated = await Promise.all(
+      (await readdir(join(item.workspace, 'sources')))
+        .map(async (file) => readFile(join(item.workspace, 'sources', file), 'utf8')),
+    );
+    expect(generated.join('\n')).not.toContain('gate_b_promotion_bindings');
+
+    const invalid = JSON.parse(
+      await readFile(item.currentSpecPath, 'utf8'),
+    ) as Record<string, unknown>;
+    const bindings = invalid.gate_b_promotion_bindings as Record<string, Record<string, unknown>>;
+    const binding = bindings['v1-source-contract'];
+    if (binding === undefined) throw new Error('promotion binding is missing');
+    binding.source_spec_sha256 = '0'.repeat(64);
+    await writeFile(item.currentSpecPath, canonicalJson(invalid), 'utf8');
+    await expect(createP2aPlanningProjector().plan({
+      artifactRoot: item.artifactRoot,
+      knowledgeRoot: item.knowledgeRoot,
+      projectId: 'alpha',
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+  });
+
+  it('[V13-V-01] enforces the complete Gate B promotion binding structure', () => {
+    const iterationId = 'v1-source-contract';
+    const binding = {
+      promoted_at: '2026-08-19T02:30:00.000Z',
+      source_spec_ref: `iterations/${iterationId}/gate-b-spec/spec.json`,
+      source_spec_sha256: 'a'.repeat(64),
+    };
+    const current = (gateBPromotionBindings?: unknown): Record<string, unknown> => ({
+      closed_iterations: [],
+      ...(gateBPromotionBindings === undefined
+        ? {}
+        : { gate_b_promotion_bindings: gateBPromotionBindings }),
+      project_id: 'alpha',
+      schema_version: 'p2a.current_spec.v1',
+    });
+
+    expect(validateP2aCurrentSpec(current(), 'alpha').gateBPromotionBindings.size).toBe(0);
+    expect(validateP2aCurrentSpec(current({ [iterationId]: binding }), 'alpha')
+      .gateBPromotionBindings.size).toBe(1);
+
+    const boundaryIterationId = 'a'.repeat(120);
+    expect(validateP2aCurrentSpec(current({
+      [boundaryIterationId]: {
+        ...binding,
+        source_spec_ref: `iterations/${boundaryIterationId}/gate-b-spec/spec.json`,
+      },
+    }), 'alpha').gateBPromotionBindings.size).toBe(1);
+
+    const invalidBindings: readonly unknown[] = [
+      [],
+      { ['a'.repeat(121)]: binding },
+      { 'V1-unsafe': binding },
+      { [iterationId]: { ...binding, unexpected: true } },
+      {
+        [iterationId]: {
+          promoted_at: binding.promoted_at,
+          source_spec_ref: binding.source_spec_ref,
+        },
+      },
+      { [iterationId]: { ...binding, source_spec_ref: 'iterations/other/spec.json' } },
+      { [iterationId]: { ...binding, source_spec_sha256: 'A'.repeat(64) } },
+      { [iterationId]: { ...binding, promoted_at: '2026-08-19T02:30:00Z' } },
+    ];
+    for (const invalid of invalidBindings) {
+      expect(() => validateP2aCurrentSpec(current(invalid), 'alpha')).toThrowError(
+        expect.objectContaining({ code: 'PROJECTION_ARTIFACT_INVALID' }),
+      );
+    }
+  });
+
+  it('[V13-V-01] cross-checks binding promotion time and iteration existence', async () => {
+    const promotedAt = '2026-08-19T02:30:00.000Z';
+    const drifted = await fixture({ promotedAt });
+    const specBytes = await readFile(drifted.specPath, 'utf8');
+    const current = JSON.parse(
+      await readFile(drifted.currentSpecPath, 'utf8'),
+    ) as Record<string, unknown>;
+    current.gate_b_promotion_bindings = {
+      'v1-source-contract': {
+        promoted_at: promotedAt,
+        source_spec_ref: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+        source_spec_sha256: digest(specBytes),
+      },
+    };
+    const iterationPath = join(
+      drifted.artifactRoot,
+      'iterations/v1-source-contract/iteration.json',
+    );
+    const iteration = JSON.parse(await readFile(iterationPath, 'utf8')) as Record<string, unknown>;
+    iteration.promoted_at = '2026-08-19T02:31:00.000Z';
+    await Promise.all([
+      writeFile(drifted.currentSpecPath, canonicalJson(current), 'utf8'),
+      writeFile(iterationPath, canonicalJson(iteration), 'utf8'),
+    ]);
+    await expect(createP2aPlanningProjector().plan({
+      artifactRoot: drifted.artifactRoot,
+      knowledgeRoot: drifted.knowledgeRoot,
+      projectId: 'alpha',
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+
+    const missing = await fixture();
+    const missingCurrent = JSON.parse(
+      await readFile(missing.currentSpecPath, 'utf8'),
+    ) as Record<string, unknown>;
+    missingCurrent.gate_b_promotion_bindings = {
+      'v2-missing': {
+        promoted_at: promotedAt,
+        source_spec_ref: 'iterations/v2-missing/gate-b-spec/spec.json',
+        source_spec_sha256: 'a'.repeat(64),
+      },
+    };
+    await writeFile(missing.currentSpecPath, canonicalJson(missingCurrent), 'utf8');
+    await expect(createP2aPlanningProjector().plan({
+      artifactRoot: missing.artifactRoot,
+      knowledgeRoot: missing.knowledgeRoot,
+      projectId: 'alpha',
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+  });
+
+  it('[V13-V-01][V13-V-07] rejects duplicate keys, invalid JSON, and invalid UTF-8', async () => {
+    const duplicate = await fixture();
+    const binding = JSON.stringify({
+      promoted_at: '2026-08-19T02:30:00.000Z',
+      source_spec_ref: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+      source_spec_sha256: 'a'.repeat(64),
+    });
+    await writeFile(duplicate.currentSpecPath, [
+      '{',
+      '  "schema_version": "p2a.current_spec.v1",',
+      '  "project_id": "alpha",',
+      '  "closed_iterations": [],',
+      '  "gate_b_promotion_bindings": {',
+      `    "v1-source-contract": ${binding},`,
+      `    "v1-source-contract": ${binding}`,
+      '  }',
+      '}',
+      '',
+    ].join('\n'), 'utf8');
+    await expect(createP2aPlanningProjector().plan({
+      artifactRoot: duplicate.artifactRoot,
+      knowledgeRoot: duplicate.knowledgeRoot,
+      projectId: 'alpha',
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+
+    const invalidJson = await fixture();
+    await writeFile(invalidJson.currentSpecPath, '{"schema_version":', 'utf8');
+    await expect(createP2aPlanningProjector().plan({
+      artifactRoot: invalidJson.artifactRoot,
+      knowledgeRoot: invalidJson.knowledgeRoot,
+      projectId: 'alpha',
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+
+    const invalidUtf8 = await fixture();
+    await writeFile(invalidUtf8.currentSpecPath, Buffer.from([0xc3, 0x28]));
+    await expect(createP2aPlanningProjector().plan({
+      artifactRoot: invalidUtf8.artifactRoot,
+      knowledgeRoot: invalidUtf8.knowledgeRoot,
+      projectId: 'alpha',
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+  });
+
+  it('[V13-V-01] keeps unknown control-plane fields fail closed', async () => {
+    const item = await fixture();
+    const current = JSON.parse(
+      await readFile(item.currentSpecPath, 'utf8'),
+    ) as Record<string, unknown>;
+    current.approval_override = true;
+    await writeFile(item.currentSpecPath, canonicalJson(current), 'utf8');
+
+    await expect(createP2aPlanningProjector().plan({
+      artifactRoot: item.artifactRoot,
+      knowledgeRoot: item.knowledgeRoot,
+      projectId: 'alpha',
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+  });
+
+  it('[V13-V-02] warns on safe additive content without rendering unknown values', async () => {
+    const item = await fixture();
+    const sentinel = 'unknown-value-must-not-be-rendered';
+    await rewriteApprovedSpec(item, (spec) => {
+      const product = spec.product;
+      const implementation = spec.implementation;
+      if (!isRecord(product) || !isRecord(implementation)) {
+        throw new Error('fixture spec views are invalid');
+      }
+      product.future_summary = { value: sentinel };
+      implementation.future_rollout = { value: `${sentinel}-implementation` };
+    });
+
+    const projector = createP2aPlanningProjector();
+    const plan = await projector.plan({
+      artifactRoot: item.artifactRoot,
+      knowledgeRoot: item.knowledgeRoot,
+      projectId: 'alpha',
+    });
+    expect(plan.counts.include).toBe(3);
+    expect(plan.compatibilityWarnings).toEqual([
+      {
+        code: 'p2a-additive-field-ignored',
+        fieldName: 'future_rollout',
+        sourceArtifact: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+      },
+      {
+        code: 'p2a-additive-field-ignored',
+        fieldName: 'future_summary',
+        sourceArtifact: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+      },
+    ]);
+    expect(JSON.stringify(plan)).not.toContain(sentinel);
+
+    await projector.apply(plan);
+    const generated = await Promise.all(
+      (await readdir(join(item.workspace, 'sources')))
+        .map(async (file) => readFile(join(item.workspace, 'sources', file), 'utf8')),
+    );
+    expect(generated.join('\n')).not.toContain(sentinel);
+    expect(generated.join('\n')).not.toContain('future_rollout');
+    expect(generated.join('\n')).not.toContain('future_summary');
+  });
+
+  it('[V13-V-02] strips additive intake values before sanitization and rendering', async () => {
+    const item = await fixture();
+    const sentinel = 'intake-extension-must-not-be-rendered';
+    await rewriteApprovedIntake(item, (intake) => {
+      intake.assumptions = [1, 2].map((index) => ({
+        confirmation_needed: false,
+        future_assumption: `${sentinel}-assumption-${index}`,
+        id: `A-${index}`,
+        risk: 'low',
+        statement: `Known assumption text ${index}.`,
+      }));
+      intake.clarifying_questions = [{
+        answer: 'Known answer.',
+        blocks: [],
+        future_question: `${sentinel}-question`,
+        id: 'CQ-1',
+        question: 'Known question?',
+        status: 'answered',
+        why_it_matters: 'Known reason.',
+      }];
+      intake.evidence = [{
+        future_evidence: `${sentinel}-evidence`,
+        source_id: 'LOCAL-1',
+        title: 'Known evidence',
+        url: '',
+        used_for: 'Boundary verification',
+      }];
+    });
+
+    const projector = createP2aPlanningProjector();
+    const plan = await projector.plan({
+      artifactRoot: item.artifactRoot,
+      knowledgeRoot: item.knowledgeRoot,
+      projectId: 'alpha',
+    });
+    expect(plan.compatibilityWarnings).toEqual([
+      {
+        code: 'p2a-additive-field-ignored',
+        fieldName: 'future_assumption',
+        sourceArtifact: 'iterations/v1-source-contract/gate-a-intake/intake.json',
+      },
+      {
+        code: 'p2a-additive-field-ignored',
+        fieldName: 'future_evidence',
+        sourceArtifact: 'iterations/v1-source-contract/gate-a-intake/intake.json',
+      },
+      {
+        code: 'p2a-additive-field-ignored',
+        fieldName: 'future_question',
+        sourceArtifact: 'iterations/v1-source-contract/gate-a-intake/intake.json',
+      },
+    ]);
+    expect(JSON.stringify(plan)).not.toContain(sentinel);
+
+    await projector.apply(plan);
+    const generated = await Promise.all(
+      (await readdir(join(item.workspace, 'sources')))
+        .map(async (file) => readFile(join(item.workspace, 'sources', file), 'utf8')),
+    );
+    expect(generated.join('\n')).not.toContain(sentinel);
+    expect(generated.join('\n')).not.toContain('future_assumption');
+    expect(generated.join('\n')).not.toContain('future_evidence');
+    expect(generated.join('\n')).not.toContain('future_question');
+  });
+
+  it.each([31, 32, 33])(
+    '[V13-V-08] bounds %i compatibility warnings with an overflow marker',
+    async (warningCount) => {
+      const item = await fixture();
+      await rewriteApprovedSpec(item, (spec) => {
+        const product = spec.product;
+        if (!isRecord(product)) {
+          throw new Error('fixture product is invalid');
+        }
+        for (let index = warningCount - 1; index >= 0; index -= 1) {
+          product[`future_${String(index).padStart(2, '0')}`] = `ignored-${index}`;
+        }
+      });
+
+      const plan = await createP2aPlanningProjector().plan({
+        artifactRoot: item.artifactRoot,
+        knowledgeRoot: item.knowledgeRoot,
+        projectId: 'alpha',
+      });
+      expect(plan.compatibilityWarnings).toHaveLength(warningCount <= 31 ? warningCount : 32);
+      expect(plan.compatibilityWarnings.filter((warning) =>
+        warning.code === 'p2a-additive-field-ignored')).toHaveLength(
+        Math.min(warningCount, 31),
+      );
+      expect(plan.compatibilityWarnings
+        .filter((warning) => warning.fieldName !== undefined)
+        .map((warning) => warning.fieldName)).toEqual(
+        Array.from({ length: Math.min(warningCount, 31) }, (_, index) =>
+          `future_${String(index).padStart(2, '0')}`),
+      );
+      expect(plan.compatibilityWarnings.some((warning) =>
+        warning.code === 'p2a-compatibility-warning-overflow')).toBe(warningCount > 31);
+
+      const repeated = await createP2aPlanningProjector().plan({
+        artifactRoot: item.artifactRoot,
+        knowledgeRoot: item.knowledgeRoot,
+        projectId: 'alpha',
+      });
+      expect(JSON.stringify(repeated)).toBe(JSON.stringify(plan));
+    },
+  );
+
+  it('[V13-V-08] exposes only safe non-credential field names at 128/129 boundaries', async () => {
+    const item = await fixture();
+    const sentinel = 'unsafe-field-and-value-must-not-leak';
+    const safeBoundary = `f${'a'.repeat(127)}`;
+    const oversized = `f${'b'.repeat(128)}`;
+    await rewriteApprovedSpec(item, (spec) => {
+      const product = spec.product;
+      if (!isRecord(product)) {
+        throw new Error('fixture product is invalid');
+      }
+      product[safeBoundary] = `${sentinel}-safe-boundary`;
+      product[oversized] = `${sentinel}-oversized`;
+      product.api_key = `${sentinel}-credential-label`;
+      product['api.key'] = `${sentinel}-dotted-credential-label`;
+      product.accessToken = `${sentinel}-camel-credential-label`;
+      product.accessKey = `${sentinel}-key-label`;
+      product.jwt = `${sentinel}-jwt-label`;
+      product.passwd = `${sentinel}-password-label`;
+      product.sessionId = `${sentinel}-session-label`;
+      product.sshKey = `${sentinel}-ssh-label`;
+      product['path/name'] = `${sentinel}-path-label`;
+      product['control\nname'] = `${sentinel}-control-label`;
+      product['token=unsafe-field-name'] = sentinel;
+    });
+
+    const plan = await createP2aPlanningProjector().plan({
+      artifactRoot: item.artifactRoot,
+      knowledgeRoot: item.knowledgeRoot,
+      projectId: 'alpha',
+    });
+    expect(plan.compatibilityWarnings).toEqual([
+      {
+        code: 'p2a-additive-field-ignored',
+        sourceArtifact: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+      },
+      {
+        code: 'p2a-additive-field-ignored',
+        fieldName: safeBoundary,
+        sourceArtifact: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+      },
+    ]);
+    expect(JSON.stringify(plan)).not.toContain(sentinel);
+    expect(JSON.stringify(plan)).not.toContain(oversized);
+    expect(JSON.stringify(plan)).not.toContain('api_key');
+    expect(JSON.stringify(plan)).not.toContain('api.key');
+    expect(JSON.stringify(plan)).not.toContain('accessToken');
+    expect(JSON.stringify(plan)).not.toContain('accessKey');
+    expect(JSON.stringify(plan)).not.toContain('jwt');
+    expect(JSON.stringify(plan)).not.toContain('passwd');
+    expect(JSON.stringify(plan)).not.toContain('sessionId');
+    expect(JSON.stringify(plan)).not.toContain('sshKey');
+    expect(JSON.stringify(plan)).not.toContain('path/name');
+    expect(JSON.stringify(plan)).not.toContain('control\\nname');
+    expect(JSON.stringify(plan)).not.toContain('token=unsafe-field-name');
+  });
+
+  it('[V13-V-02] binds compatibility warnings independently into the plan fingerprint', async () => {
+    const item = await fixture();
+    const input = {
+      artifactRoot: item.artifactRoot,
+      knowledgeRoot: item.knowledgeRoot,
+      projectId: 'alpha',
+    } as const;
+    const artifactReader = createP2aArtifactAdapter();
+    const baseline = await createP2aPlanningProjector({ artifactReader }).plan(input);
+    const warningProjector = createP2aPlanningProjector({
+      artifactReader: {
+        read: async (...args) => ({
+          ...await artifactReader.read(...args),
+          compatibilityWarnings: [{
+            code: 'p2a-additive-field-ignored',
+            fieldName: 'future_summary',
+            sourceArtifact: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+          }],
+        }),
+        verify: (...args) => artifactReader.verify(...args),
+      },
+    });
+    const withWarning = await warningProjector.plan(input);
+
+    expect(withWarning.entries).toEqual(baseline.entries);
+    expect(withWarning.counts).toEqual(baseline.counts);
+    expect(withWarning.planFingerprint).not.toBe(baseline.planFingerprint);
+  });
+
+  it('[V13-V-03] excludes a document-local incompatibility and keeps known intake content', async () => {
+    const item = await fixture();
+    await rewriteApprovedSpec(item, (spec) => {
+      const product = spec.product;
+      if (!isRecord(product)) {
+        throw new Error('fixture product is invalid');
+      }
+      product.goals = [42];
+    });
+
+    const plan = await createP2aPlanningProjector().plan({
+      artifactRoot: item.artifactRoot,
+      knowledgeRoot: item.knowledgeRoot,
+      projectId: 'alpha',
+    });
+    expect(plan.counts.include).toBe(1);
+    expect(plan.entries).toContainEqual(expect.objectContaining({
+      decision: 'exclude',
+      reasonCode: 'unsupported_schema',
+      sourceArtifact: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+    }));
+    expect(plan.compatibilityWarnings).toEqual([{
+      code: 'p2a-document-compatibility-excluded',
+      sourceArtifact: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+    }]);
+  });
+
+  it('[V13-EDGE-02] hard-fails wrong or missing root fields beside additive content', async () => {
+    const sentinel = 'root-shape-sentinel-must-not-leak';
+    const wrongType = await fixture();
+    await rewriteApprovedSpec(wrongType, (spec) => {
+      spec.product = [];
+      const implementation = spec.implementation;
+      if (!isRecord(implementation)) throw new Error('fixture implementation is invalid');
+      implementation.future_summary = sentinel;
+    });
+
+    const wrongTypePlan = await createP2aPlanningProjector().plan({
+      artifactRoot: wrongType.artifactRoot,
+      knowledgeRoot: wrongType.knowledgeRoot,
+      projectId: 'alpha',
+    });
+    expect(wrongTypePlan.counts).toMatchObject({ error: 1, include: 0 });
+    expect(wrongTypePlan.entries).toContainEqual(expect.objectContaining({
+      decision: 'error',
+      reasonCode: 'unsupported_schema',
+      sourceArtifact: 'iterations/v1-source-contract/gate-b-spec/spec.json',
+    }));
+    expect(wrongTypePlan.compatibilityWarnings).toEqual([]);
+    expect(JSON.stringify(wrongTypePlan)).not.toContain(sentinel);
+
+    const missing = await fixture();
+    await rewriteApprovedSpec(missing, (spec) => {
+      delete spec.evidence;
+      const product = spec.product;
+      if (!isRecord(product)) throw new Error('fixture product is invalid');
+      product.future_summary = sentinel;
+    });
+
+    const missingPlan = await createP2aPlanningProjector().plan({
+      artifactRoot: missing.artifactRoot,
+      knowledgeRoot: missing.knowledgeRoot,
+      projectId: 'alpha',
+    });
+    expect(missingPlan.counts).toMatchObject({ error: 1, include: 0 });
+    expect(missingPlan.compatibilityWarnings).toEqual([]);
+    expect(JSON.stringify(missingPlan)).not.toContain(sentinel);
+
+    const intakeRoot = await fixture();
+    await rewriteApprovedIntake(intakeRoot, (intake) => {
+      intake.assumptions = 'wrong-root-type';
+    });
+    const intakeRootPlan = await createP2aPlanningProjector().plan({
+      artifactRoot: intakeRoot.artifactRoot,
+      knowledgeRoot: intakeRoot.knowledgeRoot,
+      projectId: 'alpha',
+    });
+    expect(intakeRootPlan.counts).toMatchObject({ error: 1, include: 0 });
+    expect(intakeRootPlan.compatibilityWarnings).toEqual([]);
   });
 
   it('keeps the plan deterministic across mtime, timezone, locale, and execution changes', async () => {
