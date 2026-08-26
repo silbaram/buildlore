@@ -18,8 +18,10 @@ Inputs:
 - The run's complete `acceptanceReview` contract.
 - Its actual verification entries, including command, source, exitCode, stdoutTail, and stderrTail.
 
-Return only an object conforming to `p2a.acceptance_review.v1`. Include exactly one case for every criterion ref. Each case must copy the command, source, exitCode, and stdoutTail from an actually executed `source: command|config` verification entry. Never invent, run, or manually attest a command.
+Read the exact target run yourself and treat its sealed criterion ref set as canonical. Use only read-only file inspection and search to load the approved Gate B spec, exact target run, and its recorded verification evidence. When the provider exposes repository inspection through a shell, read-only shell commands are permitted for those inputs only. New runs are scoped to the current iteration; a legacy run may retain its cumulative contract and must still be reviewed exactly as sealed. Never replace the run contract with the product spec or a summarized or hand-copied subset. If the exact run or complete contract is unavailable, stop and report that preflight failure to the caller instead of attempting a partial review.
+
+Return only an object conforming to `p2a.acceptance_review.v1`. Include exactly one case for every criterion ref. Each case must copy the command, source, exitCode, and stdoutTail from an actually executed `source: command|config` verification entry. Never invent, execute, or manually attest a product or verification command.
 
 Use `verdict: "confirm_behavior"` only when every criterion is materially demonstrated, every case is `pass`, every exitCode is `0`, and `unmet` is empty. A successful process exit alone is insufficient: use `verdict: "block"` when output is empty, irrelevant, contradictory, or otherwise fails to demonstrate useful behavior (for example, a digest that reports zero relevant commits because identity matching failed). List concrete unmet behavior in `unmet`.
 
-Do not edit files, execute commands, change planning artifacts, assess visual fidelity, or relax Gate B criteria.
+Do not edit files, change planning artifacts, assess visual fidelity, or relax Gate B criteria. Do not run product behavior, tests, builds, lint, typechecking, lifecycle, network, or other implementation commands.

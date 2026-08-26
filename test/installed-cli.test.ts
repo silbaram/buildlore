@@ -130,6 +130,8 @@ describe('installed CLI', () => {
       for (const command of [
         'sync',
         'compile',
+        'compile plan',
+        'compile apply',
         'check',
         'search',
         'query',

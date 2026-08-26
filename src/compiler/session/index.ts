@@ -1,0 +1,30 @@
+export { SessionCompileError, type SessionCompileErrorCode } from './errors.js';
+export {
+  createProjectSessionCompiler,
+  type CreateProjectSessionCompilerOptions,
+} from './service.js';
+export {
+  SESSION_COMPILE_ALGORITHM_VERSION,
+  SESSION_COMPILE_APPLY_RESULT_SCHEMA_VERSION,
+  SESSION_COMPILE_PLAN_SCHEMA_VERSION,
+  SESSION_COMPILE_PROPOSAL_SCHEMA_VERSION,
+  SESSION_COMPILE_PROVENANCE_SCHEMA_VERSION,
+  type ProjectSessionCompilerPort,
+  type SessionAllowedLinkTarget,
+  type SessionCallerHarnessIdentity,
+  type SessionCitationAnchor,
+  type SessionCompileApplyRequest,
+  type SessionCompileApplyResultV1,
+  type SessionCompileLimits,
+  type SessionCompilePlanRequest,
+  type SessionCompilePlanV1,
+  type SessionCompileProposalV1,
+  type SessionCompileProvenanceV1,
+  type SessionMergeCandidate,
+  type SessionPlannedSource,
+  type SessionPlanTask,
+  type SessionProfileFieldValue,
+  type SessionProposalCitation,
+  type SessionRequestedPageKind,
+  type SessionSha256Digest,
+} from './types.js';

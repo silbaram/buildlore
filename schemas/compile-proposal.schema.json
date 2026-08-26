@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/compile-proposal.schema.json",
+  "title": "BuildLore Session Compile Proposal v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "planDigest",
+    "proposalId",
+    "proposalDigest",
+    "taskId",
+    "mergeCandidateIds",
+    "pageId",
+    "slug",
+    "title",
+    "kind",
+    "summary",
+    "body",
+    "sources",
+    "wikilinks",
+    "citations",
+    "confidence",
+    "callerHarness"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.compile-proposal.v1" },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "maxLength": 64
+    },
+    "planDigest": { "$ref": "#/$defs/digest" },
+    "proposalId": { "$ref": "#/$defs/id" },
+    "proposalDigest": { "$ref": "#/$defs/digest" },
+    "taskId": { "type": "string", "pattern": "^task-[a-f0-9]{64}$" },
+    "mergeCandidateIds": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^merge-[a-f0-9]{64}$" }
+    },
+    "pageId": { "type": "string", "minLength": 1, "maxLength": 260 },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "maxLength": 128
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "kind": { "enum": ["concept", "decision", "failure", "query", "verification"] },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "body": { "type": "string", "minLength": 1, "maxLength": 100000 },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" }
+    },
+    "wikilinks": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        "maxLength": 128
+      }
+    },
+    "citations": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "id", "line", "quote", "sourceId"],
+        "properties": {
+          "file": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "id": { "$ref": "#/$defs/id" },
+          "line": { "type": "integer", "minimum": 1 },
+          "quote": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" }
+        }
+      }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "callerHarness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compatibilityDigest", "kind", "version"],
+      "properties": {
+        "compatibilityDigest": { "$ref": "#/$defs/digest" },
+        "kind": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 64
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+          "maxLength": 128
+        }
+      }
+    },
+    "profileFields": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {
+        "pattern": "^[A-Za-z][A-Za-z0-9]{0,63}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "boolean" },
+          {
+            "type": "number",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          { "type": "string", "minLength": 1, "maxLength": 8000 },
+          {
+            "type": "array",
+            "maxItems": 128,
+            "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+          }
+        ]
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["kind"],
+        "properties": { "kind": { "enum": ["concept", "query"] } }
+      },
+      "then": { "not": { "required": ["profileFields"] } }
+    },
+    {
+      "if": {
+        "required": ["kind"],
+        "properties": { "kind": { "const": "decision" } }
+      },
+      "then": {
+        "required": ["profileFields"],
+        "properties": { "profileFields": { "$ref": "#/$defs/decisionProfileFields" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["kind"],
+        "properties": { "kind": { "const": "failure" } }
+      },
+      "then": {
+        "required": ["profileFields"],
+        "properties": { "profileFields": { "$ref": "#/$defs/failureProfileFields" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["kind"],
+        "properties": { "kind": { "const": "verification" } }
+      },
+      "then": {
+        "required": ["profileFields"],
+        "properties": { "profileFields": { "$ref": "#/$defs/verificationProfileFields" } }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "decisionProfileFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "status": { "const": "active" }
+      }
+    },
+    "failureProfileFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failureClass", "status"],
+      "properties": {
+        "failureClass": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "resolution": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "status": { "const": "open" }
+      }
+    },
+    "verificationProfileFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceRefs", "status", "verificationKind"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "evidenceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        },
+        "status": { "const": "recorded" },
+        "verificationKind": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    }
+  }
+}

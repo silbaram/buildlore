@@ -1,6 +1,7 @@
 import type {
   CliCommandId,
   CliOperation,
+  CliOptionValue,
   CliOutputMode,
   ParsedCliCommand,
   ParsedCliInvocation,
@@ -30,6 +31,7 @@ interface CommandSpec {
   readonly optionAliases?: Readonly<Record<string, string>>;
   readonly projectOption?: string;
   readonly requiredOptions: readonly string[];
+  readonly repeatableValueOptions: readonly string[];
   readonly tokens: readonly string[];
   readonly valueOptions: readonly string[];
 }
@@ -80,6 +82,27 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     '--project',
   ),
   command(['sync'], 'sync', 'sync', ['--project'], ['--project'], ['--dry-run'], {}, '--project'),
+  command(
+    ['compile', 'plan'],
+    'compile.plan',
+    'compile.plan',
+    ['--project'],
+    ['--project'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'apply'],
+    'compile.apply',
+    'compile.apply',
+    ['--project', '--page'],
+    ['--project', '--page'],
+    [],
+    {},
+    '--project',
+    ['--page'],
+  ),
   command(['compile'], 'compile', 'compile', ['--project'], ['--project'], ['--review'], {}, '--project'),
   command(['check'], 'check', 'check', ['--project'], ['--project'], [], {}, '--project'),
   command(
@@ -197,6 +220,7 @@ function command(
   flagOptions: readonly string[] = [],
   optionAliases: Readonly<Record<string, string>> = {},
   projectOption?: string,
+  repeatableValueOptions: readonly string[] = [],
 ): CommandSpec {
   return {
     command: commandId,
@@ -205,6 +229,7 @@ function command(
     optionAliases,
     ...(projectOption === undefined ? {} : { projectOption }),
     requiredOptions,
+    repeatableValueOptions,
     tokens,
     valueOptions,
   };
@@ -233,7 +258,7 @@ function containsControlCharacter(value: string): boolean {
 
 function validateRetrievalTextOptions(
   commandId: CliCommandId,
-  values: Readonly<Record<string, boolean | string>>,
+  values: Readonly<Record<string, CliOptionValue>>,
 ): void {
   const option = commandId === 'search'
     ? '--query'
@@ -258,8 +283,8 @@ function validateRetrievalTextOptions(
 function parseOptions(
   args: readonly string[],
   spec: CommandSpec,
-): Readonly<Record<string, boolean | string>> {
-  const values: Record<string, boolean | string> = {};
+): Readonly<Record<string, CliOptionValue>> {
+  const values: Record<string, CliOptionValue> = {};
   for (let index = spec.tokens.length; index < args.length; index += 1) {
     const rawOption = args[index];
     if (rawOption === undefined || !rawOption.startsWith('--') || rawOption === '--all') {
@@ -268,7 +293,9 @@ function parseOptions(
       );
     }
     const option = spec.optionAliases?.[rawOption] ?? rawOption;
-    if (option in values) throw new CliUsageError('CLI_OPTION_CONFLICT');
+    if (option in values && !spec.repeatableValueOptions.includes(option)) {
+      throw new CliUsageError('CLI_OPTION_CONFLICT');
+    }
     if (spec.flagOptions.includes(option)) {
       values[option] = true;
       continue;
@@ -280,10 +307,22 @@ function parseOptions(
     if (value === undefined || value.startsWith('--') || value.length === 0) {
       throw new CliUsageError('CLI_OPTION_MISSING');
     }
-    values[option] = value;
+    if (spec.repeatableValueOptions.includes(option)) {
+      const existing = values[option];
+      const repeated = existing === undefined
+        ? [value]
+        : [...(Array.isArray(existing) ? existing as readonly string[] : [String(existing)]), value];
+      if (repeated.length > 50) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      values[option] = Object.freeze(repeated);
+    } else {
+      values[option] = value;
+    }
     index += 1;
   }
-  if (spec.requiredOptions.some((option) => typeof values[option] !== 'string')) {
+  if (spec.requiredOptions.some((option) => {
+    const value = values[option];
+    return typeof value !== 'string' && !(Array.isArray(value) && value.length > 0);
+  })) {
     throw new CliUsageError('CLI_OPTION_MISSING');
   }
   if (
@@ -295,12 +334,13 @@ function parseOptions(
   }
   validateRetrievalTextOptions(spec.command, values);
   validatePublicationOptions(spec.command, values);
+  validateSessionCompileOptions(spec.command, values);
   return Object.freeze(values);
 }
 
 function validatePublicationOptions(
   commandId: CliCommandId,
-  values: Readonly<Record<string, boolean | string>>,
+  values: Readonly<Record<string, CliOptionValue>>,
 ): void {
   if (!commandId.startsWith('publish.') && !commandId.startsWith('knowledge.pin.')) return;
   for (const option of ['--source-revision', '--knowledge-revision']) {
@@ -320,6 +360,19 @@ function validatePublicationOptions(
         !ITERATION_ID_PATTERN.test(iteration) || values['--intent'] !== 'iteration-close') {
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
+  }
+}
+
+function validateSessionCompileOptions(
+  commandId: CliCommandId,
+  values: Readonly<Record<string, CliOptionValue>>,
+): void {
+  if (commandId !== 'compile.apply') return;
+  const pages = values['--page'];
+  if (!Array.isArray(pages) || pages.length === 0 || pages.length > 50 ||
+      pages.some((page: unknown) => typeof page !== 'string' || page.length > 4_096 ||
+        page.length === 0 || containsControlCharacter(page))) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
   }
 }
 

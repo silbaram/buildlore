@@ -42,6 +42,24 @@ function outcomeForDisplay(data: unknown): string | null {
   return null;
 }
 
+function sessionPlanForDisplay(data: unknown): unknown {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return null;
+  const value = data as Readonly<Record<string, unknown>>;
+  return Object.freeze({
+    algorithmVersion: typeof value.algorithmVersion === 'string' ? value.algorithmVersion : null,
+    allowedLinkTargetCount: Array.isArray(value.allowedLinkTargets)
+      ? value.allowedLinkTargets.length
+      : 0,
+    contractDigest: typeof value.contractDigest === 'string' ? value.contractDigest : null,
+    mergeCandidateCount: Array.isArray(value.mergeCandidates) ? value.mergeCandidates.length : 0,
+    planDigest: typeof value.planDigest === 'string' ? value.planDigest : null,
+    projectId: typeof value.projectId === 'string' ? value.projectId : null,
+    schemaVersion: typeof value.schemaVersion === 'string' ? value.schemaVersion : null,
+    sourceCount: Array.isArray(value.sources) ? value.sources.length : 0,
+    taskCount: Array.isArray(value.tasks) ? value.tasks.length : 0,
+  });
+}
+
 function renderHuman(result: CliResult): string {
   if (!result.ok) {
     const lines = [`${result.command}: failed`];
@@ -78,7 +96,10 @@ function renderHuman(result: CliResult): string {
   }
   if (result.data !== null) {
     lines.push('result:');
-    lines.push(JSON.stringify(sortForDisplay(result.data), null, 2));
+    const displayData = result.command === 'compile.plan'
+      ? sessionPlanForDisplay(result.data)
+      : result.data;
+    lines.push(JSON.stringify(sortForDisplay(displayData), null, 2));
   }
   return `${lines.join('\n')}\n`;
 }

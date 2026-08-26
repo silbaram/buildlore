@@ -56,7 +56,8 @@ describe('BuildLore CLI', () => {
     }
     expect(HELP_TEXT).toContain('buildlore.cli-envelope.v1');
     expect(HELP_TEXT).toContain('Provider requirements:');
-    expect(HELP_TEXT).toContain('Required     compile, query');
+    expect(HELP_TEXT).toContain('Required     legacy compile, query');
+    expect(HELP_TEXT).toContain('BuildLore never launches a Claude or Codex CLI process');
   });
 
   it('fails closed without reflecting unsupported input', async () => {

@@ -31,6 +31,13 @@ describe('CLI argument parser', () => {
     { args: ['project', 'show', '--project', 'alpha'], command: 'project.show' },
     { args: ['sync', '--project', 'alpha', '--dry-run'], command: 'sync' },
     { args: ['compile', '--project', 'alpha', '--review'], command: 'compile' },
+    { args: ['compile', 'plan', '--project', 'alpha'], command: 'compile.plan' },
+    {
+      args: [
+        'compile', 'apply', '--project', 'alpha', '--page', 'one.json', '--page', 'two.json',
+      ],
+      command: 'compile.apply',
+    },
     { args: ['check', '--project', 'alpha'], command: 'check' },
     {
       args: ['search', '--project', 'alpha', '--query', 'failure', '--mode', 'hybrid'],
@@ -115,6 +122,20 @@ describe('CLI argument parser', () => {
     });
   });
 
+  it('preserves ordered repeated proposal files for session apply', () => {
+    expect(parseCliArguments([
+      'compile', 'apply', '--project', 'alpha',
+      '--page', 'proposal-b.json', '--page', 'proposal-a.json',
+    ])).toMatchObject({
+      command: 'compile.apply',
+      operation: 'compile.apply',
+      options: {
+        '--page': ['proposal-b.json', 'proposal-a.json'],
+        '--project': 'alpha',
+      },
+    });
+  });
+
   it('rejects unknown commands, options, missing values, conflicts, and --all', () => {
     expectUsageError(['unknown'], 'CLI_COMMAND_UNSUPPORTED');
     expectUsageError(['check', '--project', 'alpha', '--future'], 'CLI_OPTION_UNSUPPORTED');
@@ -124,6 +145,11 @@ describe('CLI argument parser', () => {
       'CLI_OPTION_CONFLICT',
     );
     expectUsageError(['compile', '--all'], 'CLI_OPTION_UNSUPPORTED');
+    expectUsageError(['compile', 'apply', '--project', 'alpha'], 'CLI_OPTION_MISSING');
+    expectUsageError(
+      ['compile', 'apply', '--project', 'alpha', '--page', 'unsafe\npath.json'],
+      'CLI_ARGUMENT_INVALID',
+    );
   });
 
   it('requires explicit project selection and validates search mode', () => {

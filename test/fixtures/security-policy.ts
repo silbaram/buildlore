@@ -7,6 +7,7 @@ import {
   serializeSecurityPolicy,
   type DataClassification,
   type SecurityEgressCapability,
+  type SecurityOverride,
   type SecurityPolicy,
 } from '../../src/sanitizer/index.js';
 
@@ -24,6 +25,7 @@ export async function writeSecurityPolicy(
   options: {
     readonly capabilities?: readonly SecurityEgressCapability[];
     readonly classification?: DataClassification;
+    readonly overrides?: readonly SecurityOverride[];
   } = {},
 ): Promise<void> {
   const project = await showProject(knowledgeRoot, projectId);
@@ -36,7 +38,7 @@ export async function writeSecurityPolicy(
       allowedClassifications: ['internal', 'public'],
       capability,
     })),
-    overrides: [],
+    overrides: options.overrides ?? [],
   };
   await writeFile(
     join(knowledgeRoot, project.workspacePath, 'security-policy.json'),

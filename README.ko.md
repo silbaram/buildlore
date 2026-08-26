@@ -106,6 +106,14 @@ node dist/cli/bin.js knowledge status
 만듭니다. BuildLore는 선언되지 않은 디렉터리를 크롤링하지 않으며 계획 문서만
 선택한 경우 `.plan2agent/runs`와 `run-index.json`을 읽지 않습니다.
 
+이 매니페스트는 허용되는 바이트 형태가 하나뿐입니다. BOM 없는 UTF-8, 2칸
+들여쓰기, LF 줄바꿈을 사용하고 파일 끝에는 LF를 정확히 하나 둡니다. 최상위 필드는
+`projectId`, `schemaVersion`, `sourceRepository`, `sources` 순서로 작성합니다. 파일
+선언은 `documentKind`, `id`, `path`, `pathType` 순서이며, 디렉터리 선언은 마지막에
+`recursive`를 추가할 수 있습니다. `sources`는 중복 없는 ASCII `id` 오름차순으로
+정렬합니다. 내용의 의미가 같아도 필드·선언 순서, 들여쓰기 또는 줄바꿈 바이트가
+다르면 BuildLore가 거부합니다.
+
 ### 3. 허브에서 프로젝트 등록 및 바인딩
 
 모든 작업은 프로젝트 ID를 명시적으로 사용합니다. BuildLore는 기본 프로젝트를
@@ -182,8 +190,10 @@ export LLMWIKI_PROVIDER=openai
 export OPENAI_API_KEY=<value-from-your-secret-manager>
 ```
 
-제공자 접근은 `knowledge/projects/example/security-policy.json`으로도
-제어합니다. 새로 등록된 프로젝트는 `restricted` 분류와 빈 egress 규칙을 가진
+제공자 접근은 지식 저장소 안의
+`projects/<project-id>/security-policy.json`으로도 제어합니다. 현재 배치에서는
+`knowledge/projects/example/security-policy.json`입니다. 새로 등록된 프로젝트는
+`restricted` 분류와 빈 egress 규칙을 가진
 fail-closed 상태입니다. 데이터 분류를 검토한 후 외부로 전송할 수 있는
 `public` 또는 `internal` 분류와 필요한 기능만 명시적으로 허용해야 합니다.
 `restricted` 데이터의 외부 전송은 어떤 경우에도 허용되지 않습니다.
@@ -219,8 +229,21 @@ fail-closed 상태입니다. 데이터 분류를 검토한 후 외부로 전송�
 }
 ```
 
-정책 파일은 canonical JSON입니다. 필드와 규칙의 순서를 유지하고, 프로젝트에서
-사용하지 않는 egress 규칙은 제외합니다.
+정책 파일도 `sources.json`과 같이 BOM 없는 UTF-8, 2칸 들여쓰기, LF, 파일 끝의
+LF 정확히 하나를 사용합니다. 최상위 필드는 `schemaVersion`, `projectId`,
+`defaultClassification`, `classificationRules`, `egressRules`, `overrides` 순서입니다.
+분류 규칙은 `sourceKind`와 선택적인 `sourceIdentitySha256` 순서로 정렬합니다. Egress
+규칙은 `capability` 순서로 정렬하고 `allowedClassifications`는 `internal`, `public`
+순서로 둡니다. Override는 `sourceIdentitySha256`,
+`sourceRevisionOrContentSha256`, `ruleId` 순서로 정렬합니다. Override 내부 필드는
+선택적인 `auditRef`가 먼저이고, `reasonCode`, `ruleId`, `sourceIdentitySha256`,
+`sourceRevisionOrContentSha256` 순서입니다.
+
+Override는 와일드카드가 아닙니다. 예외 허용 가능한 규칙이 정확한 소스 식별자와
+정확한 소스 revision/content digest에 모두 일치할 때만 적용됩니다. 선택된 내용이
+바뀌면 이전 override는 더 이상 일치하지 않습니다. 일치한 값이나 비밀값을 override
+또는 `auditRef`에 넣지 마세요. 프로젝트에서 사용하지 않는 egress 규칙은
+제외합니다.
 
 ### 6. 위키 컴파일 및 검증
 
@@ -232,6 +255,45 @@ node dist/cli/bin.js compile --project example --review
 node dist/cli/bin.js compile --project example
 node dist/cli/bin.js check --project example
 ```
+
+현재 Claude Code 또는 Codex 세션이 생성 작업을 맡을 때는 제공자가 필요 없는 별도
+plan/apply 경계를 사용합니다.
+
+```sh
+node dist/cli/bin.js compile plan --project example --json
+node dist/cli/bin.js compile apply \
+  --project example \
+  --page proposals/session-concept.json \
+  --page proposals/session-decision.json \
+  --json
+```
+
+`compile plan`은 정제된 소스 본문, 결정론적인 작업과 병합 후보, 원본 파일의 정확한
+인용 위치, plan digest를 반환합니다. BuildLore는 이 plan을 저장하지 않으며 Claude나
+Codex 실행 파일, agent SDK, 백그라운드 작업자 또는 하위 프로세스를 실행하지
+않습니다. 현재 호출 세션이 기존 skill과 subagent를 사용해 정규
+`buildlore.compile-proposal.v1` 파일을 작성합니다. `compile apply`는 현재 plan을
+다시 생성하고 모든 제안을 한 배치로 검증하며 생성 내용도 다시 검사한 뒤, public
+SDK의 신뢰하지 않는 OKF import로만 결과를 편입합니다. 결과는 항상 보류된 검토
+후보이며 실제 페이지로 승격하거나 기록하지 않습니다. 공개 JSON 계약은
+`schemas/compile-*.schema.json`과
+`schemas/session-compile-provenance.schema.json`에서 제공합니다.
+
+제안 파일은 proposal schema에 표시된 필드 순서, 2칸 JSON 들여쓰기, LF 줄바꿈과
+파일 끝의 LF 정확히 하나를 사용합니다. `proposalDigest`는 `proposalDigest` 필드만
+제외한 canonical bytes의 소문자 SHA-256 앞에 `sha256:`을 붙인 값입니다.
+`callerHarness.compatibilityDigest`는 `{ contractDigest, kind,
+proposalSchemaVersion, version }`을 이 순서로 같은 canonical JSON으로 직렬화해
+계산합니다. contract digest는 plan에서 가져오며 proposal schema version은
+`buildlore.compile-proposal.v1`입니다. 하나라도 맞지 않으면 public compiler SDK를
+호출하기 전에 거부합니다.
+
+기본 profile의 `concept`, `query` 제안에는 `profileFields`를 넣지 않습니다. Custom
+profile 제안은 검토 후보의 초기 상태만 사용합니다. `decision`은 `status: active`,
+`failure`는 `failureClass`와 `status: open`, `verification`은
+`verificationKind`, 하나 이상의 `evidenceRefs`, `status: recorded`가 필요합니다.
+Kind별 조건과 필드 상한의 정본은 `compile-proposal.schema.json`이며, 이후 lifecycle
+전이는 검토 단계가 소유하므로 `compile apply`로 요청할 수 없습니다.
 
 격리된 프로젝트 작업공간에는 `sources/` 아래의 평탄화된 정제 소스,
 `wiki/` 아래의 생성 페이지, `.llmwiki/` 아래의 컴파일러 상태와 적용된 언어
@@ -317,6 +379,7 @@ pin 명령은 로컬 상위 저장소 커밋만 생성하고 코드 저장소를
 ```text
 init -> project add -> sync --dry-run -> sync -> compile -> check
                                          |                    |
+                                         +-> compile plan -> 현재 세션 -> compile apply -> review
                                          +-> search/query/context
                                          +-> publish plan -> commit -> push -> knowledge pin
 ```

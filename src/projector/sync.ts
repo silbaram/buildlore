@@ -4,7 +4,9 @@ import {
   SANITIZATION_REPORT_SCHEMA_VERSION,
   SANITIZER_RULES_VERSION,
   type SanitizationReport,
+  type SecurityFindingAction,
   type SecurityRuleSummary,
+  type SecuritySourceKind,
 } from '../sanitizer/index.js';
 import type {
   ExecutionKnowledgeProjectorPort,
@@ -16,6 +18,7 @@ import { EXECUTION_INCLUSION_POLICY_VERSION, EXECUTION_PROJECTION_PLAN_SCHEMA_VE
 import { createP2aExecutionKnowledgeProjector } from './p2a-execution-projector.js';
 import { createP2aPlanningProjector } from './p2a-planning-projector.js';
 import { runHubProjectSync } from './hub-sync.js';
+import { normalizeProjectSyncSanitizationDiagnostics } from './sync-sanitization-diagnostics.js';
 import { isSafeP2aCompatibilityFieldName } from './p2a-codecs.js';
 import {
   PROJECTION_PLAN_SCHEMA_VERSION,
@@ -52,6 +55,26 @@ export type ProjectSyncErrorCode =
   | 'SYNC_TARGET_COLLISION';
 
 export type ProjectSyncRecoveryAction = 'inspect-plan' | 'retry-sync';
+
+export interface ProjectSyncSanitizationRuleSummary {
+  readonly action: SecurityFindingAction;
+  readonly count: number;
+  readonly overriddenCount: number;
+  readonly ruleId: string;
+}
+
+export interface ProjectSyncSanitizationSource {
+  readonly findingsOverflow: boolean;
+  readonly sourceIdentitySha256: string;
+  readonly sourceKind: SecuritySourceKind;
+  readonly sourceRef: string | null;
+  readonly summaries: readonly ProjectSyncSanitizationRuleSummary[];
+}
+
+export interface ProjectSyncSanitizationDiagnostics {
+  readonly omittedSourceCount: number;
+  readonly sources: readonly ProjectSyncSanitizationSource[];
+}
 
 export interface LegacyProjectSyncInput {
   readonly artifactRoot: string;
@@ -141,6 +164,7 @@ export class ProjectSyncError extends Error {
   readonly failedPhase: ProjectSyncFailurePhase;
   readonly partial: boolean;
   readonly recoveryAction: ProjectSyncRecoveryAction;
+  readonly sanitization: ProjectSyncSanitizationDiagnostics | undefined;
 
   constructor(
     code: ProjectSyncErrorCode,
@@ -150,10 +174,13 @@ export class ProjectSyncError extends Error {
       readonly failedPhase: ProjectSyncFailurePhase;
       readonly partial: boolean;
       readonly recoveryAction: ProjectSyncRecoveryAction;
+      readonly sanitization?: ProjectSyncSanitizationDiagnostics;
     },
   ) {
     super('Project synchronization failed safely.',
-      options.cause === undefined ? undefined : { cause: options.cause });
+      code === 'SYNC_SANITIZATION_FAILED' || options.cause === undefined
+        ? undefined
+        : { cause: options.cause });
     this.name = 'ProjectSyncError';
     this.code = code;
     this.completedTargets = Object.freeze(
@@ -164,6 +191,9 @@ export class ProjectSyncError extends Error {
     this.failedPhase = options.failedPhase;
     this.partial = options.partial;
     this.recoveryAction = options.recoveryAction;
+    this.sanitization = code === 'SYNC_SANITIZATION_FAILED'
+      ? normalizeProjectSyncSanitizationDiagnostics(options.sanitization)
+      : undefined;
   }
 
   toJSON(): Readonly<Record<string, unknown>> {
@@ -173,6 +203,7 @@ export class ProjectSyncError extends Error {
       failedPhase: this.failedPhase,
       partial: this.partial,
       recoveryAction: this.recoveryAction,
+      ...(this.sanitization === undefined ? {} : { sanitization: this.sanitization }),
     };
   }
 }
@@ -193,16 +224,20 @@ function fail(
     readonly completedTargets?: readonly string[];
     readonly partial?: boolean;
     readonly recoveryAction?: ProjectSyncRecoveryAction;
+    readonly sanitization?: ProjectSyncSanitizationDiagnostics;
   } = {},
 ): never {
   throw new ProjectSyncError(code, {
-    ...(options.cause === undefined ? {} : { cause: options.cause }),
+    ...(code === 'SYNC_SANITIZATION_FAILED' || options.cause === undefined
+      ? {}
+      : { cause: options.cause }),
     ...(options.completedTargets === undefined
       ? {}
       : { completedTargets: options.completedTargets }),
     failedPhase,
     partial: options.partial ?? false,
     recoveryAction: options.recoveryAction ?? 'inspect-plan',
+    ...(options.sanitization === undefined ? {} : { sanitization: options.sanitization }),
   });
 }
 

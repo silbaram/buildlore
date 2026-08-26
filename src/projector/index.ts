@@ -31,10 +31,14 @@ export {
   type ProjectSyncPlanSummary,
   type ProjectSyncPort,
   type ProjectSyncRecoveryAction,
+  type ProjectSyncSanitizationDiagnostics,
+  type ProjectSyncSanitizationRuleSummary,
+  type ProjectSyncSanitizationSource,
   type ProjectSyncSummary,
   type ProjectSyncWarning,
   type ProjectSyncWriteSummary,
 } from './sync.js';
+export { MAX_SYNC_SANITIZATION_DIAGNOSTIC_SOURCES } from './sync-sanitization-diagnostics.js';
 export {
   EXECUTION_INCLUSION_POLICY_VERSION,
   EXECUTION_PROJECTION_PLAN_SCHEMA_VERSION,

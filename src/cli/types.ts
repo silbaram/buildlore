@@ -3,6 +3,8 @@ export const CLI_ENVELOPE_SCHEMA_VERSION = 'buildlore.cli-envelope.v1' as const;
 export type CliCommandId =
   | 'check'
   | 'compile'
+  | 'compile.apply'
+  | 'compile.plan'
   | 'context'
   | 'init'
   | 'knowledge.pin.commit'
@@ -22,6 +24,7 @@ export type CliEnvelopeCommand = CliCommandId | 'unknown';
 export type CliExitCode = 0 | 2 | 3 | 4 | 5 | 6;
 export type CliOutputMode = 'human' | 'json';
 export type CliOutputStream = 'stderr' | 'stdout';
+export type CliOptionValue = boolean | string | readonly string[];
 
 export type CliOperation =
   | CliCommandId
@@ -53,7 +56,7 @@ export interface ParsedCliCommand {
   readonly command: CliCommandId;
   readonly kind: 'command';
   readonly operation: CliOperation;
-  readonly options: Readonly<Record<string, boolean | string>>;
+  readonly options: Readonly<Record<string, CliOptionValue>>;
   readonly outputMode: CliOutputMode;
   readonly projectId: string | null;
 }

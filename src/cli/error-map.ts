@@ -1,4 +1,5 @@
 import { CompilerOperationError } from '../compiler/errors.js';
+import { SessionCompileError } from '../compiler/session/errors.js';
 import { ProjectCheckError } from '../compiler/check.js';
 import { ProjectCorpusError } from '../compiler/corpus.js';
 import { KnowledgeError, type KnowledgeErrorCode } from '../knowledge/errors.js';
@@ -218,6 +219,27 @@ export function mapCliError(
     }
     return baseFailure(context, 4, error.code, 'Compiler execution failed safely.');
   }
+  if (error instanceof SessionCompileError) {
+    const admissionFailure = error.code === 'SESSION_ADMISSION_FAILED';
+    return Object.freeze({
+      ...baseFailure(
+        context,
+        admissionFailure ? 4 : 3,
+        error.code,
+        admissionFailure
+          ? 'Session output could not be staged safely.'
+          : error.code === 'SESSION_PLAN_STALE'
+            ? 'Session compile plan changed and must be regenerated.'
+            : 'Session compile input or output was rejected safely.',
+      ),
+      data: Object.freeze({
+        candidateRefs: error.candidateRefs,
+        recoveryAction: error.recoveryAction,
+        sideEffectsPossible: error.sideEffectsPossible,
+      }),
+      partial: error.sideEffectsPossible,
+    });
+  }
   if (error instanceof ProjectCheckError) {
     const failure = baseFailure(context, 4, error.code, 'Project quality check failed safely.');
     return Object.freeze({
@@ -270,6 +292,7 @@ export function mapCliError(
         completedTargets: error.completedTargets,
         failedPhase: error.failedPhase,
         recoveryAction: error.recoveryAction,
+        ...(error.sanitization === undefined ? {} : { sanitization: error.sanitization }),
       }),
       partial: error.partial,
     });

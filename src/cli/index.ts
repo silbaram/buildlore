@@ -32,6 +32,7 @@ export {
   type CliExitCode,
   type CliFailureResult,
   type CliOperation,
+  type CliOptionValue,
   type CliOutputMode,
   type CliPresentationContext,
   type CliResult,

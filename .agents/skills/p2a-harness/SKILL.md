@@ -32,7 +32,7 @@ The canonical conditions live in `.agents/context-routes.json`.
 1. Required, on-demand; stages: gate-a, gate-shape, gate-b — `references/project-shape-and-approvals.md` — Gate A approval, Gate ② project shape, or Gate B approval must be proposed or recorded.
 2. Required, on-demand; stages: gate-a, gate-shape, gate-b — `references/artifact-persistence-and-evidence.md` — Canonical planning state is about to be persisted, projected to status, or handed off.
 3. Required, conditional; stages: entry, gate-a, gate-b — `references/existing-documents.md` — The entry has a validated reference bundle, or the entry or active iteration points to an existing PRD, design, implementation plan, or approved Plan2Agent baseline.
-4. Optional, conditional; stages: gate-a, gate-b — `references/memory-recall.md` — Planning Memory is configured and a recall report is relevant to Gate A, Gate B, or Orchestrated decomposition.
+4. Optional, conditional; stages: gate-a, gate-b — `references/buildlore-knowledge.md` — BuildLore is configured and committed project knowledge is relevant to Gate A, Gate B, or Orchestrated decomposition.
 
 ## Entry Document Confirmation Dialogue
 
@@ -58,9 +58,9 @@ If the user rejects the source document, stop and request a different path. Cano
 
 The scope artifact records the confirmed idea, summary, facts, assumptions, genuinely necessary questions/decisions, baseline context, evidence, status, and approval audit. Existing legacy intake fields remain readable but never drive new workflow state.
 
-## Memory and existing documents
+## BuildLore knowledge and existing documents
 
-Planning Memory is advisory and never substitutes for approval. Consume only relevant reports and record actual query, mode, fallback, and source. Provider automatic memory may help session continuity but cannot replace canonical artifacts or portable P2A Memory.
+BuildLore retrieval is advisory and never substitutes for approval. Consume only relevant project-scoped results and record the actual query, requested/effective mode, fallback, knowledge revision, and source. Provider automatic memory may help session continuity but cannot replace canonical artifacts, inspected repository evidence, or committed BuildLore knowledge.
 
 Existing documents are evidence. Validate canonical baselines and hashes, distinguish facts from assumptions, preserve unresolved decisions, and avoid duplicating an approved iteration merely to change prose.
 

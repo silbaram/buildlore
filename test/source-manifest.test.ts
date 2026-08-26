@@ -370,6 +370,52 @@ describe('project-owned source collection manifest', () => {
       .toMatchObject({ code: 'SOURCE_PROJECT_MISMATCH', field: 'sourceRepository' });
   });
 
+  it('requires the documented canonical field order and newline bytes', async () => {
+    const fixture = await createFixture();
+    const manifestPath = join(fixture.sourceRoot, '.buildlore/sources.json');
+    const parsed = parseSourceCollectionManifest(manifest([
+      {
+        documentKind: 'markdown',
+        id: 'zulu',
+        path: 'docs/zulu.md',
+        pathType: 'file',
+      },
+      {
+        documentKind: 'markdown',
+        id: 'alpha',
+        path: 'docs/alpha.md',
+        pathType: 'file',
+      },
+    ]));
+    const canonical = serializeCanonicalJson(parsed);
+    expect(parsed.sources.map(({ id }) => id)).toEqual(['alpha', 'zulu']);
+    expect(canonical).toMatch(
+      /^\{\n[ ]{2}"projectId": "alpha",\n[ ]{2}"schemaVersion": "buildlore\.sources\.v1",\n[ ]{2}"sourceRepository":/u,
+    );
+    const reorderedFields = `${JSON.stringify({
+      schemaVersion: parsed.schemaVersion,
+      projectId: parsed.projectId,
+      sourceRepository: parsed.sourceRepository,
+      sources: parsed.sources,
+    }, null, 2)}\n`;
+    const reorderedSources = serializeCanonicalJson({
+      ...parsed,
+      sources: [...parsed.sources].reverse(),
+    });
+    for (const bytes of [
+      `\ufeff${canonical}`,
+      canonical.replaceAll('\n', '\r\n'),
+      canonical.slice(0, -1),
+      `${canonical}\n`,
+      reorderedFields,
+      reorderedSources,
+    ]) {
+      await writeFile(manifestPath, bytes, 'utf8');
+      await expect(readSourceCollectionManifest(fixture.checkout, 'alpha')).rejects
+        .toMatchObject({ code: 'SOURCE_MANIFEST_INVALID' });
+    }
+  });
+
   it('requires an explicit manifest without inferring source locations', async () => {
     const fixture = await createFixture();
     await rm(join(fixture.sourceRoot, '.buildlore'), { recursive: true });

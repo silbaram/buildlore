@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/compile-plan.schema.json",
+  "title": "BuildLore Session Compile Plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "contractDigest",
+    "planDigest",
+    "profileDigest",
+    "policyDigest",
+    "selectionDigest",
+    "sourceManifestDigest",
+    "existingKnowledgeDigest",
+    "algorithmVersion",
+    "limits",
+    "sources",
+    "tasks",
+    "mergeCandidates",
+    "allowedLinkTargets"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.compile-plan.v1" },
+    "projectId": { "$ref": "#/$defs/projectId" },
+    "contractDigest": { "$ref": "#/$defs/digest" },
+    "planDigest": { "$ref": "#/$defs/digest" },
+    "profileDigest": { "$ref": "#/$defs/digest" },
+    "policyDigest": { "$ref": "#/$defs/digest" },
+    "selectionDigest": { "$ref": "#/$defs/digest" },
+    "sourceManifestDigest": { "$ref": "#/$defs/digest" },
+    "existingKnowledgeDigest": { "$ref": "#/$defs/digest" },
+    "algorithmVersion": { "const": "buildlore.session-planner.v1" },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxCitationsPerPage",
+        "maxLinksPerPage",
+        "maxMergeCandidates",
+        "maxPageBytes",
+        "maxPlanBytes",
+        "maxProposalBytes",
+        "maxProposals",
+        "maxQuoteCodeUnits",
+        "maxSourceBytes",
+        "maxSources",
+        "maxTasks"
+      ],
+      "properties": {
+        "maxCitationsPerPage": { "const": 512 },
+        "maxLinksPerPage": { "const": 256 },
+        "maxMergeCandidates": { "const": 512 },
+        "maxPageBytes": { "const": 524288 },
+        "maxPlanBytes": { "const": 33554432 },
+        "maxProposalBytes": { "const": 524288 },
+        "maxProposals": { "const": 50 },
+        "maxQuoteCodeUnits": { "const": 512 },
+        "maxSourceBytes": { "const": 524288 },
+        "maxSources": { "const": 4096 },
+        "maxTasks": { "const": 8192 }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "tasks": {
+      "type": "array",
+      "maxItems": 8192,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/task" }
+    },
+    "mergeCandidates": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/merge" }
+    },
+    "allowedLinkTargets": {
+      "type": "array",
+      "maxItems": 8192,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pageId", "slug"],
+        "properties": {
+          "pageId": { "type": "string", "maxLength": 260 },
+          "slug": { "$ref": "#/$defs/slug" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "maxLength": 64
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "maxLength": 128
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "anchorId",
+        "originalFile",
+        "originalLine",
+        "quote",
+        "quoteDigest",
+        "sourceId"
+      ],
+      "properties": {
+        "anchorId": { "type": "string", "pattern": "^anchor-[a-f0-9]{64}$" },
+        "originalFile": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "originalLine": { "type": "integer", "minimum": 1 },
+        "quote": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "quoteDigest": { "$ref": "#/$defs/digest" },
+        "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "citationAnchors",
+        "originalContentDigest",
+        "revision",
+        "sanitizedBody",
+        "sanitizedContentDigest",
+        "sourceId",
+        "sourceKind",
+        "sourceRef",
+        "title"
+      ],
+      "properties": {
+        "citationAnchors": {
+          "type": "array",
+          "maxItems": 262144,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/anchor" }
+        },
+        "originalContentDigest": { "$ref": "#/$defs/digest" },
+        "revision": { "$ref": "#/$defs/digest" },
+        "sanitizedBody": { "type": "string", "minLength": 1, "maxLength": 524288 },
+        "sanitizedContentDigest": { "$ref": "#/$defs/digest" },
+        "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" },
+        "sourceKind": { "enum": ["markdown", "planning"] },
+        "sourceRef": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowedSourceIds",
+        "endLine",
+        "headingKey",
+        "mergeCandidateIds",
+        "outputBounds",
+        "requestedPageKinds",
+        "sourceId",
+        "startLine",
+        "taskId"
+      ],
+      "properties": {
+        "allowedSourceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" }
+        },
+        "endLine": { "type": "integer", "minimum": 1 },
+        "headingKey": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "mergeCandidateIds": {
+          "type": "array",
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^merge-[a-f0-9]{64}$" }
+        },
+        "outputBounds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxBytes", "maxCitations", "maxLinks"],
+          "properties": {
+            "maxBytes": { "const": 524288 },
+            "maxCitations": { "const": 512 },
+            "maxLinks": { "const": 256 }
+          }
+        },
+        "requestedPageKinds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["concept", "decision", "failure", "query", "verification"]
+          }
+        },
+        "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" },
+        "startLine": { "type": "integer", "minimum": 1 },
+        "taskId": { "type": "string", "pattern": "^task-[a-f0-9]{64}$" }
+      }
+    },
+    "merge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "deterministicEvidence",
+        "memberSourceIds",
+        "memberTaskIds",
+        "orderingKey"
+      ],
+      "properties": {
+        "candidateId": { "type": "string", "pattern": "^merge-[a-f0-9]{64}$" },
+        "deterministicEvidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scoreBasisPoints", "sharedTokens"],
+          "properties": {
+            "scoreBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+            "sharedTokens": {
+              "type": "array",
+              "maxItems": 256,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+            }
+          }
+        },
+        "memberSourceIds": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" }
+        },
+        "memberTaskIds": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^task-[a-f0-9]{64}$" }
+        },
+        "orderingKey": { "type": "string", "minLength": 1, "maxLength": 400 }
+      }
+    }
+  }
+}

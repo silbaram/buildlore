@@ -3,8 +3,10 @@ import { join } from 'node:path';
 import {
   createProjectCheck,
   createProjectCompiler,
+  createProjectSessionCompiler,
   type ProjectCheckPort,
   type ProjectCompilerPort,
+  type ProjectSessionCompilerPort,
 } from '../compiler/index.js';
 import { KnowledgeError, type KnowledgeErrorCode } from '../knowledge/errors.js';
 import { cloneKnowledge, initKnowledge } from '../knowledge/git.js';
@@ -97,6 +99,7 @@ export interface CliRuntime {
   readonly publication?: KnowledgePublicationPort;
   readonly publicationLineage?: CliPublicationLineagePort;
   readonly retrieval?: ProjectRetrievalPort;
+  readonly sessionCompiler?: ProjectSessionCompilerPort;
   readonly sync?: ProjectSyncPort;
 }
 
@@ -130,6 +133,17 @@ function requiredStringOption(command: ParsedCliCommand, option: string): string
   const value = stringOption(command, option);
   if (value === undefined) throw new CliUsageError('CLI_OPTION_MISSING');
   return value;
+}
+
+function requiredStringArrayOption(
+  command: ParsedCliCommand,
+  option: string,
+): readonly string[] {
+  const value = command.options[option];
+  if (!Array.isArray(value) || value.some((item: unknown) => typeof item !== 'string')) {
+    throw new CliUsageError('CLI_OPTION_MISSING');
+  }
+  return Object.freeze([...(value as readonly string[])]);
 }
 
 function unhealthyKnowledgeStatus(value: unknown): {
@@ -362,6 +376,27 @@ async function executeCommand(
         capability: 'compile',
         projectId,
         ...(command.options['--review'] === true ? { review: true } : {}),
+      });
+    }
+    case 'compile.plan': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
+        hubRoot: runtime.cwd,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      return compiler.plan({ projectId });
+    }
+    case 'compile.apply': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
+        hubRoot: runtime.cwd,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      return compiler.apply({
+        projectId,
+        proposalFiles: requiredStringArrayOption(command, '--page'),
       });
     }
     case 'check': {

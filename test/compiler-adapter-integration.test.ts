@@ -126,7 +126,7 @@ afterEach(async () => {
 });
 
 describe('llm-wiki-compiler offline SDK integration', () => {
-  it('stages an explicit review compile without writing the live wiki', async () => {
+  it('forwards review:true, returns normalized candidate refs, and stages review output without live-page approval', async () => {
     const provider = await startFakeOpenAiServer();
     servers.push(provider);
     setEnvironment('LLMWIKI_PROVIDER', 'openai');
@@ -169,7 +169,7 @@ describe('llm-wiki-compiler offline SDK integration', () => {
     expect(serialized).not.toMatch(/ALPHA-MARKER|fixture-key-not-a-secret/u);
   });
 
-  it('[V9-V-13][V9-V-15][V9-V-19][V10-V-11] keeps markers and same-slug projects isolated and stable', async () => {
+  it('keeps same-slug projects isolated and makes the second compile unchanged with zero additional chat or embedding calls', async () => {
     const provider = await startFakeOpenAiServer();
     servers.push(provider);
     setEnvironment('LLMWIKI_PROVIDER', 'openai');

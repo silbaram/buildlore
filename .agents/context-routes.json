@@ -56,12 +56,12 @@
           ]
         },
         {
-          "id": "harness.memory-recall",
-          "path": "references/memory-recall.md",
+          "id": "harness.buildlore-knowledge",
+          "path": "references/buildlore-knowledge.md",
           "phases": [],
           "load": "conditional",
           "required": false,
-          "condition": "Planning Memory is configured and a recall report is relevant to Gate A, Gate B, or Orchestrated decomposition.",
+          "condition": "BuildLore is configured and committed project knowledge is relevant to Gate A, Gate B, or Orchestrated decomposition.",
           "stages": [
             "gate-a",
             "gate-b"
@@ -113,12 +113,12 @@
           ]
         },
         {
-          "id": "spec.baseline-memory",
-          "path": "references/baseline-and-memory.md",
+          "id": "spec.baseline-buildlore",
+          "path": "references/baseline-and-buildlore.md",
           "phases": [],
           "load": "conditional",
           "required": true,
-          "condition": "The intake carries a validated baseline, a prior spec is reused, or a relevant Planning Memory report exists.",
+          "condition": "The intake carries a validated baseline, a prior spec is reused, or relevant BuildLore knowledge exists.",
           "stages": [
             "gate-b"
           ]
