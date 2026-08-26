@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/session-candidate-approval.schema.json",
+  "title": "BuildLore Session Candidate Approval V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "candidateId", "pageId", "outcome", "providerUsed", "sideEffectsPossible", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.session-candidate-approval.v1" },
+    "projectId": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 64 },
+    "candidateId": { "type": "string", "pattern": "^candidate-[a-f0-9]{64}$" },
+    "pageId": { "type": "string", "pattern": "^(concepts|queries|decisions|failures|verifications)/[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "outcome": { "const": "approved" },
+    "providerUsed": { "const": false },
+    "sideEffectsPossible": { "const": false },
+    "warnings": {
+      "type": "array", "maxItems": 20,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["code"],
+        "properties": { "code": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 128 } }
+      }
+    }
+  }
+}

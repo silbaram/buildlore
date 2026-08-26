@@ -8,6 +8,8 @@ import type {
 export const COMPILER_CAPABILITIES: Readonly<
   Record<CompilerCapabilityName, CompilerCapabilityDescriptor>
 > = Object.freeze({
+  approve: descriptor('approve', 'none', 'content-write', 'none', 'importOkf/promoteStagedPage'),
+  candidates: descriptor('candidates', 'none', 'none', 'none', 'status'),
   compile: descriptor('compile', 'required', 'content-write', 'source-to-generation-provider', 'compile'),
   context: descriptor(
     'context',

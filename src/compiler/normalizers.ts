@@ -42,6 +42,8 @@ const ALLOWED_REVIEW_REASONS = new Set<CompileReviewReason>([
   'schema-violating',
 ]);
 const CAPABILITIES = new Set<CompilerCapabilityName>([
+  'approve',
+  'candidates',
   'compile',
   'context',
   'eval-fast',
@@ -52,6 +54,8 @@ const CAPABILITIES = new Set<CompilerCapabilityName>([
   'status',
 ]);
 const REQUEST_FIELDS: Readonly<Record<CompilerCapabilityName, ReadonlySet<string>>> = {
+  approve: new Set(['candidateId', 'capability', 'projectId']),
+  candidates: new Set(['capability', 'projectId']),
   compile: new Set(['capability', 'projectId', 'review']),
   context: new Set(['budget', 'capability', 'depth', 'projectId', 'prompt', 'topChunks', 'topPages']),
   'eval-fast': new Set(['capability', 'projectId']),
@@ -67,7 +71,7 @@ type UnknownRecord = Readonly<Record<string, unknown>>;
 class UnsafeStatusItemError extends Error {}
 
 function mayWriteWorkspace(capability: CompilerCapabilityName): boolean {
-  return capability === 'compile' || capability === 'eval-full' || capability === 'query';
+  return capability === 'approve' || capability === 'compile' || capability === 'eval-full' || capability === 'query';
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -868,6 +872,13 @@ export function validateCompilerRequest(request: unknown): asserts request is Co
   if (capability === 'compile' && request.review !== undefined && typeof request.review !== 'boolean') {
     throw configInputError(request);
   }
+  if (
+    capability === 'approve' &&
+    (typeof request.candidateId !== 'string' ||
+      !/^candidate-[a-f0-9]{64}$/u.test(request.candidateId))
+  ) {
+    throw configInputError(request);
+  }
 }
 
 function configInputError(request: unknown): CompilerOperationError {
@@ -926,6 +937,9 @@ export function normalizeCompilerResult(
     | ReturnType<typeof normalizeSearch>
     | ReturnType<typeof normalizeStatus>;
   switch (request.capability) {
+    case 'approve':
+    case 'candidates':
+      throw contractError(request.projectId, request.capability);
     case 'compile':
       normalized = normalizeCompile(raw, request.projectId);
       break;

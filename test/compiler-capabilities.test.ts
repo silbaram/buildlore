@@ -60,6 +60,17 @@ afterEach(async () => {
 
 describe('compiler capability contract', () => {
   it('declares the approved SDK-only capability matrix', () => {
+    expect(COMPILER_CAPABILITIES.approve).toMatchObject({
+      egress: 'none',
+      provider: 'none',
+      upstreamMethod: 'importOkf/promoteStagedPage',
+      workspaceEffect: 'content-write',
+    });
+    expect(COMPILER_CAPABILITIES.candidates).toMatchObject({
+      egress: 'none',
+      provider: 'none',
+      workspaceEffect: 'none',
+    });
     expect(COMPILER_CAPABILITIES.compile).toMatchObject({
       capability: 'compile',
       egress: 'source-to-generation-provider',
@@ -110,7 +121,7 @@ describe('compiler capability contract', () => {
   });
 
   it('normalizes all eight capability results without upstream bodies or reasoning', async () => {
-    const responses: Readonly<Record<CompilerCapabilityName, unknown>> = {
+    const responses: Readonly<Partial<Record<CompilerCapabilityName, unknown>>> = {
       compile: {
         candidates: [],
         compiled: 1,
@@ -585,6 +596,7 @@ describe('compiler capability contract', () => {
       { capability: 'context', projectId: 'alpha', prompt: 'safe', topPages: 21 },
       { capability: 'status', extra: true, projectId: 'alpha' },
       { capability: 'compile', projectId: 'alpha', review: 'yes' },
+      { capability: 'approve', projectId: 'alpha', candidateId: 'candidate-*' },
     ]) {
       await expect(compiler.execute(request as CompilerRequest)).rejects.toMatchObject({
         code: 'COMPILER_CONFIG_INVALID',

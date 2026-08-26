@@ -4,6 +4,8 @@ export type CliCommandId =
   | 'check'
   | 'compile'
   | 'compile.apply'
+  | 'compile.approve'
+  | 'compile.candidates'
   | 'compile.plan'
   | 'context'
   | 'init'

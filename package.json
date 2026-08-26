@@ -34,6 +34,10 @@
     "./schemas/compile-proposal.schema.json": "./schemas/compile-proposal.schema.json",
     "./schemas/compile-apply-result.schema.json": "./schemas/compile-apply-result.schema.json",
     "./schemas/session-compile-provenance.schema.json": "./schemas/session-compile-provenance.schema.json",
+    "./schemas/session-review-candidate.schema.json": "./schemas/session-review-candidate.schema.json",
+    "./schemas/session-candidate-list.schema.json": "./schemas/session-candidate-list.schema.json",
+    "./schemas/session-candidate-approval.schema.json": "./schemas/session-candidate-approval.schema.json",
+    "./schemas/session-promotion-proof.schema.json": "./schemas/session-promotion-proof.schema.json",
     "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json"
   },
   "files": [

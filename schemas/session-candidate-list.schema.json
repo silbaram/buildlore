@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/session-candidate-list.schema.json",
+  "title": "BuildLore Session Candidate List V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "candidates", "managedPendingCount", "legacyPendingCount", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.session-candidate-list.v1" },
+    "projectId": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 64 },
+    "candidates": {
+      "type": "array", "maxItems": 5000,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["candidateId", "heldReasons", "lifecycle", "targetPath", "pageId", "slug"],
+        "properties": {
+          "candidateId": { "type": "string", "pattern": "^candidate-[a-f0-9]{64}$" },
+          "heldReasons": { "type": "array", "prefixItems": [{ "const": "manual-review-requested" }], "items": false, "minItems": 1, "maxItems": 1 },
+          "lifecycle": { "enum": ["approving", "pending"] },
+          "targetPath": { "type": "string", "pattern": "^(concepts|queries|decisions|failures|verifications)/[a-z0-9]+(?:-[a-z0-9]+)*\\.md$" },
+          "pageId": { "type": "string", "pattern": "^(concepts|queries|decisions|failures|verifications)/[a-z0-9]+(?:-[a-z0-9]+)*$" },
+          "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
+        }
+      }
+    },
+    "managedPendingCount": { "type": "integer", "minimum": 0, "maximum": 5000 },
+    "legacyPendingCount": { "type": "integer", "minimum": 0, "maximum": 5000 },
+    "warnings": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/warning" } }
+  },
+  "$defs": {
+    "warning": {
+      "type": "object", "additionalProperties": false, "required": ["code"],
+      "properties": { "code": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 128 } }
+    }
+  }
+}

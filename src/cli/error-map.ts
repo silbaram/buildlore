@@ -221,10 +221,13 @@ export function mapCliError(
   }
   if (error instanceof SessionCompileError) {
     const admissionFailure = error.code === 'SESSION_ADMISSION_FAILED';
+    const operationalFailure = error.code === 'SESSION_CANDIDATE_APPROVAL_FAILED' ||
+      error.code === 'SESSION_CANDIDATE_BUSY' ||
+      error.code === 'SESSION_CANDIDATE_RECOVERY_REQUIRED';
     return Object.freeze({
       ...baseFailure(
         context,
-        admissionFailure ? 4 : 3,
+        admissionFailure || operationalFailure ? 4 : 3,
         error.code,
         admissionFailure
           ? 'Session output could not be staged safely.'

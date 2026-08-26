@@ -399,6 +399,27 @@ async function executeCommand(
         proposalFiles: requiredStringArrayOption(command, '--page'),
       });
     }
+    case 'compile.candidates': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
+        hubRoot: runtime.cwd,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      return compiler.candidates({ projectId });
+    }
+    case 'compile.approve': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
+        hubRoot: runtime.cwd,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      return compiler.approve({
+        candidateId: requiredStringOption(command, '--candidate'),
+        projectId,
+      });
+    }
     case 'check': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);

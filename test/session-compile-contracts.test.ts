@@ -71,6 +71,8 @@ function plannedSource(index: number, body: string): SessionPlannedSource {
   const sourceId = `source-${hex}` as const;
   return Object.freeze({
     citationAnchors: [],
+    compilerSourceContentDigest: digest,
+    compilerSourceId: `markdown--${hex}.md`,
     originalContentDigest: digest,
     revision: digest,
     sanitizedBody: body,
@@ -248,7 +250,7 @@ describe('session compile proposal contract', () => {
 
     expect(schemas.every((schema) => schema.additionalProperties === false)).toBe(true);
     expect((schemas[0]?.properties as Record<string, unknown>).schemaVersion).toEqual({
-      const: 'buildlore.compile-plan.v1',
+      const: 'buildlore.compile-plan.v2',
     });
     expect((schemas[1]?.properties as Record<string, unknown>).schemaVersion).toEqual({
       const: 'buildlore.compile-proposal.v1',
@@ -279,7 +281,7 @@ describe('session compile proposal contract', () => {
     ]);
     expect(schemas[1]?.allOf).toHaveLength(4);
     expect(((schemas[2]?.properties as Record<string, unknown>).admissionKind as
-      Record<string, unknown>).const).toBe('untrusted-okf');
+      Record<string, unknown>).const).toBe('buildlore-review');
     expect(((schemas[2]?.properties as Record<string, unknown>).warnings as
       Record<string, unknown>).maxItems).toBe(32);
     expect((schemas[3]?.properties as Record<string, unknown>).schemaVersion).toEqual({

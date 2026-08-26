@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/session-review-candidate.schema.json",
+  "title": "BuildLore Session Review Candidate V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "candidateId", "candidateDigest", "projectId", "profileMode",
+    "pageId", "slug", "kind", "target", "renderedPage", "renderedPageDigest",
+    "batchDigest", "planDigest", "proposalDigest", "sourceManifestDigest",
+    "profileDigest", "policyDigest", "contractDigest", "provenanceBindingDigest",
+    "citationBindings", "compilerSources", "heldReasons"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.session-review-candidate.v1" },
+    "candidateId": { "$ref": "#/$defs/candidateId" },
+    "candidateDigest": { "$ref": "#/$defs/digest" },
+    "projectId": { "$ref": "#/$defs/projectId" },
+    "profileMode": { "enum": ["custom", "default"] },
+    "pageId": { "pattern": "^(concepts|queries|decisions|failures|verifications)/[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 260 },
+    "slug": { "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 128 },
+    "kind": { "enum": ["concept", "query", "decision", "failure", "verification"] },
+    "target": { "pattern": "^(concepts|queries|decisions|failures|verifications)/[a-z0-9]+(?:-[a-z0-9]+)*\\.md$", "maxLength": 263 },
+    "renderedPage": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+    "renderedPageDigest": { "$ref": "#/$defs/digest" },
+    "batchDigest": { "$ref": "#/$defs/digest" },
+    "planDigest": { "$ref": "#/$defs/digest" },
+    "proposalDigest": { "$ref": "#/$defs/digest" },
+    "sourceManifestDigest": { "$ref": "#/$defs/digest" },
+    "profileDigest": { "$ref": "#/$defs/digest" },
+    "policyDigest": { "$ref": "#/$defs/digest" },
+    "contractDigest": { "$ref": "#/$defs/digest" },
+    "provenanceBindingDigest": { "$ref": "#/$defs/digest" },
+    "citationBindings": {
+      "type": "array", "maxItems": 512, "items": { "$ref": "#/$defs/citationBinding" }
+    },
+    "compilerSources": {
+      "type": "array", "minItems": 1, "maxItems": 4096, "items": { "$ref": "#/$defs/compilerSource" }
+    },
+    "heldReasons": {
+      "type": "array", "prefixItems": [{ "const": "manual-review-requested" }], "items": false,
+      "minItems": 1, "maxItems": 1
+    },
+    "upstreamCandidateId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,255}$" }
+  },
+  "$defs": {
+    "candidateId": { "type": "string", "pattern": "^candidate-[a-f0-9]{64}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "projectId": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 64 },
+    "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" },
+    "compilerSourceId": { "type": "string", "pattern": "^(markdown|planning)--[a-f0-9]{64}\\.md$" },
+    "compilerSource": {
+      "type": "object", "additionalProperties": false,
+      "required": ["compilerSourceContentDigest", "compilerSourceId", "sourceId"],
+      "properties": {
+        "compilerSourceContentDigest": { "$ref": "#/$defs/digest" },
+        "compilerSourceId": { "$ref": "#/$defs/compilerSourceId" },
+        "sourceId": { "$ref": "#/$defs/sourceId" }
+      }
+    },
+    "citationBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["citationId", "compilerSourceContentDigest", "compilerSourceId", "originalFile", "originalLine", "quoteDigest", "sourceId"],
+      "properties": {
+        "citationId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+        "compilerSourceContentDigest": { "$ref": "#/$defs/digest" },
+        "compilerSourceId": { "$ref": "#/$defs/compilerSourceId" },
+        "originalFile": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "originalLine": { "type": "integer", "minimum": 1 },
+        "quoteDigest": { "$ref": "#/$defs/digest" },
+        "sourceId": { "$ref": "#/$defs/sourceId" }
+      }
+    }
+  }
+}

@@ -86,6 +86,8 @@ function plan(
         quoteDigest: sessionSha256(citationQuote),
         sourceId: SOURCE_ID,
       }],
+      compilerSourceContentDigest: DIGEST,
+      compilerSourceId: `markdown--${'e'.repeat(64)}.md`,
       originalContentDigest: DIGEST,
       revision: DIGEST,
       sanitizedBody: citationQuote,
@@ -235,7 +237,7 @@ describe('session compile proposal validation', () => {
       readonly bundle: string;
       readonly dryRun: boolean;
       readonly rendered: string;
-      readonly trusted: false;
+      readonly trusted: boolean | undefined;
       readonly workspace: string;
     }>> = [];
     const port: SessionCompileAdmissionPort = {
@@ -286,19 +288,19 @@ describe('session compile proposal validation', () => {
       workspace,
     }))).toEqual([
       { dryRun: true, trusted: false, workspace: snapshot.workspace },
-      { dryRun: false, trusted: false, workspace: snapshot.workspace },
     ]);
-    expect(calls[0]?.bundle).toBe(calls[1]?.bundle);
     expect(calls[0]?.rendered).toContain(SOURCE_ID);
     expect(calls[0]?.rendered).toContain('bindingDigest:');
     expect(result).toMatchObject({
-      admissionKind: 'untrusted-okf',
+      admissionKind: 'buildlore-review',
       admittedCount: 1,
-      candidateRefs: ['concepts/new-page'],
       outcome: 'staged',
       reviewRequired: true,
       sideEffectsPossible: false,
     });
+    expect(result.candidateRefs).toEqual([
+      expect.stringMatching(/^candidate-[a-f0-9]{64}$/u),
+    ]);
     await expect(readFile(
       join(snapshot.workspace, 'wiki', 'concepts', 'new-page.md'),
       'utf8',
@@ -660,7 +662,7 @@ describe('session compile proposal validation', () => {
             projectId: 'alpha',
             planDigest: snapshot.plan.planDigest,
             batchDigest: batch.batchDigest,
-            admissionKind: 'untrusted-okf',
+            admissionKind: 'buildlore-review',
             admittedCount: 1,
             candidateRefs: ['concepts/new-page'],
             outcome: 'staged',

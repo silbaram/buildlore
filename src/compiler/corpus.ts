@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 
 import { resolveProjectWorkspace } from '../knowledge/paths.js';
 import { validateProjectId } from '../knowledge/validation.js';
@@ -13,6 +14,15 @@ import {
 } from '../sanitizer/index.js';
 import { createLlmWikiCompilerBackend } from './backend.js';
 import { CompilerBackendError } from './errors.js';
+import { digestSessionValue, sessionSha256 } from './session/canonical.js';
+import { SESSION_COMPILE_LIMITS } from './session/contracts.js';
+import { SessionCompileError } from './session/errors.js';
+import {
+  createSessionReviewStore,
+  type SessionReviewStore,
+} from './session/review-store.js';
+import { readConfinedSessionUtf8 } from './session/safe-io.js';
+import type { SessionPromotionProofV1 } from './session/types.js';
 import type { CompilerCorpusBackend, CompilerWarning } from './types.js';
 
 const MAX_CORPUS_PAGES = 4_096;
@@ -89,6 +99,8 @@ export interface CreateProjectCorpusOptions {
   readonly backend?: CompilerCorpusBackend;
   readonly knowledgeRoot: string;
   readonly profilePreflight?: ProfileBindingPreflight;
+  /** @internal Project-confined promotion proof store seam. */
+  readonly reviewStoreFactory?: (workspace: string, projectId: string) => SessionReviewStore;
   readonly securityService?: ProjectSecurityService;
 }
 
@@ -176,7 +188,11 @@ function requireSourceRefs(
   return refs;
 }
 
-function normalizeLegacyPage(raw: unknown, projectId: string): CandidatePage {
+function normalizeLegacyPage(
+  raw: unknown,
+  projectId: string,
+  verifiedPromotionPages: ReadonlySet<string>,
+): CandidatePage {
   const page = requireRecord(raw, projectId);
   const slug = requireSlug(page.slug, projectId);
   const directory = requireText(page.pageDirectory, 32, projectId);
@@ -189,18 +205,23 @@ function normalizeLegacyPage(raw: unknown, projectId: string): CandidatePage {
   if (typeof page.archived !== 'boolean' || typeof page.contradicted !== 'boolean') {
     throw corpusError(projectId);
   }
-  const sourceRefs = requireSourceRefs(page.sources, projectId, { allowEmpty: true });
+  const pageId = `${directory}/${slug}`;
+  const exportedSourceRefs = requireSourceRefs(page.sources, projectId, { allowEmpty: true });
+  const sourceRefs = verifiedPromotionPages.has(pageId)
+    ? exportedSourceRefs.filter((source) => !source.startsWith('okf:'))
+    : exportedSourceRefs;
   return {
     body: requireText(page.body, MAX_PAGE_BODY_CHARS, projectId, true),
     ...(page.archived
       ? { exclusion: 'archived' as const }
       : freshness === 'stale'
         ? { exclusion: 'stale' as const }
-        : freshness === 'unverified' || page.contradicted || sourceRefs.length === 0
+        : (freshness === 'unverified' && !verifiedPromotionPages.has(pageId)) ||
+            page.contradicted || sourceRefs.length === 0
           ? { exclusion: 'unverified' as const }
           : {}),
     freshness: 'fresh',
-    pageId: `${directory}/${slug}`,
+    pageId,
     sourceRefs,
     summary: requireText(page.summary, 4_000, projectId, true),
     title: requireText(page.title, 512, projectId, true),
@@ -259,7 +280,111 @@ function normalizeEntityPage(raw: unknown, projectId: string): CandidatePage {
   };
 }
 
-function normalizeExport(raw: unknown, projectId: string, expectsProfile: boolean): {
+function boundedStrings(value: unknown, maximum: number): readonly string[] | null {
+  if (!Array.isArray(value) || value.length > maximum ||
+      value.some((item) => typeof item !== 'string')) {
+    return null;
+  }
+  return Object.freeze([...(value as readonly string[])]);
+}
+
+function exactPromotionPage(
+  raw: unknown,
+  proof: SessionPromotionProofV1,
+): boolean {
+  if (!isRecord(raw) || proof.profileMode !== 'default' ||
+      raw.path !== `wiki/${proof.pageId}.md` || typeof raw.body !== 'string' ||
+      typeof raw.title !== 'string' || typeof raw.summary !== 'string' ||
+      typeof raw.contentHash !== 'string' || !Array.isArray(raw.citations)) {
+    return false;
+  }
+  const sourceRefs = boundedStrings(raw.sources, MAX_SOURCE_REFS);
+  const sourceHashes = boundedStrings(raw.sourceHashes, MAX_SOURCE_REFS);
+  if (sourceRefs === null || sourceHashes === null || proof.citationBindings.length === 0) {
+    return false;
+  }
+  const actualSourceRefs = [...sourceRefs]
+    .filter((source) => !source.startsWith('okf:'))
+    .sort();
+  const expectedSourceRefs = proof.compilerSources
+    .map((source) => source.compilerSourceId)
+    .sort();
+  const actualSourceHashes = [...sourceHashes].sort();
+  const expectedSourceHashes = proof.compilerSources
+    .map((source) => source.compilerSourceContentDigest.slice('sha256:'.length))
+    .sort();
+  const expectedCitations = proof.citationBindings.map((binding) => ({
+    file: binding.compilerSourceId,
+    start: binding.originalLine,
+    end: binding.originalLine,
+  }));
+  return proof.bodyDigest === sessionSha256(raw.body) &&
+    proof.titleDigest === sessionSha256(raw.title) &&
+    proof.summaryDigest === sessionSha256(raw.summary) &&
+    proof.sourceRefsDigest === digestSessionValue(actualSourceRefs) &&
+    proof.citationsDigest === digestSessionValue(raw.citations) &&
+    proof.contentHash === raw.contentHash &&
+    proof.contentHash === sessionSha256(raw.body).slice('sha256:'.length) &&
+    digestSessionValue(actualSourceRefs) === digestSessionValue(expectedSourceRefs) &&
+    (actualSourceHashes.length === 0 ||
+      digestSessionValue(actualSourceHashes) === digestSessionValue(expectedSourceHashes)) &&
+    digestSessionValue(expectedSourceHashes) === digestSessionValue(proof.sourceHashes) &&
+    digestSessionValue(raw.citations) === digestSessionValue(expectedCitations);
+}
+
+async function currentPromotionSourcesMatch(
+  workspace: string,
+  projectId: string,
+  proof: SessionPromotionProofV1,
+): Promise<boolean> {
+  try {
+    const results = await Promise.all(proof.compilerSources.map(async (source) => {
+      const body = await readConfinedSessionUtf8(
+        join(workspace, 'sources', source.compilerSourceId),
+        workspace,
+        SESSION_COMPILE_LIMITS.maxSourceBytes,
+        projectId,
+      );
+      return sessionSha256(body) === source.compilerSourceContentDigest;
+    }));
+    return results.length > 0 && results.every(Boolean);
+  } catch {
+    return false;
+  }
+}
+
+async function verifiedPromotionPageIds(
+  raw: unknown,
+  proofs: readonly SessionPromotionProofV1[],
+  workspace: string,
+  projectId: string,
+): Promise<ReadonlySet<string>> {
+  if (!isRecord(raw) || !Array.isArray(raw.pages)) return new Set();
+  const proofByPage = new Map<string, SessionPromotionProofV1>();
+  for (const proof of proofs) {
+    if (proofByPage.has(proof.pageId)) throw corpusError(projectId);
+    proofByPage.set(proof.pageId, proof);
+  }
+  const verified = new Set<string>();
+  for (const rawPage of raw.pages) {
+    if (!isRecord(rawPage) || typeof rawPage.pageDirectory !== 'string' ||
+        typeof rawPage.slug !== 'string') continue;
+    const pageId = `${rawPage.pageDirectory}/${rawPage.slug}`;
+    const proof = proofByPage.get(pageId);
+    if (proof !== undefined && exactPromotionPage(rawPage, proof) &&
+        await currentPromotionSourcesMatch(workspace, projectId, proof)) {
+      verified.add(pageId);
+    }
+  }
+  return verified;
+}
+
+function normalizeExport(
+  raw: unknown,
+  projectId: string,
+  expectsProfile: boolean,
+  verifiedPromotionPages: ReadonlySet<string>,
+): {
   readonly pages: readonly CandidatePage[];
   readonly warnings: readonly CompilerWarning[];
 } {
@@ -269,7 +394,8 @@ function normalizeExport(raw: unknown, projectId: string, expectsProfile: boolea
   if (!Number.isSafeInteger(document.pageCount) || document.pageCount !== legacy.length) {
     throw corpusError(projectId);
   }
-  const pages: CandidatePage[] = legacy.map((page) => normalizeLegacyPage(page, projectId));
+  const pages: CandidatePage[] = legacy.map((page) =>
+    normalizeLegacyPage(page, projectId, verifiedPromotionPages));
   if ((document.profile !== undefined) !== expectsProfile) throw corpusError(projectId);
   if (document.profile !== undefined) {
     const profile = requireRecord(document.profile, projectId);
@@ -342,6 +468,7 @@ async function assertSafePage(
 export function createProjectCorpus(options: CreateProjectCorpusOptions): ProjectCorpusPort {
   const backend = options.backend ?? createLlmWikiCompilerBackend();
   const preflight = options.profilePreflight ?? createProfileBindingPreflight(options.knowledgeRoot);
+  const reviewStoreFactory = options.reviewStoreFactory ?? createSessionReviewStore;
   const security = options.securityService ?? createProjectSecurityService({
     knowledgeRoot: options.knowledgeRoot,
   });
@@ -357,10 +484,15 @@ export function createProjectCorpus(options: CreateProjectCorpusOptions): Projec
         throw new ProjectCorpusError('CORPUS_SNAPSHOT_CHANGED', projectId);
       }
       let raw: unknown;
+      let proofs: readonly SessionPromotionProofV1[];
       try {
-        raw = await backend.exportProject(workspace, projectId);
+        [raw, proofs] = await Promise.all([
+          backend.exportProject(workspace, projectId),
+          reviewStoreFactory(workspace, projectId).listProofs(),
+        ]);
       } catch (error) {
         if (error instanceof ProjectCorpusError) throw error;
+        if (error instanceof SessionCompileError) throw corpusError(projectId);
         if (error instanceof CompilerBackendError) {
           throw new ProjectCorpusError('CORPUS_BACKEND_FAILED', projectId);
         }
@@ -374,7 +506,13 @@ export function createProjectCorpus(options: CreateProjectCorpusOptions): Projec
           freshBinding.outputLanguage !== binding.outputLanguage) {
         throw new ProjectCorpusError('CORPUS_SNAPSHOT_CHANGED', projectId);
       }
-      const normalized = normalizeExport(raw, projectId, binding.mode === 'custom');
+      const promotedPages = await verifiedPromotionPageIds(raw, proofs, workspace, projectId);
+      const normalized = normalizeExport(
+        raw,
+        projectId,
+        binding.mode === 'custom',
+        promotedPages,
+      );
       for (const page of normalized.pages) await assertSafePage(security, page, projectId);
       const excluded: Record<CorpusExclusion, number> = {
         archived: 0,

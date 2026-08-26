@@ -14,6 +14,8 @@ import {
 import type { SessionCompilePlanSnapshot } from './source-planner.js';
 import {
   SESSION_COMPILE_PROVENANCE_SCHEMA_VERSION,
+  type SessionCitationBinding,
+  type SessionCompilerSourceBinding,
   type SessionCompileProposalV1,
   type SessionCompileProvenanceV1,
   type SessionMergeCandidate,
@@ -24,6 +26,8 @@ import {
 } from './types.js';
 
 export interface ValidatedSessionProposal {
+  readonly citationBindings: readonly SessionCitationBinding[];
+  readonly compilerSources: readonly SessionCompilerSourceBinding[];
   readonly proposal: SessionCompileProposalV1;
   readonly provenance: SessionCompileProvenanceV1;
 }
@@ -128,6 +132,42 @@ function citationMatches(
     anchor.originalLine === citation.line &&
     anchor.quote === citation.quote &&
     anchor.quoteDigest === sessionSha256(citation.quote));
+}
+
+function compilerSourceBindings(
+  proposal: SessionCompileProposalV1,
+  snapshot: SessionCompilePlanSnapshot,
+  projectId: string,
+): readonly SessionCompilerSourceBinding[] {
+  return Object.freeze(proposal.sources.map((sourceId) => {
+    const source = snapshot.plan.sources.find((item) => item.sourceId === sourceId);
+    if (source === undefined) return fail('SESSION_CONTRACT_INVALID', projectId);
+    return Object.freeze({
+      compilerSourceContentDigest: source.compilerSourceContentDigest,
+      compilerSourceId: source.compilerSourceId,
+      sourceId,
+    });
+  }).sort((left, right) => compareSessionText(left.sourceId, right.sourceId)));
+}
+
+function citationBindings(
+  proposal: SessionCompileProposalV1,
+  snapshot: SessionCompilePlanSnapshot,
+  projectId: string,
+): readonly SessionCitationBinding[] {
+  return Object.freeze(proposal.citations.map((citation) => {
+    const source = snapshot.plan.sources.find((item) => item.sourceId === citation.sourceId);
+    if (source === undefined) return fail('SESSION_CITATION_INVALID', projectId);
+    return Object.freeze({
+      citationId: citation.id,
+      compilerSourceContentDigest: source.compilerSourceContentDigest,
+      compilerSourceId: source.compilerSourceId,
+      originalFile: citation.file,
+      originalLine: citation.line,
+      quoteDigest: sessionSha256(citation.quote),
+      sourceId: citation.sourceId,
+    });
+  }).sort((left, right) => compareSessionText(left.citationId, right.citationId)));
 }
 
 function requireProfileText(
@@ -347,7 +387,12 @@ export async function validateSessionProposalBatch(
     }
     validateProfileFields(proposal, snapshot.profileMode, projectId);
     await validateGeneratedContent(proposal, snapshot, knowledgeRoot, projectId);
-    validated.push(Object.freeze({ proposal, provenance: provenanceFor(proposal, snapshot) }));
+    validated.push(Object.freeze({
+      citationBindings: citationBindings(proposal, snapshot, projectId),
+      compilerSources: compilerSourceBindings(proposal, snapshot, projectId),
+      proposal,
+      provenance: provenanceFor(proposal, snapshot),
+    }));
   }
   return Object.freeze({
     batchDigest: digestSessionValue({

@@ -38,6 +38,11 @@ describe('CLI argument parser', () => {
       ],
       command: 'compile.apply',
     },
+    { args: ['compile', 'candidates', '--project', 'alpha'], command: 'compile.candidates' },
+    {
+      args: ['compile', 'approve', '--project', 'alpha', '--candidate', `candidate-${'a'.repeat(64)}`],
+      command: 'compile.approve',
+    },
     { args: ['check', '--project', 'alpha'], command: 'check' },
     {
       args: ['search', '--project', 'alpha', '--query', 'failure', '--mode', 'hybrid'],
@@ -146,6 +151,11 @@ describe('CLI argument parser', () => {
     );
     expectUsageError(['compile', '--all'], 'CLI_OPTION_UNSUPPORTED');
     expectUsageError(['compile', 'apply', '--project', 'alpha'], 'CLI_OPTION_MISSING');
+    expectUsageError(['compile', 'approve', '--project', 'alpha'], 'CLI_OPTION_MISSING');
+    expectUsageError(
+      ['compile', 'approve', '--project', 'alpha', '--candidate', 'candidate-*'],
+      'CLI_ARGUMENT_INVALID',
+    );
     expectUsageError(
       ['compile', 'apply', '--project', 'alpha', '--page', 'unsafe\npath.json'],
       'CLI_ARGUMENT_INVALID',

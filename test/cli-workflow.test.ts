@@ -378,14 +378,17 @@ afterEach(async () => {
 describe('canonical CLI workflow', () => {
   it('routes caller-owned plan/apply without legacy compile or agent execution and returns reviewRequired safe refs, counts, digests, and recovery action', async () => {
     const cwd = await createConfiguredRepository();
+    const candidateId = `candidate-${'a'.repeat(64)}`;
     const planRequests: SessionCompilePlanRequest[] = [];
     const applyRequests: SessionCompileApplyRequest[] = [];
+    const candidateRequests: Array<{ readonly projectId: string }> = [];
+    const approveRequests: Array<{ readonly candidateId: string; readonly projectId: string }> = [];
     let legacyCalls = 0;
     const sessionCompiler: ProjectSessionCompilerPort = {
       plan: (request) => {
         planRequests.push(request);
         return Promise.resolve({
-          schemaVersion: 'buildlore.compile-plan.v1',
+          schemaVersion: 'buildlore.compile-plan.v2',
           projectId: request.projectId,
           planDigest: digest('1'),
           contractDigest: digest('2'),
@@ -423,13 +426,44 @@ describe('canonical CLI workflow', () => {
           batchDigest: digest('8'),
           outcome: 'staged',
           reviewRequired: true,
-          admissionKind: 'untrusted-okf',
+          admissionKind: 'buildlore-review',
           admittedCount: request.proposalFiles.length,
           heldCount: request.proposalFiles.length,
           skippedCount: 0,
-          candidateRefs: ['concepts/session-page'],
+          candidateRefs: [candidateId],
           sideEffectsPossible: false,
           recoveryAction: 'review',
+          warnings: [],
+        });
+      },
+      candidates: (request) => {
+        candidateRequests.push(request);
+        return Promise.resolve({
+          schemaVersion: 'buildlore.session-candidate-list.v1',
+          projectId: request.projectId,
+          candidates: [{
+            candidateId,
+            heldReasons: ['manual-review-requested'],
+            lifecycle: 'pending',
+            targetPath: 'concepts/session-page.md',
+            pageId: 'concepts/session-page',
+            slug: 'session-page',
+          }],
+          managedPendingCount: 1,
+          legacyPendingCount: 0,
+          warnings: [],
+        });
+      },
+      approve: (request) => {
+        approveRequests.push(request);
+        return Promise.resolve({
+          schemaVersion: 'buildlore.session-candidate-approval.v1',
+          projectId: request.projectId,
+          candidateId: request.candidateId,
+          pageId: 'concepts/session-page',
+          outcome: 'approved',
+          providerUsed: false,
+          sideEffectsPossible: false,
           warnings: [],
         });
       },
@@ -451,15 +485,31 @@ describe('canonical CLI workflow', () => {
       'compile', 'apply', '--project', 'alpha', '--page', 'one.json', '--page', 'two.json',
       '--json',
     ], runtime);
+    const candidates = await capture([
+      'compile', 'candidates', '--project', 'alpha', '--json',
+    ], runtime);
+    const approved = await capture([
+      'compile', 'approve', '--project', 'alpha', '--candidate', candidateId, '--json',
+    ], runtime);
 
     expect(JSON.parse(planned.stdout)).toMatchObject({
       command: 'compile.plan',
-      data: { schemaVersion: 'buildlore.compile-plan.v1' },
+      data: { schemaVersion: 'buildlore.compile-plan.v2' },
       ok: true,
     });
     expect(JSON.parse(applied.stdout)).toMatchObject({
       command: 'compile.apply',
-      data: { admissionKind: 'untrusted-okf', reviewRequired: true },
+      data: { admissionKind: 'buildlore-review', reviewRequired: true },
+      ok: true,
+    });
+    expect(JSON.parse(candidates.stdout)).toMatchObject({
+      command: 'compile.candidates',
+      data: { candidates: [{ candidateId, targetPath: 'concepts/session-page.md' }] },
+      ok: true,
+    });
+    expect(JSON.parse(approved.stdout)).toMatchObject({
+      command: 'compile.approve',
+      data: { candidateId, outcome: 'approved', providerUsed: false },
       ok: true,
     });
     expect(planRequests).toEqual([{ projectId: 'alpha' }]);
@@ -467,6 +517,8 @@ describe('canonical CLI workflow', () => {
       projectId: 'alpha',
       proposalFiles: ['one.json', 'two.json'],
     }]);
+    expect(candidateRequests).toEqual([{ projectId: 'alpha' }]);
+    expect(approveRequests).toEqual([{ candidateId, projectId: 'alpha' }]);
     expect(legacyCalls).toBe(0);
   });
 

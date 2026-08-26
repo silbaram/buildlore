@@ -66,6 +66,9 @@ function classifyBackendError(error: unknown): CompilerBackendError {
 
 async function runRequest(wiki: CompilerSdk, request: CompilerRequest): Promise<unknown> {
   switch (request.capability) {
+    case 'approve':
+    case 'candidates':
+      throw new CompilerBackendError('failed');
     case 'compile':
       return request.review === true ? wiki.compile({ review: true }) : wiki.compile();
     case 'context':
