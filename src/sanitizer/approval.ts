@@ -3,6 +3,7 @@ import type {
   PreparedSource,
   SecuritySourceKind,
 } from './types.js';
+import { SANITIZER_RULES_VERSION } from './types.js';
 
 export interface PreparedSourceBinding {
   readonly approvedBody: string;
@@ -32,7 +33,8 @@ export function issuePreparedSource(binding: PreparedSourceBinding): PreparedSou
 
 export function consumePreparedSource(prepared: PreparedSource): PreparedSourceBinding | null {
   const binding = preparedSources.get(prepared);
-  if (binding === undefined || binding.consumed) return null;
+  if (binding === undefined || binding.consumed ||
+      binding.rulesVersion !== SANITIZER_RULES_VERSION) return null;
   binding.consumed = true;
   return {
     approvedBody: binding.approvedBody,
@@ -52,7 +54,8 @@ export function consumePreparedSource(prepared: PreparedSource): PreparedSourceB
 /** Internal non-consuming inspection for deterministic target planning. */
 export function inspectPreparedSource(prepared: PreparedSource): PreparedSourceBinding | null {
   const binding = preparedSources.get(prepared);
-  if (binding === undefined || binding.consumed) return null;
+  if (binding === undefined || binding.consumed ||
+      binding.rulesVersion !== SANITIZER_RULES_VERSION) return null;
   return {
     approvedBody: binding.approvedBody,
     approvedBodyDigest: binding.approvedBodyDigest,

@@ -13,6 +13,7 @@ export interface SecurityRuleDescriptor {
 const RULE_DESCRIPTORS = [
   { action: 'redact', overridable: false, priority: 10, ruleId: 'path.workspace' },
   { action: 'redact', overridable: false, priority: 20, ruleId: 'path.home' },
+  { action: 'redact', overridable: false, priority: 25, ruleId: 'path.absolute' },
   { action: 'redact', overridable: false, priority: 30, ruleId: 'credential.url' },
   { action: 'redact', overridable: false, priority: 40, ruleId: 'credential.bearer' },
   { action: 'redact', overridable: false, priority: 41, ruleId: 'credential.basic' },

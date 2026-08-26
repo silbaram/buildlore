@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { addProject } from '../src/knowledge/index.js';
-import { consumePreparedSource } from '../src/sanitizer/approval.js';
+import { consumePreparedSource, issuePreparedSource } from '../src/sanitizer/approval.js';
 import {
   createProjectSecurityService,
+  SANITIZER_RULES_VERSION,
   SECURITY_RULES,
   SECURITY_POLICY_SCHEMA_VERSION,
   serializeSecurityPolicy,
@@ -22,7 +24,7 @@ function sha256(value: string): `sha256:${string}` {
 }
 
 async function fixture(): Promise<Readonly<{ knowledgeRoot: string; workspace: string }>> {
-  const root = await mkdtemp(join(process.cwd(), '.test-tmp-sanitizer-rules-'));
+  const root = await mkdtemp(join(tmpdir(), 'buildlore-synthetic-sanitizer-rules-'));
   temporaryRoots.push(root);
   const knowledgeRoot = join(root, 'knowledge');
   await mkdir(knowledgeRoot);
@@ -63,6 +65,7 @@ describe('deterministic sanitizer rules', () => {
     expect(SECURITY_RULES).toEqual([
       { action: 'redact', overridable: false, priority: 10, ruleId: 'path.workspace' },
       { action: 'redact', overridable: false, priority: 20, ruleId: 'path.home' },
+      { action: 'redact', overridable: false, priority: 25, ruleId: 'path.absolute' },
       { action: 'redact', overridable: false, priority: 30, ruleId: 'credential.url' },
       { action: 'redact', overridable: false, priority: 40, ruleId: 'credential.bearer' },
       { action: 'redact', overridable: false, priority: 41, ruleId: 'credential.basic' },
@@ -91,6 +94,40 @@ describe('deterministic sanitizer rules', () => {
     ]);
     expect(Object.isFrozen(SECURITY_RULES)).toBe(true);
     expect(SECURITY_RULES.every((rule) => Object.isFrozen(rule))).toBe(true);
+    expect(SANITIZER_RULES_VERSION).toBe('buildlore.sanitizer-rules.v2');
+  });
+
+  it('rejects a v1 approval and accepts a freshly rescanned v2 approval', async () => {
+    const item = await fixture();
+    const body = 'stable documentation body';
+    const bodyDigest = sha256(body);
+    const stale = issuePreparedSource({
+      approvedBody: body,
+      approvedBodyDigest: bodyDigest,
+      classification: 'restricted',
+      inputBodyDigest: bodyDigest,
+      policyDigest: sha256('stale-policy'),
+      projectId: 'alpha',
+      rulesVersion: 'buildlore.sanitizer-rules.v1',
+      source: 'buildlore://planning/example',
+      sourceKind: 'planning',
+      sourceRevisionOrContentSha256: sha256('revision'),
+      untrustedData: false,
+    });
+
+    expect(consumePreparedSource(stale)).toBeNull();
+
+    const fresh = await createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot })
+      .prepareSource(request(body));
+    expect(fresh).toMatchObject({
+      ok: true,
+      report: { rulesVersion: SANITIZER_RULES_VERSION },
+    });
+    if (!fresh.ok) throw new Error('expected fresh v2 approval');
+    expect(consumePreparedSource(fresh.prepared)).toMatchObject({
+      approvedBody: body,
+      rulesVersion: SANITIZER_RULES_VERSION,
+    });
   });
 
   it('redacts known credentials and private paths without exposing their values', async () => {
@@ -196,6 +233,116 @@ describe('deterministic sanitizer rules', () => {
     const uncApproved = consumePreparedSource(uncResult.prepared)?.approvedBody;
     expect(uncApproved).toContain('<HOME>/Documents/notes.md');
     expect(uncApproved?.toLowerCase()).not.toContain('privateperson');
+  });
+
+  it('protects the configured knowledge root and nested workspace longest-first', async () => {
+    const item = await fixture();
+    const knowledgeVariant = item.knowledgeRoot.replaceAll('/', '\\');
+    const body = [
+      `root=${item.knowledgeRoot}/catalog`,
+      `variant=${knowledgeVariant}\\catalog`,
+      `workspace=${item.workspace}/sources`,
+    ].join('\n');
+
+    const result = await createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot })
+      .prepareSource(request(body));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected protected root redaction');
+    const approved = consumePreparedSource(result.prepared)?.approvedBody ?? '';
+    expect(approved).toContain('root=<WORKSPACE>/catalog');
+    expect(approved).toContain('variant=<WORKSPACE>\\catalog');
+    expect(approved).toContain('workspace=<WORKSPACE>/sources');
+    expect(approved).not.toContain(item.knowledgeRoot);
+    expect(approved).not.toContain(knowledgeVariant);
+    expect(JSON.stringify(result.report)).not.toContain(item.knowledgeRoot);
+    expect(result.report.summaries).toContainEqual(expect.objectContaining({
+      overriddenCount: 0,
+      ruleId: 'path.workspace',
+    }));
+  });
+
+  it('redacts bounded Windows and POSIX absolute paths on every host', async () => {
+    const item = await fixture();
+    const paths = [
+      'C:\\synthetic-root\\project\\notes.md',
+      'D:/synthetic-root/project/notes.md',
+      '/var/lib/synthetic-buildlore/state',
+      '/opt/synthetic-buildlore/data',
+      'file:///srv/synthetic-buildlore/archive',
+      '/srv/synthetic-buildlore/pseudo-uri',
+      '/usr/local/synthetic-buildlore/after-link',
+    ];
+    const body = [
+      `windows-backslash=${paths[0]}`,
+      `windows-slash=${paths[1]}`,
+      `posix-var=${paths[2]}`,
+      `markdown-root=[root](${paths[3]})`,
+      `file-uri=${paths[4]}`,
+      `invalid-http=https://%${paths[5]}`,
+      `after-http-link=[reference](https://example.test/docs)${paths[6]}`,
+    ].join('\n');
+
+    const service = createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot });
+    const result = await service.prepareSource(request(body));
+    const repeated = await service.prepareSource(request(body));
+
+    expect(result.ok).toBe(true);
+    expect(repeated.ok).toBe(true);
+    expect(repeated.report).toEqual(result.report);
+    if (!result.ok || !repeated.ok) throw new Error('expected absolute path redaction');
+    const approved = consumePreparedSource(result.prepared)?.approvedBody ?? '';
+    expect(consumePreparedSource(repeated.prepared)?.approvedBody).toBe(approved);
+    expect(approved.match(/<ABSOLUTE_PATH>/gu)).toHaveLength(paths.length);
+    for (const value of paths) {
+      expect(approved).not.toContain(value);
+      expect(JSON.stringify(result.report)).not.toContain(value);
+    }
+    expect(result.report.summaries).toContainEqual({
+      action: 'redact',
+      count: paths.length,
+      overriddenCount: 0,
+      ruleId: 'path.absolute',
+    });
+  });
+
+  it('does not classify URLs, relative Markdown, options, or generated identities as paths', async () => {
+    const item = await fixture();
+    const syntheticHome = '/home/synthetic-buildlore-user';
+    const body = [
+      'https://example.test/docs/page.md?next=/portable/page',
+      'https://example.test/home/example-user/guide',
+      'https://example.test/reference?next=C:/Users/example-user/guide',
+      `https://example.test/reference?home=${syntheticHome}`,
+      'https://example.test/a(b)/opt/reference',
+      'https://example.test/a[ref]/var/reference',
+      'https://example.test/a{ref}/srv/reference',
+      'http://example.test/reference',
+      '[Guide](docs/page.md)',
+      '# Relative heading',
+      '--project alpha --json',
+      'citation=docs/evidence.md',
+      `buildlore://session-output/${'a'.repeat(64)}`,
+      'drive-relative=C:notes.md',
+      'relative=./notes.md ../archive.md',
+      '한글문서/guide/page.md',
+      'café/var/lib/reference.md',
+      '📁/opt/archive.md',
+      '문서C:/relative/notes.md',
+      `https://example.test/search?${Array.from({ length: 256 }, (_, index) =>
+        `path${String(index)}=/opt/item-${String(index)}`).join('&')}`,
+    ].join('\n');
+
+    const result = await createProjectSecurityService({
+      homePath: syntheticHome,
+      knowledgeRoot: item.knowledgeRoot,
+    })
+      .prepareSource(request(body));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected safe lexical forms');
+    expect(consumePreparedSource(result.prepared)?.approvedBody).toBe(body);
+    expect(result.report.summaries.some(({ ruleId }) => ruleId.startsWith('path.'))).toBe(false);
   });
 
   it('blocks private keys and uncertain entropy and quarantines prompt injection', async () => {

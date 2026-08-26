@@ -27,14 +27,17 @@ const MAX_PROVIDER_INPUT_FILE_BYTES = 512 * 1024;
 const MAX_PROVIDER_INPUT_TOTAL_BYTES = 32 * 1024 * 1024;
 const PROVIDER_INPUT_MANIFEST_SCHEMA_VERSION = 'buildlore.provider-input-manifest.v1' as const;
 const SAFE_GENERATED_EXTENSIONS = new Set(['.json', '.jsonl', '.md', '.yaml', '.yml']);
-const issuedPermits = new WeakMap<object, Readonly<{
+interface CompilerSecurityPermitBinding {
   capability: EgressCapability;
-  consumed: boolean;
   manifestDigest: `sha256:${string}`;
   manifestSchemaVersion: typeof PROVIDER_INPUT_MANIFEST_SCHEMA_VERSION;
   policyDigest: `sha256:${string}`;
   projectId: string;
-  rulesVersion: typeof SANITIZER_RULES_VERSION;
+  rulesVersion: string;
+}
+
+const issuedPermits = new WeakMap<object, Readonly<CompilerSecurityPermitBinding & {
+  consumed: boolean;
 }>>();
 
 interface ProviderInput {
@@ -59,6 +62,15 @@ interface ProviderInputManifest {
 
 export interface CompilerSecurityPermit {
   readonly opaque: true;
+}
+
+/** Internal issuance seam; verification always rechecks the current manifest and rules version. */
+export function issueCompilerSecurityPermit(
+  binding: CompilerSecurityPermitBinding,
+): CompilerSecurityPermit {
+  const permit = Object.freeze({ opaque: true as const });
+  issuedPermits.set(permit, { ...binding, consumed: false });
+  return permit;
 }
 
 function denied(): never {
@@ -370,17 +382,14 @@ export async function prepareCompilerEgress(
 ): Promise<CompilerSecurityPermit> {
   const stableRequest = Object.freeze({ ...request });
   const manifest = await buildManifest(knowledgeRoot, workspace, stableRequest);
-  const permit = Object.freeze({ opaque: true as const });
-  issuedPermits.set(permit, {
+  return issueCompilerSecurityPermit({
     capability: manifest.capability,
-    consumed: false,
     manifestDigest: manifest.digest,
     manifestSchemaVersion: manifest.manifestSchemaVersion,
     policyDigest: manifest.policyDigest,
     projectId: manifest.projectId,
     rulesVersion: manifest.rulesVersion,
   });
-  return permit;
 }
 
 export async function verifyAndConsumeCompilerEgress(

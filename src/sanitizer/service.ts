@@ -28,8 +28,18 @@ import {
 } from './types.js';
 
 const CREDENTIAL_PLACEHOLDER = '<REDACTED:CREDENTIAL>';
+const ABSOLUTE_PATH_PLACEHOLDER = '<ABSOLUTE_PATH>';
 const HOME_PLACEHOLDER = '<HOME>';
 const WORKSPACE_PLACEHOLDER = '<WORKSPACE>';
+const ABSOLUTE_PATH_START_DELIMITERS = new Set([
+  '"', "'", '`', '<', '>', '[', ']', '(', ')', '{', '}', '|', ',', ';', '!', '?', '=', ':',
+]);
+const HTTP_URI_TERMINATORS = new Set([
+  '"', "'", '`', '<', '>',
+]);
+const PATH_TOKEN_TERMINATORS = new Set([
+  '"', "'", '`', '<', '>', '[', ']', '(', ')', '{', '}', '|', ',', ';', '!', '?',
+]);
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const SAFE_SOURCE_PATTERN = /^[\u0020-\u007e]{1,4096}$/u;
 const PROJECT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
@@ -64,6 +74,27 @@ interface ScanState {
   findingsOverflow: boolean;
   readonly findings: Finding[];
   readonly totals: Map<string, number>;
+}
+
+interface ProtectedPathCandidate {
+  readonly order: number;
+  readonly replacement: string;
+  readonly ruleId: string;
+  readonly value: string;
+}
+
+interface TextRange {
+  readonly end: number;
+  readonly start: number;
+}
+
+interface InvalidHttpUriRange extends TextRange {
+  readonly contentStart: number;
+}
+
+interface HttpUriRanges {
+  readonly excluded: readonly TextRange[];
+  readonly invalid: readonly InvalidHttpUriRange[];
 }
 
 function sha256(value: string): `sha256:${string}` {
@@ -120,6 +151,7 @@ function addLiteralPath(
   value: string,
   ruleId: string,
   replacement: string,
+  httpUriRanges: HttpUriRanges,
 ): void {
   if (value.length < 2) return;
   let start = body.indexOf(value);
@@ -131,7 +163,8 @@ function addLiteralPath(
       ruleId,
       start,
     };
-    if (!state.findings.some((candidate) => candidate.action === 'redact' && overlaps(candidate, finding))) {
+    if (!rangeContains(httpUriRanges.excluded, start) && !state.findings.some((candidate) =>
+      candidate.action === 'redact' && overlaps(candidate, finding))) {
       addFinding(state, finding);
     }
     start = body.indexOf(value, start + value.length);
@@ -144,6 +177,7 @@ function addAsciiCaseInsensitivePath(
   value: string,
   ruleId: string,
   replacement: string,
+  httpUriRanges: HttpUriRanges,
 ): void {
   if (value.length < 2 || !/^(?:[A-Za-z]:[\\/]|[\\/]{2})/u.test(value)) return;
   const foldedBody = body.toLowerCase();
@@ -157,7 +191,8 @@ function addAsciiCaseInsensitivePath(
       ruleId,
       start,
     };
-    if (!state.findings.some((candidate) => candidate.action === 'redact' && overlaps(candidate, finding))) {
+    if (!rangeContains(httpUriRanges.excluded, start) && !state.findings.some((candidate) =>
+      candidate.action === 'redact' && overlaps(candidate, finding))) {
       addFinding(state, finding);
     }
     start = foldedBody.indexOf(foldedValue, start + value.length);
@@ -170,6 +205,7 @@ function addPathMatches(
   pattern: RegExp,
   ruleId: string,
   replacement: string,
+  httpUriRanges: HttpUriRanges,
 ): void {
   pattern.lastIndex = 0;
   let match = pattern.exec(body);
@@ -181,11 +217,209 @@ function addPathMatches(
       ruleId,
       start: match.index,
     };
-    if (!state.findings.some((candidate) =>
+    if (!rangeContains(httpUriRanges.excluded, match.index) && !state.findings.some((candidate) =>
       candidate.action === 'redact' && overlaps(candidate, finding))) {
       addFinding(state, finding);
     }
     match = pattern.exec(body);
+  }
+}
+
+function pathVariants(value: string): readonly string[] {
+  return [...new Set([
+    value,
+    value.replaceAll('/', '\\'),
+    value.replaceAll('\\', '/'),
+  ])];
+}
+
+function protectedPathCandidates(
+  workspace: string,
+  knowledgeRoot: string,
+  homePath: string,
+): readonly ProtectedPathCandidate[] {
+  const roots = [
+    { order: 0, replacement: WORKSPACE_PLACEHOLDER, ruleId: 'path.workspace', value: workspace },
+    { order: 1, replacement: WORKSPACE_PLACEHOLDER, ruleId: 'path.workspace', value: knowledgeRoot },
+    { order: 2, replacement: HOME_PLACEHOLDER, ruleId: 'path.home', value: homePath },
+  ] as const;
+  return roots.flatMap((root) => pathVariants(root.value).map((value) => ({
+    order: root.order,
+    replacement: root.replacement,
+    ruleId: root.ruleId,
+    value,
+  }))).sort((left, right) => {
+    const byLength = right.value.length - left.value.length;
+    if (byLength !== 0) return byLength;
+    const byOrder = left.order - right.order;
+    if (byOrder !== 0) return byOrder;
+    return left.value < right.value ? -1 : left.value > right.value ? 1 : 0;
+  });
+}
+
+function isAsciiLetter(value: string | undefined): boolean {
+  return value !== undefined && /^[A-Za-z]$/u.test(value);
+}
+
+function isWhitespace(value: string | undefined): boolean {
+  return value !== undefined && /^\s$/u.test(value);
+}
+
+function isPathTokenTerminator(value: string | undefined): boolean {
+  return value === undefined || isWhitespace(value) || PATH_TOKEN_TERMINATORS.has(value);
+}
+
+function isGenericPathBoundary(body: string, start: number): boolean {
+  const previous = body[start - 1];
+  return previous === undefined || isWhitespace(previous) ||
+    ABSOLUTE_PATH_START_DELIMITERS.has(previous);
+}
+
+function validHttpUri(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function httpUriEnd(body: string, start: number): number {
+  const depths = { round: 0, square: 0, curly: 0 };
+  let end = start;
+  while (body[end] !== undefined && !isWhitespace(body[end]) &&
+      !HTTP_URI_TERMINATORS.has(body[end] ?? '')) {
+    const character = body[end];
+    if (character === '(') depths.round += 1;
+    else if (character === '[') depths.square += 1;
+    else if (character === '{') depths.curly += 1;
+    else if (character === ')') {
+      if (depths.round === 0) break;
+      depths.round -= 1;
+    } else if (character === ']') {
+      if (depths.square === 0) break;
+      depths.square -= 1;
+    } else if (character === '}') {
+      if (depths.curly === 0) break;
+      depths.curly -= 1;
+    }
+    end += 1;
+  }
+  return end;
+}
+
+function collectHttpUriRanges(body: string): HttpUriRanges {
+  const excluded: TextRange[] = [];
+  const invalid: InvalidHttpUriRange[] = [];
+  const pattern = /https?:\/\//giu;
+  let match = pattern.exec(body);
+  while (match !== null) {
+    const start = match.index;
+    const previous = body[start - 1];
+    if (previous !== undefined && /^[A-Za-z0-9+.-]$/u.test(previous)) {
+      match = pattern.exec(body);
+      continue;
+    }
+    const contentStart = pattern.lastIndex;
+    const end = httpUriEnd(body, contentStart);
+    if (validHttpUri(body.slice(start, end))) excluded.push({ end, start });
+    else invalid.push({ contentStart, end, start });
+    pattern.lastIndex = end;
+    match = pattern.exec(body);
+  }
+  return { excluded, invalid };
+}
+
+function rangeContains(ranges: readonly TextRange[], index: number): boolean {
+  let low = 0;
+  let high = ranges.length - 1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const range = ranges[middle];
+    if (range === undefined) return false;
+    if (index < range.start) high = middle - 1;
+    else if (index >= range.end) low = middle + 1;
+    else return true;
+  }
+  return false;
+}
+
+function followsNonHttpUriRoot(body: string, start: number): boolean {
+  if (start < 3 || body.slice(start - 2, start) !== '//' || body[start - 3] !== ':') return false;
+  let schemeStart = start - 3;
+  while (schemeStart > 0 && /^[A-Za-z0-9+.-]$/u.test(body[schemeStart - 1] ?? '')) {
+    schemeStart -= 1;
+  }
+  const scheme = body.slice(schemeStart, start - 3);
+  return /^[A-Za-z][A-Za-z0-9+.-]*$/u.test(scheme) && !/^https?$/iu.test(scheme);
+}
+
+function followsDrivePrefix(body: string, start: number): boolean {
+  return body[start - 1] === ':' && isAsciiLetter(body[start - 2]) &&
+    (start === 2 || !/^[A-Za-z0-9+.-]$/u.test(body[start - 3] ?? ''));
+}
+
+function absolutePathEnd(body: string, start: number, allowInvalidHttpBoundary: boolean): number | null {
+  const first = body[start];
+  if (first === '/') {
+    if (body[start + 1] === '/' || isPathTokenTerminator(body[start + 1])) return null;
+    if (followsDrivePrefix(body, start)) return null;
+    if (!allowInvalidHttpBoundary && !isGenericPathBoundary(body, start) &&
+        !followsNonHttpUriRoot(body, start)) return null;
+    let end = start + 1;
+    while (!isPathTokenTerminator(body[end])) end += 1;
+    return end;
+  }
+  if (!isAsciiLetter(first) || body[start + 1] !== ':' ||
+      (body[start + 2] !== '/' && body[start + 2] !== '\\') ||
+      body[start + 3] === '/' || body[start + 3] === '\\' ||
+      isPathTokenTerminator(body[start + 3]) ||
+      (!allowInvalidHttpBoundary && !isGenericPathBoundary(body, start))) return null;
+  let end = start + 3;
+  while (!isPathTokenTerminator(body[end])) end += 1;
+  return end;
+}
+
+function collectAbsolutePathFindings(
+  state: ScanState,
+  body: string,
+  httpUriRanges: HttpUriRanges,
+): void {
+  let excludedRangeIndex = 0;
+  let invalidRangeIndex = 0;
+  for (let start = 0; start < body.length; start += 1) {
+    if (body[start] !== '/' && !isAsciiLetter(body[start])) continue;
+    while (true) {
+      const expired = httpUriRanges.excluded[excludedRangeIndex];
+      if (expired === undefined || expired.end > start) break;
+      excludedRangeIndex += 1;
+    }
+    const excludedRange = httpUriRanges.excluded[excludedRangeIndex];
+    if (excludedRange !== undefined &&
+        start >= excludedRange.start && start < excludedRange.end) continue;
+    while (true) {
+      const expired = httpUriRanges.invalid[invalidRangeIndex];
+      if (expired === undefined || expired.end > start) break;
+      invalidRangeIndex += 1;
+    }
+    const invalidRange = httpUriRanges.invalid[invalidRangeIndex];
+    const allowInvalidHttpBoundary = invalidRange !== undefined &&
+      start >= invalidRange.contentStart && start < invalidRange.end;
+    const end = absolutePathEnd(body, start, allowInvalidHttpBoundary);
+    if (end === null) continue;
+    const finding: Finding = {
+      action: 'redact',
+      end,
+      replacement: ABSOLUTE_PATH_PLACEHOLDER,
+      ruleId: 'path.absolute',
+      start,
+    };
+    if (!state.findings.some((candidate) =>
+      candidate.action === 'redact' && overlaps(candidate, finding))) {
+      addFinding(state, finding);
+    }
+    start = end - 1;
   }
 }
 
@@ -194,24 +428,26 @@ function collectPathFindings(
   body: string,
   workspace: string,
   homePath: string,
+  knowledgeRoot: string,
 ): void {
-  const workspaceVariants = new Set([
-    workspace,
-    workspace.replaceAll('/', '\\'),
-    workspace.replaceAll('\\', '/'),
-  ]);
-  const homeVariants = new Set([
-    homePath,
-    homePath.replaceAll('/', '\\'),
-    homePath.replaceAll('\\', '/'),
-  ]);
-  for (const value of workspaceVariants) {
-    addLiteralPath(state, body, value, 'path.workspace', WORKSPACE_PLACEHOLDER);
-    addAsciiCaseInsensitivePath(state, body, value, 'path.workspace', WORKSPACE_PLACEHOLDER);
-  }
-  for (const value of homeVariants) {
-    addLiteralPath(state, body, value, 'path.home', HOME_PLACEHOLDER);
-    addAsciiCaseInsensitivePath(state, body, value, 'path.home', HOME_PLACEHOLDER);
+  const httpUriRanges = collectHttpUriRanges(body);
+  for (const candidate of protectedPathCandidates(workspace, knowledgeRoot, homePath)) {
+    addLiteralPath(
+      state,
+      body,
+      candidate.value,
+      candidate.ruleId,
+      candidate.replacement,
+      httpUriRanges,
+    );
+    addAsciiCaseInsensitivePath(
+      state,
+      body,
+      candidate.value,
+      candidate.ruleId,
+      candidate.replacement,
+      httpUriRanges,
+    );
   }
   addPathMatches(
     state,
@@ -219,6 +455,7 @@ function collectPathFindings(
     /\/(?:home|Users)\/[^/\s"'`]+/gu,
     'path.home',
     HOME_PLACEHOLDER,
+    httpUriRanges,
   );
   addPathMatches(
     state,
@@ -226,7 +463,9 @@ function collectPathFindings(
     /[A-Za-z]:\\Users\\[^\\\s"'`]+/gu,
     'path.home',
     HOME_PLACEHOLDER,
+    httpUriRanges,
   );
+  collectAbsolutePathFindings(state, body, httpUriRanges);
 }
 
 function collectCredentialFindings(state: ScanState, body: string): void {
@@ -460,6 +699,7 @@ function scan(
   request: SourceSecurityRequest,
   loaded: LoadedSecurityPolicy,
   homePath: string,
+  knowledgeRoot: string,
   oversized = false,
 ): Readonly<{ approvedBody?: string; report: SanitizationReport }> {
   const identity = sourceIdentitySha256(request.source);
@@ -472,7 +712,7 @@ function scan(
     if (containsUnsafeCharacter(request.body)) {
       addFinding(state, { action: 'block', ruleId: 'input.invalid-character' });
     }
-    collectPathFindings(state, request.body, loaded.workspace, homePath);
+    collectPathFindings(state, request.body, loaded.workspace, homePath, knowledgeRoot);
     collectCredentialFindings(state, request.body);
     collectPrivateKeyFindings(state, request.body);
     collectPromptFindings(state, request.body);
@@ -586,7 +826,7 @@ export function createProjectSecurityService(
             const body = normalizeSecurityBody(request.body);
             return { ...request, body, bodyDigest: sha256(body) };
           })();
-      const outcome = scan(normalizedRequest, loaded, homePath, oversized);
+      const outcome = scan(normalizedRequest, loaded, homePath, knowledgeRoot, oversized);
       if (outcome.approvedBody === undefined) return { ok: false, report: outcome.report };
       return {
         ok: true,

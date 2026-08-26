@@ -279,7 +279,7 @@ describe('security policy', () => {
       },
     },
     {
-      name: 'non-overridable rule',
+      name: 'non-overridable private-key rule',
       value: {
         ...allowedPolicy(),
         overrides: [{
@@ -290,6 +290,18 @@ describe('security policy', () => {
         }],
       },
     },
+    ...['path.workspace', 'path.home', 'path.absolute'].map((ruleId) => ({
+      name: `non-overridable ${ruleId} rule`,
+      value: {
+        ...allowedPolicy(),
+        overrides: [{
+          reasonCode: 'non-secret-identifier',
+          ruleId,
+          sourceIdentitySha256: 'a'.repeat(64),
+          sourceRevisionOrContentSha256: `sha256:${'b'.repeat(64)}`,
+        }],
+      },
+    })),
   ])('rejects $name without echoing policy values', ({ value }) => {
     expect(() => parseSecurityPolicy(value, 'alpha')).toThrowError(
       expect.objectContaining({ code: 'SECURITY_POLICY_INVALID' }),
