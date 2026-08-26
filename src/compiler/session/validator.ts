@@ -219,7 +219,12 @@ async function validateGeneratedContent(
         kind: proposal.callerHarness.kind,
         version: proposal.callerHarness.version,
       },
-      citations: proposal.citations,
+      citations: proposal.citations.map((citation) => ({
+        file: citation.file,
+        id: citation.id,
+        line: citation.line,
+        quote: citation.quote,
+      })),
       profileFields: proposal.profileFields ?? {},
     }),
   ].join('\n');

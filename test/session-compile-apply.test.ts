@@ -22,7 +22,11 @@ import {
 import { addProject } from '../src/knowledge/index.js';
 import { readSecurityPolicy } from '../src/sanitizer/index.js';
 import { sessionSha256 } from '../src/compiler/session/canonical.js';
-import type { SessionCompileAdmission } from '../src/compiler/session/admission.js';
+import {
+  createSessionCompileAdmission,
+  type SessionCompileAdmission,
+  type SessionCompileAdmissionPort,
+} from '../src/compiler/session/admission.js';
 import { createProjectSessionCompilerForTest } from '../src/compiler/session/service.js';
 import type { SessionCompilePlanSnapshot } from '../src/compiler/session/source-planner.js';
 import { validateSessionProposalBatch } from '../src/compiler/session/validator.js';
@@ -31,7 +35,7 @@ import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const temporaryRoots: string[] = [];
 const DIGEST = `sha256:${'a'.repeat(64)}` as const;
-const SOURCE_ID = `source-${'b'.repeat(64)}` as const;
+const SOURCE_ID = 'source-248eb69e525940ece2494f96cf814deae1620a9fb4d6b231b3cae35a053cbbe1' as const;
 const TASK_ID = `task-${'c'.repeat(64)}` as const;
 const QUOTE = 'Original public evidence.';
 
@@ -58,7 +62,10 @@ async function directoryDigest(root: string): Promise<string> {
   return hash.digest('hex');
 }
 
-function plan(policyDigest: `sha256:${string}`): SessionCompilePlanV1 {
+function plan(
+  policyDigest: `sha256:${string}`,
+  citationQuote = QUOTE,
+): SessionCompilePlanV1 {
   return finalizeSessionCompilePlan({
     schemaVersion: SESSION_COMPILE_PLAN_SCHEMA_VERSION,
     projectId: 'alpha',
@@ -75,14 +82,14 @@ function plan(policyDigest: `sha256:${string}`): SessionCompilePlanV1 {
         anchorId: `anchor-${'d'.repeat(64)}`,
         originalFile: 'docs/evidence.md',
         originalLine: 7,
-        quote: QUOTE,
-        quoteDigest: sessionSha256(QUOTE),
+        quote: citationQuote,
+        quoteDigest: sessionSha256(citationQuote),
         sourceId: SOURCE_ID,
       }],
       originalContentDigest: DIGEST,
       revision: DIGEST,
-      sanitizedBody: QUOTE,
-      sanitizedContentDigest: sessionSha256(QUOTE),
+      sanitizedBody: citationQuote,
+      sanitizedContentDigest: sessionSha256(citationQuote),
       sourceId: SOURCE_ID,
       sourceKind: 'markdown',
       sourceRef: 'docs/evidence.md',
@@ -146,6 +153,7 @@ function proposal(
 async function applyRejectedWithoutAdmission(
   invalidProposal: SessionCompileProposalV1,
   expectedCode: string,
+  boundSnapshot: SessionCompilePlanSnapshot = snapshot,
 ): Promise<unknown> {
   rejectionFixture += 1;
   const proposalPath = join(knowledgeRoot, `rejected-${String(rejectionFixture)}.json`);
@@ -155,16 +163,16 @@ async function applyRejectedWithoutAdmission(
     admission: { stage },
     hubRoot: knowledgeRoot,
     knowledgeRoot,
-    planner: { create: () => Promise.resolve(snapshot) },
+    planner: { create: () => Promise.resolve(boundSnapshot) },
   });
-  const before = await directoryDigest(snapshot.workspace);
+  const before = await directoryDigest(boundSnapshot.workspace);
   const error = await compiler.apply({
     projectId: 'alpha',
     proposalFiles: [proposalPath],
   }).catch((reason: unknown) => reason);
   expect(error).toMatchObject({ code: expectedCode, sideEffectsPossible: false });
   expect(stage).not.toHaveBeenCalled();
-  await expect(directoryDigest(snapshot.workspace)).resolves.toBe(before);
+  await expect(directoryDigest(boundSnapshot.workspace)).resolves.toBe(before);
   return error;
 }
 
@@ -193,7 +201,7 @@ afterEach(async () => {
 });
 
 describe('session compile proposal validation', () => {
-  it('accepts existing links and binds plan, proposal, source, profile, policy, contract, and harness provenance for the full batch', async () => {
+  it('accepts a validated high-entropy generated source identity and binds full-batch provenance', async () => {
     const batch = await validateSessionProposalBatch(
       snapshot,
       [proposal()],
@@ -217,6 +225,84 @@ describe('session compile proposal validation', () => {
       sourceManifestDigest: snapshot.plan.sourceManifestDigest,
     });
     expect(batch.pages[0]?.provenance.bindingDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+  });
+
+  it('applies a high-entropy generated source identity through review-only SDK admission', async () => {
+    const validProposal = proposal();
+    const proposalPath = join(knowledgeRoot, 'accepted-high-entropy.json');
+    await writeFile(proposalPath, serializeCanonicalJson(validProposal), 'utf8');
+    const calls: Array<Readonly<{
+      readonly bundle: string;
+      readonly dryRun: boolean;
+      readonly rendered: string;
+      readonly trusted: false;
+      readonly workspace: string;
+    }>> = [];
+    const port: SessionCompileAdmissionPort = {
+      async importOkf(workspace, bundle, options): Promise<unknown> {
+        const rendered = await readFile(join(bundle, `${validProposal.pageId}.md`), 'utf8');
+        calls.push({
+          bundle,
+          dryRun: options.dryRun === true,
+          rendered,
+          trusted: options.trusted,
+          workspace,
+        });
+        return {
+          mode: options.dryRun === true ? 'dry-run' : 'staged',
+          pages: [{
+            okfPath: `${validProposal.pageId}.md`,
+            slug: validProposal.slug,
+            targetDirectory: 'concepts',
+          }],
+          relationOutcomes: [],
+          skipped: [],
+          warnings: [],
+        };
+      },
+    };
+    let plannerCalls = 0;
+    const compiler = createProjectSessionCompilerForTest({
+      admission: createSessionCompileAdmission({ port }),
+      hubRoot: knowledgeRoot,
+      knowledgeRoot,
+      planner: {
+        create: () => {
+          plannerCalls += 1;
+          return Promise.resolve(snapshot);
+        },
+      },
+    });
+
+    const result = await compiler.apply({
+      projectId: 'alpha',
+      proposalFiles: [proposalPath],
+    });
+
+    expect(plannerCalls).toBe(2);
+    expect(calls.map(({ dryRun, trusted, workspace }) => ({
+      dryRun,
+      trusted,
+      workspace,
+    }))).toEqual([
+      { dryRun: true, trusted: false, workspace: snapshot.workspace },
+      { dryRun: false, trusted: false, workspace: snapshot.workspace },
+    ]);
+    expect(calls[0]?.bundle).toBe(calls[1]?.bundle);
+    expect(calls[0]?.rendered).toContain(SOURCE_ID);
+    expect(calls[0]?.rendered).toContain('bindingDigest:');
+    expect(result).toMatchObject({
+      admissionKind: 'untrusted-okf',
+      admittedCount: 1,
+      candidateRefs: ['concepts/new-page'],
+      outcome: 'staged',
+      reviewRequired: true,
+      sideEffectsPossible: false,
+    });
+    await expect(readFile(
+      join(snapshot.workspace, 'wiki', 'concepts', 'new-page.md'),
+      'utf8',
+    )).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('rejects path, line, quote, source, marker, and unused citation mismatches before SDK admission with zero workspace writes', async () => {
@@ -319,6 +405,28 @@ describe('session compile proposal validation', () => {
       expect(serialized).not.toContain('unsafe=');
       expect(serialized.length).toBeLessThan(1_024);
     }
+  });
+
+  it('continues scanning citation evidence after excluding its validated generated source identity', async () => {
+    const unsafeQuote = ['sk-', 'Q7w6E5r4T3y2U1i0O9p8', 'AsDfGhJk'].join('');
+    const unsafePlan = plan(snapshot.plan.policyDigest, unsafeQuote);
+    const unsafeSnapshot: SessionCompilePlanSnapshot = Object.freeze({
+      ...snapshot,
+      plan: unsafePlan,
+    });
+    const error = await applyRejectedWithoutAdmission(proposal({
+      body: 'Evidence.[^evidence]',
+      citations: [{
+        file: 'docs/evidence.md',
+        id: 'evidence',
+        line: 7,
+        quote: unsafeQuote,
+        sourceId: SOURCE_ID,
+      }],
+      wikilinks: [],
+    }, unsafePlan), 'SESSION_OUTPUT_UNSAFE', unsafeSnapshot);
+
+    expect(JSON.stringify(error)).not.toContain(unsafeQuote);
   });
 
   it('rejects duplicate proposal, page, slug, and citation identities before admission without changing workspace state', async () => {
