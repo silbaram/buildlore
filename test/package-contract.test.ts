@@ -72,6 +72,10 @@ describe('package contract', () => {
       'compile-proposal.schema.json',
       'compile-apply-result.schema.json',
       'session-compile-provenance.schema.json',
+      'session-review-candidate.schema.json',
+      'session-candidate-list.schema.json',
+      'session-candidate-approval.schema.json',
+      'session-promotion-proof.schema.json',
     ]) {
       expect(packageJson.exports[`./schemas/${schema}`]).toBe(`./schemas/${schema}`);
     }
@@ -92,7 +96,7 @@ describe('package contract', () => {
     });
   });
 
-  it('pins package-root createWiki/importOkf trusted:false and forbids deep imports, child processes, agent runtimes, direct staging/promotion, relation, lifecycle, artifact, and new dependencies', async () => {
+  it('pins package-root SDK adapters and forbids deep imports, child processes, agent runtimes, unrelated mutations, and new dependencies', async () => {
     const packageLock = JSON.parse(
       await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'),
     ) as PackageLockContract;
@@ -172,15 +176,25 @@ describe('package contract', () => {
       await Promise.all(sessionPaths.map(async (path) =>
         readFile(new URL(path.replaceAll('\\', '/'), sourceRoot), 'utf8')))
     ).join('\n');
+    const nonAdapterSessionSource = (
+      await Promise.all(sessionPaths
+        .filter((path) => path !== 'compiler/session/admission.ts' &&
+          path !== 'compiler/session/review-service.ts')
+        .map(async (path) =>
+          readFile(new URL(path.replaceAll('\\', '/'), sourceRoot), 'utf8')))
+    ).join('\n');
     expect(sourcePaths.some((path) => path.startsWith('compiler/harness/'))).toBe(false);
     expect(sessionSource).not.toMatch(
       /node:child_process|\b(?:execFile|spawn|fork)\s*\(|shell\s*:\s*true|claude-code|@anthropic-ai|@openai\/codex|agent-sdk|llmwiki\/(?:cli|bin)|\b(?:server|scheduler|database)\b/u,
     );
-    expect(sessionSource).not.toMatch(
-      /\.stageEntityPage\s*\(|\.promoteStagedPage\s*\(|\.writeArtifact\s*\(|\.createRelation\s*\(|\.transitionLifecycle\s*\(/u,
+    expect(nonAdapterSessionSource).not.toMatch(
+      /\.stageEntityPage\s*\(|\.promoteStagedPage\s*\(|\.importOkf\s*\(|\.writeArtifact\s*\(|\.createRelation\s*\(|\.transitionLifecycle\s*\(/u,
     );
     expect(sessionSource).toContain("from 'llm-wiki-compiler'");
     expect(sessionSource).toContain('trusted: false');
+    expect(sessionSource).toContain('trusted: true');
+    expect(sessionSource).toContain('.stageEntityPage(');
+    expect(sessionSource).toContain('.promoteStagedPage(');
 
     const projectionSource = (
       await Promise.all(
@@ -250,6 +264,10 @@ describe('package contract', () => {
       'compile-proposal.schema.json',
       'compile-apply-result.schema.json',
       'session-compile-provenance.schema.json',
+      'session-review-candidate.schema.json',
+      'session-candidate-list.schema.json',
+      'session-candidate-approval.schema.json',
+      'session-promotion-proof.schema.json',
     ]) {
       const subpath = `./schemas/${schema}`;
       expect(packageJson.exports[subpath]).toBe(subpath);

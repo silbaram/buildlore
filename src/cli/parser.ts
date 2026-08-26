@@ -103,6 +103,26 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     '--project',
     ['--page'],
   ),
+  command(
+    ['compile', 'candidates'],
+    'compile.candidates',
+    'compile.candidates',
+    ['--project'],
+    ['--project'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'approve'],
+    'compile.approve',
+    'compile.approve',
+    ['--project', '--candidate'],
+    ['--project', '--candidate'],
+    [],
+    {},
+    '--project',
+  ),
   command(['compile'], 'compile', 'compile', ['--project'], ['--project'], ['--review'], {}, '--project'),
   command(['check'], 'check', 'check', ['--project'], ['--project'], [], {}, '--project'),
   command(
@@ -367,6 +387,13 @@ function validateSessionCompileOptions(
   commandId: CliCommandId,
   values: Readonly<Record<string, CliOptionValue>>,
 ): void {
+  if (commandId === 'compile.approve') {
+    const candidateId = values['--candidate'];
+    if (typeof candidateId !== 'string' || !/^candidate-[a-f0-9]{64}$/u.test(candidateId)) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+    return;
+  }
   if (commandId !== 'compile.apply') return;
   const pages = values['--page'];
   if (!Array.isArray(pages) || pages.length === 0 || pages.length > 50 ||

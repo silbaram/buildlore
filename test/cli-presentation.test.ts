@@ -51,7 +51,7 @@ describe('CLI presentation and exit taxonomy', () => {
     const result: CliSuccessResult = {
       command: 'compile.plan',
       data: {
-        schemaVersion: 'buildlore.compile-plan.v1',
+        schemaVersion: 'buildlore.compile-plan.v2',
         projectId: 'alpha',
         contractDigest: `sha256:${'a'.repeat(64)}`,
         planDigest: `sha256:${'b'.repeat(64)}`,
@@ -221,6 +221,10 @@ describe('CLI presentation and exit taxonomy', () => {
       error: new SessionCompileError('SESSION_ADMISSION_FAILED', 'alpha', {
         sideEffectsPossible: true,
       }),
+      exitCode: 4,
+    },
+    {
+      error: new SessionCompileError('SESSION_CANDIDATE_BUSY', 'alpha'),
       exitCode: 4,
     },
     {

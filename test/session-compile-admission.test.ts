@@ -7,6 +7,7 @@ import {
   createSessionCompileAdmission,
   type SessionCompileAdmissionPort,
 } from '../src/compiler/session/admission.js';
+import type { SessionReviewStore } from '../src/compiler/session/review-store.js';
 import {
   SESSION_COMPILE_PROPOSAL_SCHEMA_VERSION,
   SESSION_COMPILE_PROVENANCE_SCHEMA_VERSION,
@@ -22,6 +23,27 @@ import {
 const DIGEST = `sha256:${'a'.repeat(64)}` as const;
 const SOURCE_ID = `source-${'b'.repeat(64)}` as const;
 const TASK_ID = `task-${'c'.repeat(64)}` as const;
+const COMPILER_SOURCE_ID = `markdown--${'d'.repeat(64)}.md` as const;
+
+function memoryReviewStore(
+  staged: Array<unknown> = [],
+  stageFailure?: Error,
+): SessionReviewStore {
+  return {
+    stage(candidates) {
+      if (stageFailure !== undefined) return Promise.reject(stageFailure);
+      staged.push(...candidates);
+      return Promise.resolve();
+    },
+    list: () => Promise.resolve(Object.freeze([])),
+    listProofs: () => Promise.resolve(Object.freeze([])),
+    claim: () => Promise.reject(new Error('unused')),
+    restore: () => Promise.resolve(),
+    complete: () => Promise.resolve(),
+    readProof: () => Promise.resolve(null),
+    writeProof: () => Promise.resolve(),
+  };
+}
 
 function validatedBatch(
   kind: 'concept' | 'decision' | 'failure' | 'verification',
@@ -77,7 +99,24 @@ function validatedBatch(
   return Object.freeze({
     batchDigest: DIGEST,
     harness: proposal.callerHarness,
-    pages: Object.freeze([Object.freeze({ proposal, provenance })]),
+    pages: Object.freeze([Object.freeze({
+      citationBindings: Object.freeze([Object.freeze({
+        citationId: 'evidence',
+        compilerSourceContentDigest: DIGEST,
+        compilerSourceId: COMPILER_SOURCE_ID,
+        originalFile: 'docs/evidence.md',
+        originalLine: 4,
+        quoteDigest: DIGEST,
+        sourceId: SOURCE_ID,
+      })]),
+      compilerSources: Object.freeze([Object.freeze({
+        compilerSourceContentDigest: DIGEST,
+        compilerSourceId: COMPILER_SOURCE_ID,
+        sourceId: SOURCE_ID,
+      })]),
+      proposal,
+      provenance,
+    })]),
   });
 }
 
@@ -99,9 +138,8 @@ describe('session compile OKF admission', () => {
       );
 
       expect(result).toMatchObject({
-        admissionKind: 'untrusted-okf',
+        admissionKind: 'buildlore-review',
         admittedCount: 1,
-        candidateRefs: ['concepts/session-concept'],
         heldCount: 1,
         outcome: 'staged',
         recoveryAction: 'review',
@@ -110,13 +148,18 @@ describe('session compile OKF admission', () => {
         skippedCount: 0,
         warnings: [],
       });
-      const candidates = await readdir(join(workspace, '.llmwiki', 'candidates'));
+      expect(result.candidateRefs).toEqual([
+        expect.stringMatching(/^candidate-[a-f0-9]{64}$/u),
+      ]);
+      const candidates = await readdir(
+        join(workspace, '.llmwiki', 'buildlore-session', 'pending'),
+      );
       expect(candidates).toHaveLength(1);
       const candidate = await readFile(
-        join(workspace, '.llmwiki', 'candidates', candidates[0] ?? ''),
+        join(workspace, '.llmwiki', 'buildlore-session', 'pending', candidates[0] ?? ''),
         'utf8',
       );
-      expect(candidate).toContain('originalFrontmatter');
+      expect(candidate).toContain('renderedPage');
       expect(candidate).toContain('bindingDigest');
       for (const key of [
         'planDigest',
@@ -173,19 +216,23 @@ describe('session compile OKF admission', () => {
 
       expect(result).toMatchObject({
         admittedCount: 1,
-        candidateRefs: [`${kind}s/session-${kind}`],
         heldCount: 1,
         outcome: 'staged',
         reviewRequired: true,
         sideEffectsPossible: false,
       });
-      const candidates = await readdir(join(workspace, '.llmwiki', 'candidates'));
+      expect(result.candidateRefs).toEqual([
+        expect.stringMatching(/^candidate-[a-f0-9]{64}$/u),
+      ]);
+      const candidates = await readdir(
+        join(workspace, '.llmwiki', 'buildlore-session', 'pending'),
+      );
       expect(candidates).toHaveLength(1);
       const candidate = await readFile(
-        join(workspace, '.llmwiki', 'candidates', candidates[0] ?? ''),
+        join(workspace, '.llmwiki', 'buildlore-session', 'pending', candidates[0] ?? ''),
         'utf8',
       );
-      expect(candidate).toContain('targetEntityType');
+      expect(candidate).toContain('upstreamCandidateId');
       expect(candidate).toContain(`${kind}s`);
       expect(candidate).toContain('bindingDigest');
       await expect(stat(join(workspace, 'wiki', `${kind}s`, `session-${kind}.md`)))
@@ -198,14 +245,14 @@ describe('session compile OKF admission', () => {
   it.each([
     ['default', 'concept', 'pages'] as const,
     ['custom', 'decision', 'typed'] as const,
-  ])('uses dryRun:true then trusted:false only and returns reviewRequired staged %s %s output',
+  ])('uses a public dry-run before recording reviewRequired staged %s %s output',
     async (profileMode, kind, reportSection) => {
       const batch = validatedBatch(kind);
       const calls: Array<Readonly<{
         readonly bundle: string;
         readonly dryRun: boolean;
         readonly rendered: string;
-        readonly trusted: false;
+        readonly trusted: boolean | undefined;
       }>> = [];
       const page = batch.pages[0]?.proposal;
       if (page === undefined) throw new Error('missing fixture page');
@@ -235,20 +282,29 @@ describe('session compile OKF admission', () => {
             relationOutcomes: [],
           };
         },
+        stageEntityPage: (_workspace, input) => Promise.resolve({
+          id: 'typed-candidate-1',
+          target: {
+            entityType: input.entityType,
+            id: page.pageId,
+            slug: page.slug,
+          },
+        }),
       };
-      const admission = createSessionCompileAdmission({ port });
+      const admission = createSessionCompileAdmission({
+        port,
+        reviewStoreFactory: () => memoryReviewStore(),
+      });
 
       const result = await admission.stage('/workspace', 'alpha', profileMode, batch);
 
       expect(calls.map(({ dryRun, trusted }) => ({ dryRun, trusted }))).toEqual([
         { dryRun: true, trusted: false },
-        { dryRun: false, trusted: false },
       ]);
-      expect(calls[0]?.bundle).toBe(calls[1]?.bundle);
       expect(calls[0]?.rendered).toContain('buildlore:');
       expect(calls[0]?.rendered).toContain('bindingDigest:');
       expect(result).toMatchObject({
-        admissionKind: 'untrusted-okf',
+        admissionKind: 'buildlore-review',
         admittedCount: 1,
         outcome: 'staged',
         reviewRequired: true,
@@ -257,10 +313,12 @@ describe('session compile OKF admission', () => {
       await expect(stat(calls[0]?.bundle ?? '')).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-  it('renders citation definitions as Markdown literals without activating nested links or markers', async () => {
+  it('renders compiler citations inline while preserving original coordinates only as provenance', async () => {
     const original = validatedBatch('concept');
     const page = original.pages[0];
     if (page === undefined) throw new Error('missing fixture page');
+    const binding = page.citationBindings[0];
+    if (binding === undefined) throw new Error('missing fixture binding');
     const citation = page.proposal.citations[0];
     if (citation === undefined) throw new Error('missing fixture citation');
     const proposal = {
@@ -274,7 +332,14 @@ describe('session compile OKF admission', () => {
     } as const;
     const batch: ValidatedSessionBatch = Object.freeze({
       ...original,
-      pages: Object.freeze([Object.freeze({ ...page, proposal })]),
+      pages: Object.freeze([Object.freeze({
+        ...page,
+        citationBindings: Object.freeze([Object.freeze({
+          ...binding,
+          originalFile: 'docs/[[source]].md',
+        })]),
+        proposal,
+      })]),
     });
     let rendered = '';
     const admission = createSessionCompileAdmission({
@@ -293,14 +358,14 @@ describe('session compile OKF admission', () => {
           };
         },
       },
+      reviewStoreFactory: () => memoryReviewStore(),
     });
 
     await expect(admission.stage('/workspace', 'alpha', 'default', batch))
       .resolves.toMatchObject({ outcome: 'staged' });
-    expect(rendered).toContain(
-      'docs/\\[\\[source\\]\\].md:4 — See \\[\\[unknown-page\\]\\] and \\[^unknown-marker\\].',
-    );
-    expect(rendered).toContain('Evidence.[^evidence]\n\n  \n\n[^evidence]:');
+    expect(rendered).toContain('originalFile: docs/[[source]].md');
+    expect(rendered).toContain(`Evidence.^[${COMPILER_SOURCE_ID}:4]\n\n  \n`);
+    expect(rendered).not.toContain('[^evidence]:');
     expect(rendered).not.toContain('See [[unknown-page]]');
   });
 
@@ -326,7 +391,7 @@ describe('session compile OKF admission', () => {
       });
     expect(calls).toBe(1);
 
-    const actualMismatch = createSessionCompileAdmission({
+    const storeFailure = createSessionCompileAdmission({
       port: {
         importOkf: (_workspace, _bundle, options) => Promise.resolve({
           mode: options.dryRun === true ? 'dry-run' : 'staged',
@@ -336,17 +401,57 @@ describe('session compile OKF admission', () => {
             targetDirectory: 'concepts',
           }],
           skipped: [],
-          warnings: options.dryRun === true ? [] : ['unexpected'],
+          warnings: [],
         }),
       },
+      reviewStoreFactory: () => memoryReviewStore([], new Error('private store detail')),
     });
-    await expect(actualMismatch.stage('/workspace', 'alpha', 'default', batch))
+    await expect(storeFailure.stage('/workspace', 'alpha', 'default', batch))
       .rejects.toMatchObject({
-        candidateRefs: [proposal.pageId],
+        candidateRefs: [],
         code: 'SESSION_ADMISSION_FAILED',
         recoveryAction: 'status',
-        sideEffectsPossible: true,
+        sideEffectsPossible: false,
       });
+
+    const customBatch = validatedBatch('decision');
+    const customPage = customBatch.pages[0]?.proposal;
+    if (customPage === undefined) throw new Error('missing custom fixture page');
+    const customStoreFailure = createSessionCompileAdmission({
+      port: {
+        importOkf: () => Promise.resolve({
+          mode: 'dry-run',
+          pages: [],
+          skipped: [],
+          typed: [{
+            entityType: 'decisions',
+            okfPath: `${customPage.pageId}.md`,
+            outcome: 'staged-typed',
+            slug: customPage.slug,
+          }],
+          warnings: [],
+        }),
+        stageEntityPage: (_workspace, input) => Promise.resolve({
+          id: 'upstream-candidate',
+          target: {
+            entityType: input.entityType,
+            id: customPage.pageId,
+            slug: input.slug,
+          },
+        }),
+      },
+      reviewStoreFactory: () => memoryReviewStore([], new Error('private store detail')),
+    });
+    const customError = await customStoreFailure
+      .stage('/workspace', 'alpha', 'custom', customBatch)
+      .then(() => undefined, (error: unknown) => error);
+    expect(customError).toMatchObject({
+      candidateRefs: [expect.stringMatching(/^candidate-[a-f0-9]{64}$/u)],
+      code: 'SESSION_ADMISSION_FAILED',
+      recoveryAction: 'status',
+      sideEffectsPossible: true,
+    });
+    expect(JSON.stringify(customError)).not.toContain('private store detail');
   });
 
   it('fails closed on dry-run collision, queue saturation, and lock failure without actual admission', async () => {
@@ -499,11 +604,12 @@ describe('session compile OKF admission', () => {
         await rm(path, { recursive: true });
         throw new Error('private temporary path');
       },
+      reviewStoreFactory: () => memoryReviewStore(),
     });
 
     await expect(admission.stage('/workspace', 'alpha', 'default', batch))
       .rejects.toMatchObject({
-        candidateRefs: [proposal.pageId],
+        candidateRefs: [expect.stringMatching(/^candidate-[a-f0-9]{64}$/u)],
         code: 'SESSION_ADMISSION_FAILED',
         recoveryAction: 'status',
         sideEffectsPossible: true,

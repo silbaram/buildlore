@@ -175,7 +175,10 @@ async function assertStoredSource(
   approvedTitle: string,
   approvedBody: string,
   projectId: string,
-): Promise<string> {
+): Promise<Readonly<{
+  readonly body: string;
+  readonly contentDigest: SessionSha256Digest;
+}>> {
   const raw = await readConfinedSessionUtf8(
     join(workspace, 'sources', candidate.target),
     workspace,
@@ -209,7 +212,17 @@ async function assertStoredSource(
     renderSourceDocument(expected) !== raw ||
     document.buildlore.contentHash !== sessionSha256(document.body)
   ) return denied(projectId);
-  return document.body;
+  return Object.freeze({
+    body: document.body,
+    contentDigest: sessionSha256(raw),
+  });
+}
+
+function compilerSourceId(candidate: CollectionCandidate, projectId: string): string {
+  if (!/^(?:markdown|planning)--[a-f0-9]{64}\.md$/u.test(candidate.target)) {
+    return denied(projectId);
+  }
+  return candidate.target;
 }
 
 async function buildPlannedSources(input: {
@@ -251,7 +264,7 @@ async function buildPlannedSources(input: {
       input.projectId,
     );
     input.onPhase?.('source-sanitized');
-    const sanitizedBody = await assertStoredSource(
+    const storedSource = await assertStoredSource(
       input.workspace,
       candidate,
       approvedTitle,
@@ -261,18 +274,20 @@ async function buildPlannedSources(input: {
     input.onPhase?.('source-stored-verified');
     const originalBody = decodeUtf8Strict(await readSelectedSourceBytes(input.checkout, file));
     input.onPhase?.('source-original-read');
-    const id = plannedSourceId(candidate, sanitizedBody);
+    const id = plannedSourceId(candidate, storedSource.body);
     result.push(Object.freeze({
       citationAnchors: createSessionCitationAnchors({
         originalBody,
-        sanitizedBody,
+        sanitizedBody: storedSource.body,
         sourceId: id,
         sourceRef: candidate.sourceRef,
       }),
+      compilerSourceContentDigest: storedSource.contentDigest,
+      compilerSourceId: compilerSourceId(candidate, input.projectId),
       originalContentDigest: candidate.contentDigest,
       revision: candidate.sourceRevision,
-      sanitizedBody,
-      sanitizedContentDigest: sessionSha256(sanitizedBody),
+      sanitizedBody: storedSource.body,
+      sanitizedContentDigest: sessionSha256(storedSource.body),
       sourceId: id,
       sourceKind: candidate.sourceKind,
       sourceRef: candidate.sourceRef,

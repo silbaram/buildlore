@@ -84,6 +84,8 @@ function source(idCharacter: string, sourceRef: string, body: string): SessionPl
       sourceId,
       sourceRef,
     }),
+    compilerSourceContentDigest: DIGEST,
+    compilerSourceId: `planning--${idCharacter.repeat(64)}.md`,
     originalContentDigest: DIGEST,
     revision: DIGEST,
     sanitizedBody: body,

@@ -1,9 +1,17 @@
-export const SESSION_COMPILE_PLAN_SCHEMA_VERSION = 'buildlore.compile-plan.v1' as const;
+export const SESSION_COMPILE_PLAN_SCHEMA_VERSION = 'buildlore.compile-plan.v2' as const;
 export const SESSION_COMPILE_PROPOSAL_SCHEMA_VERSION = 'buildlore.compile-proposal.v1' as const;
 export const SESSION_COMPILE_APPLY_RESULT_SCHEMA_VERSION =
   'buildlore.compile-apply-result.v1' as const;
 export const SESSION_COMPILE_PROVENANCE_SCHEMA_VERSION =
   'buildlore.session-compile-provenance.v1' as const;
+export const SESSION_REVIEW_CANDIDATE_SCHEMA_VERSION =
+  'buildlore.session-review-candidate.v1' as const;
+export const SESSION_CANDIDATE_LIST_SCHEMA_VERSION =
+  'buildlore.session-candidate-list.v1' as const;
+export const SESSION_CANDIDATE_APPROVAL_SCHEMA_VERSION =
+  'buildlore.session-candidate-approval.v1' as const;
+export const SESSION_PROMOTION_PROOF_SCHEMA_VERSION =
+  'buildlore.session-promotion-proof.v1' as const;
 export const SESSION_COMPILE_ALGORITHM_VERSION = 'buildlore.session-planner.v1' as const;
 
 export type SessionSha256Digest = `sha256:${string}`;
@@ -33,6 +41,8 @@ export interface SessionCitationAnchor {
 
 export interface SessionPlannedSource {
   readonly citationAnchors: readonly SessionCitationAnchor[];
+  readonly compilerSourceContentDigest: SessionSha256Digest;
+  readonly compilerSourceId: string;
   readonly originalContentDigest: SessionSha256Digest;
   readonly revision: SessionSha256Digest;
   readonly sanitizedBody: string;
@@ -160,6 +170,105 @@ export interface SessionCompileApplyRequest {
   readonly proposalFiles: readonly string[];
 }
 
+export interface SessionCompileCandidatesRequest {
+  readonly projectId: string;
+}
+
+export interface SessionCompileApproveRequest {
+  readonly candidateId: string;
+  readonly projectId: string;
+}
+
+export interface SessionCompilerSourceBinding {
+  readonly compilerSourceContentDigest: SessionSha256Digest;
+  readonly compilerSourceId: string;
+  readonly sourceId: string;
+}
+
+export interface SessionCitationBinding {
+  readonly citationId: string;
+  readonly compilerSourceContentDigest: SessionSha256Digest;
+  readonly compilerSourceId: string;
+  readonly originalFile: string;
+  readonly originalLine: number;
+  readonly quoteDigest: SessionSha256Digest;
+  readonly sourceId: string;
+}
+
+export interface SessionReviewCandidateV1 {
+  readonly schemaVersion: typeof SESSION_REVIEW_CANDIDATE_SCHEMA_VERSION;
+  readonly candidateId: string;
+  readonly candidateDigest: SessionSha256Digest;
+  readonly projectId: string;
+  readonly profileMode: 'custom' | 'default';
+  readonly pageId: string;
+  readonly slug: string;
+  readonly kind: SessionRequestedPageKind;
+  readonly target: string;
+  readonly renderedPage: string;
+  readonly renderedPageDigest: SessionSha256Digest;
+  readonly batchDigest: SessionSha256Digest;
+  readonly planDigest: SessionSha256Digest;
+  readonly proposalDigest: SessionSha256Digest;
+  readonly sourceManifestDigest: SessionSha256Digest;
+  readonly profileDigest: SessionSha256Digest;
+  readonly policyDigest: SessionSha256Digest;
+  readonly contractDigest: SessionSha256Digest;
+  readonly provenanceBindingDigest: SessionSha256Digest;
+  readonly citationBindings: readonly SessionCitationBinding[];
+  readonly compilerSources: readonly SessionCompilerSourceBinding[];
+  readonly heldReasons: readonly ['manual-review-requested'];
+  readonly upstreamCandidateId?: string;
+}
+
+export interface SessionCandidateSummaryV1 {
+  readonly candidateId: string;
+  readonly heldReasons: readonly ['manual-review-requested'];
+  readonly lifecycle: 'approving' | 'pending';
+  readonly targetPath: string;
+  readonly pageId: string;
+  readonly slug: string;
+}
+
+export interface SessionCompileCandidatesResultV1 {
+  readonly schemaVersion: typeof SESSION_CANDIDATE_LIST_SCHEMA_VERSION;
+  readonly projectId: string;
+  readonly candidates: readonly SessionCandidateSummaryV1[];
+  readonly managedPendingCount: number;
+  readonly legacyPendingCount: number;
+  readonly warnings: readonly Readonly<{ readonly code: string }>[];
+}
+
+export interface SessionPromotionProofV1 {
+  readonly schemaVersion: typeof SESSION_PROMOTION_PROOF_SCHEMA_VERSION;
+  readonly proofDigest: SessionSha256Digest;
+  readonly projectId: string;
+  readonly candidateId: string;
+  readonly candidateDigest: SessionSha256Digest;
+  readonly pageId: string;
+  readonly profileMode: 'custom' | 'default';
+  readonly bodyDigest: SessionSha256Digest;
+  readonly titleDigest: SessionSha256Digest;
+  readonly summaryDigest: SessionSha256Digest;
+  readonly sourceRefsDigest: SessionSha256Digest;
+  readonly citationsDigest: SessionSha256Digest;
+  readonly contentHash: string;
+  readonly sourceHashes: readonly string[];
+  readonly citationBindings: readonly SessionCitationBinding[];
+  readonly compilerSources: readonly SessionCompilerSourceBinding[];
+}
+
+export interface SessionCompileApproveResultV1 {
+  readonly schemaVersion: typeof SESSION_CANDIDATE_APPROVAL_SCHEMA_VERSION;
+  readonly projectId: string;
+  readonly candidateId: string;
+  readonly pageId: string;
+  readonly outcome: 'approved';
+  readonly providerUsed: false;
+  readonly sideEffectsPossible: false;
+  readonly warnings: readonly Readonly<{ readonly code: string }>[];
+}
+
 export interface SessionCompileApplyResultV1 {
   readonly schemaVersion: typeof SESSION_COMPILE_APPLY_RESULT_SCHEMA_VERSION;
   readonly projectId: string;
@@ -167,7 +276,7 @@ export interface SessionCompileApplyResultV1 {
   readonly batchDigest: SessionSha256Digest;
   readonly outcome: 'staged';
   readonly reviewRequired: true;
-  readonly admissionKind: 'untrusted-okf';
+  readonly admissionKind: 'buildlore-review';
   readonly admittedCount: number;
   readonly heldCount: number;
   readonly skippedCount: 0;
@@ -180,4 +289,6 @@ export interface SessionCompileApplyResultV1 {
 export interface ProjectSessionCompilerPort {
   plan(request: SessionCompilePlanRequest): Promise<SessionCompilePlanV1>;
   apply(request: SessionCompileApplyRequest): Promise<SessionCompileApplyResultV1>;
+  candidates(request: SessionCompileCandidatesRequest): Promise<SessionCompileCandidatesResultV1>;
+  approve(request: SessionCompileApproveRequest): Promise<SessionCompileApproveResultV1>;
 }

@@ -1,6 +1,12 @@
 import type { CompilerChangeStatus } from '../knowledge/types.js';
+import type {
+  SessionCompileApproveResultV1,
+  SessionCompileCandidatesResultV1,
+} from './session/types.js';
 
 export type CompilerCapabilityName =
+  | 'approve'
+  | 'candidates'
   | 'compile'
   | 'context'
   | 'eval-fast'
@@ -36,6 +42,17 @@ export interface CompileRequest {
   readonly capability: 'compile';
   readonly projectId: string;
   readonly review?: boolean;
+}
+
+export interface CandidatesRequest {
+  readonly capability: 'candidates';
+  readonly projectId: string;
+}
+
+export interface ApproveRequest {
+  readonly capability: 'approve';
+  readonly candidateId: string;
+  readonly projectId: string;
 }
 
 export interface StatusRequest {
@@ -81,6 +98,8 @@ export interface ContextRequest {
 }
 
 export type CompilerRequest =
+  | ApproveRequest
+  | CandidatesRequest
   | CompileRequest
   | ContextRequest
   | EvalFastRequest
@@ -208,6 +227,8 @@ export type CompilerResultData =
   | NormalizedLintSummary
   | QuerySummary
   | SearchSummary
+  | SessionCompileApproveResultV1
+  | SessionCompileCandidatesResultV1
   | StatusSummary;
 
 export interface CompilerOperationResult {

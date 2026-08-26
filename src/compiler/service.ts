@@ -14,6 +14,7 @@ import {
   type ProjectEmbeddingIdentityPort,
 } from './embedding-identity.js';
 import { normalizeCompilerResult, validateCompilerRequest } from './normalizers.js';
+import { createSessionReviewStore } from './session/review-store.js';
 import {
   processOutputLanguageCoordinator,
   type OutputLanguageCoordinator,
@@ -40,7 +41,7 @@ function isAborted(signal: AbortSignal | undefined): boolean {
 }
 
 function mayWriteWorkspace(capability: CompilerRequest['capability']): boolean {
-  return capability === 'compile' || capability === 'eval-full' || capability === 'query';
+  return capability === 'approve' || capability === 'compile' || capability === 'eval-full' || capability === 'query';
 }
 
 function configError(request: CompilerRequest): CompilerOperationError {
@@ -332,7 +333,22 @@ export function createProjectCompiler(options: CreateProjectCompilerOptions): Pr
             }
             if (cancelRequested) throw cancellationError(request, true);
             try {
-              const normalized = normalizeCompilerResult(request, raw);
+              let normalized = normalizeCompilerResult(request, raw);
+              if (request.capability === 'status' && 'pendingCandidates' in normalized.data) {
+                const managed = await createSessionReviewStore(workspace, request.projectId).list();
+                const boundCustomCount = managed.filter(({ candidate }) =>
+                  candidate.upstreamCandidateId !== undefined).length;
+                normalized = Object.freeze({
+                  ...normalized,
+                  data: Object.freeze({
+                    ...normalized.data,
+                    pendingCandidates: Math.max(
+                      0,
+                      normalized.data.pendingCandidates - boundCustomCount,
+                    ) + managed.length,
+                  }),
+                });
+              }
               if (request.capability === 'compile' && request.review !== true &&
                   startingEmbeddingIdentity !== null) {
                 const settledIdentity = resolveConfiguredEmbeddingIdentity(environment);

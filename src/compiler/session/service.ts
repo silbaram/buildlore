@@ -1,4 +1,7 @@
 import { validateProjectId } from '../../knowledge/validation.js';
+import { resolveProjectWorkspace } from '../../knowledge/paths.js';
+import { showProject } from '../../knowledge/workspace.js';
+import { createProfileBindingPreflight } from '../../profile/preflight.js';
 import { compareSessionText } from './canonical.js';
 import {
   readSessionCompileProposalFile,
@@ -11,10 +14,15 @@ import {
   type SessionCompilePlanner,
 } from './source-planner.js';
 import { validateSessionProposalBatch } from './validator.js';
+import { createSessionReviewService, type SessionReviewService } from './review-service.js';
 import type {
   ProjectSessionCompilerPort,
+  SessionCompileApproveRequest,
+  SessionCompileApproveResultV1,
   SessionCompileApplyRequest,
   SessionCompileApplyResultV1,
+  SessionCompileCandidatesRequest,
+  SessionCompileCandidatesResultV1,
   SessionCompilePlanRequest,
   SessionCompilePlanV1,
 } from './types.js';
@@ -28,6 +36,7 @@ interface CreateProjectSessionCompilerInternalOptions
   extends CreateProjectSessionCompilerOptions {
   readonly admission?: SessionCompileAdmission;
   readonly planner?: SessionCompilePlanner;
+  readonly review?: SessionReviewService;
 }
 
 class SessionProjectCoordinator {
@@ -95,6 +104,26 @@ function applyRequest(input: SessionCompileApplyRequest): Readonly<{
   });
 }
 
+function candidatesRequest(input: SessionCompileCandidatesRequest): string {
+  return planRequest(input);
+}
+
+function approveRequest(input: SessionCompileApproveRequest): Readonly<{
+  readonly candidateId: string;
+  readonly projectId: string;
+}> {
+  if (typeof input !== 'object' || input === null || Array.isArray(input) ||
+      Object.keys(input).sort(compareSessionText).join(',') !== 'candidateId,projectId') {
+    throw new SessionCompileError('SESSION_CONTRACT_INVALID', 'unknown');
+  }
+  const projectId = validProjectId(input.projectId);
+  if (typeof input.candidateId !== 'string' ||
+      !/^candidate-[a-f0-9]{64}$/u.test(input.candidateId)) {
+    throw new SessionCompileError('SESSION_CANDIDATE_NOT_FOUND', projectId);
+  }
+  return Object.freeze({ candidateId: input.candidateId, projectId });
+}
+
 function createProjectSessionCompilerInternal(
   options: CreateProjectSessionCompilerInternalOptions,
 ): ProjectSessionCompilerPort {
@@ -103,6 +132,19 @@ function createProjectSessionCompilerInternal(
     knowledgeRoot: options.knowledgeRoot,
   });
   const admission = options.admission ?? createSessionCompileAdmission();
+  const review = options.review ?? createSessionReviewService();
+  const profilePreflight = createProfileBindingPreflight(options.knowledgeRoot);
+  async function reviewWorkspace(projectId: string): Promise<string> {
+    const [record, workspace, profile] = await Promise.all([
+      showProject(options.knowledgeRoot, projectId),
+      resolveProjectWorkspace(options.knowledgeRoot, projectId, { mustExist: true }),
+      profilePreflight.resolve(projectId),
+    ]);
+    if (record.entry.projectId !== projectId || profile.workspace !== workspace) {
+      throw new SessionCompileError('SESSION_CANDIDATE_PROJECT_MISMATCH', projectId);
+    }
+    return workspace;
+  }
   async function plan(input: SessionCompilePlanRequest): Promise<SessionCompilePlanV1> {
     const projectId = planRequest(input);
     return (await planner.create(projectId)).plan;
@@ -139,7 +181,27 @@ function createProjectSessionCompilerInternal(
       );
     });
   }
-  return Object.freeze({ apply, plan });
+  async function candidates(
+    input: SessionCompileCandidatesRequest,
+  ): Promise<SessionCompileCandidatesResultV1> {
+    const projectId = candidatesRequest(input);
+    return review.list(await reviewWorkspace(projectId), projectId);
+  }
+  async function approve(
+    input: SessionCompileApproveRequest,
+  ): Promise<SessionCompileApproveResultV1> {
+    const request = approveRequest(input);
+    return applyCoordinator.run(request.projectId, async () => {
+      const workspace = await reviewWorkspace(request.projectId);
+      return review.approve(
+        workspace,
+        request.projectId,
+        request.candidateId,
+        async () => planner.create(request.projectId),
+      );
+    });
+  }
+  return Object.freeze({ apply, approve, candidates, plan });
 }
 
 export function createProjectSessionCompiler(

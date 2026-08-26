@@ -31,7 +31,7 @@
     "batchDigest": { "$ref": "#/$defs/digest" },
     "outcome": { "const": "staged" },
     "reviewRequired": { "const": true },
-    "admissionKind": { "const": "untrusted-okf" },
+    "admissionKind": { "const": "buildlore-review" },
     "admittedCount": { "type": "integer", "minimum": 1, "maximum": 50 },
     "heldCount": { "type": "integer", "minimum": 1, "maximum": 50 },
     "skippedCount": { "const": 0 },

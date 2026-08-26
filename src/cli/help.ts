@@ -10,6 +10,8 @@ Usage:
   buildlore compile --project <project-id> [--review] [--json]
   buildlore compile plan --project <project-id> [--json]
   buildlore compile apply --project <project-id> --page <proposal.json> [--page <proposal.json> ...] [--json]
+  buildlore compile candidates --project <project-id> [--json]
+  buildlore compile approve --project <project-id> --candidate <candidate-id> [--json]
   buildlore check --project <project-id> [--json]
   buildlore search --project <project-id> --query <text> [--mode lexical|semantic|hybrid] [--json]
   buildlore query --project <project-id> --question <text> [--json]
@@ -26,13 +28,15 @@ Common options:
   -h, --help  Show this help message
 
 Provider requirements:
-  None         init, project, sync, check, lexical search, compile plan/apply
+  None         init, project, sync, check, lexical search, compile plan/apply/candidates/approve
   Conditional  semantic/hybrid search, context
   Required     legacy compile, query
 
 Session compilation:
   compile plan   Emits a deterministic sanitized plan for the current agent session
   compile apply  Validates canonical proposal files and stages review-only candidates
+  compile candidates  Lists project-confined review candidates without exposing page bodies
+  compile approve  Promotes exactly one bound candidate without provider or Git publication
   BuildLore never launches a Claude or Codex CLI process; the caller session owns generation.
 
 Compatibility aliases:

@@ -11,12 +11,18 @@ import {
   listConfinedSessionFiles,
   readConfinedSessionUtf8,
 } from './safe-io.js';
+import {
+  createSessionReviewCandidate,
+  createSessionReviewStore,
+  type SessionReviewStore,
+} from './review-store.js';
 import type { ValidatedSessionBatch, ValidatedSessionProposal } from './validator.js';
 import type {
   SessionCompileApplyResultV1,
   SessionRequestedPageKind,
 } from './types.js';
 import { SESSION_COMPILE_APPLY_RESULT_SCHEMA_VERSION } from './types.js';
+import { transitionSessionMarkdownFence, type SessionMarkdownFence } from './markdown-fence.js';
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
@@ -24,7 +30,16 @@ export interface SessionCompileAdmissionPort {
   importOkf(
     workspace: string,
     bundle: string,
-    options: { readonly dryRun?: boolean; readonly trusted: false },
+    options: { readonly dryRun?: boolean; readonly trusted?: boolean },
+  ): Promise<unknown>;
+  stageEntityPage?(
+    workspace: string,
+    input: Readonly<{
+      readonly body: string;
+      readonly entityType: string;
+      readonly existingStagedCount?: number;
+      readonly slug: string;
+    }>,
   ): Promise<unknown>;
 }
 
@@ -40,6 +55,8 @@ export interface SessionCompileAdmission {
 
 export interface CreateSessionCompileAdmissionOptions {
   readonly port?: SessionCompileAdmissionPort;
+  /** @internal Project-confined durable review store seam. */
+  readonly reviewStoreFactory?: (workspace: string, projectId: string) => SessionReviewStore;
   /** @internal Fault seam for temporary cleanup verification. */
   readonly removeTemporary?: (path: string) => Promise<void>;
 }
@@ -48,6 +65,9 @@ function defaultAdmissionPort(): SessionCompileAdmissionPort {
   return {
     async importOkf(workspace, bundle, options): Promise<unknown> {
       return createWiki({ root: workspace }).importOkf(bundle, options);
+    },
+    async stageEntityPage(workspace, input): Promise<unknown> {
+      return createWiki({ root: workspace }).stageEntityPage(input);
     },
   };
 }
@@ -75,19 +95,29 @@ function entityTypeFor(kind: SessionRequestedPageKind): string | undefined {
   return kind === 'concept' || kind === 'query' ? undefined : directoryFor(kind);
 }
 
-function markdownLiteral(value: string): string {
-  return value.replaceAll('\\', '\\\\').replaceAll('[', '\\[').replaceAll(']', '\\]');
+function citationBody(page: ValidatedSessionProposal): string {
+  const bindings = new Map(page.citationBindings.map((binding) => [
+    binding.citationId,
+    binding,
+  ] as const));
+  let fence: SessionMarkdownFence | null = null;
+  return page.proposal.body.split('\n').map((line) => {
+    const transition = transitionSessionMarkdownFence(line, fence);
+    const wasInsideFence = fence !== null;
+    fence = transition.fence;
+    if (wasInsideFence || transition.isFenceLine) return line;
+    return line.replace(/\[\^([a-z0-9][a-z0-9._-]{0,127})\](?!:)/gu, (marker, id: string) => {
+      const binding = bindings.get(id);
+      return binding === undefined
+        ? marker
+        : `^[${binding.compilerSourceId}:${String(binding.originalLine)}]`;
+    });
+  }).join('\n');
 }
 
-function citationBody(page: ValidatedSessionProposal): string {
-  const definitions = page.proposal.citations.map((citation) =>
-    '[^' + citation.id + ']: ' + markdownLiteral(citation.file) + ':' +
-      String(citation.line) + ' — ' + markdownLiteral(citation.quote));
-  const body = page.proposal.body;
-  return definitions.length === 0
-    ? body + (body.endsWith('\n') ? '' : '\n')
-    : body + (body.endsWith('\n\n') ? '' : body.endsWith('\n') ? '\n' : '\n\n') +
-      definitions.join('\n') + '\n';
+function renderedBody(page: ValidatedSessionProposal): string {
+  const body = citationBody(page);
+  return body.endsWith('\n') ? body : `${body}\n`;
 }
 
 function okfFrontmatter(page: ValidatedSessionProposal): Readonly<Record<string, unknown>> {
@@ -103,10 +133,14 @@ function okfFrontmatter(page: ValidatedSessionProposal): Readonly<Record<string,
     ...(proposal.profileFields ?? {}),
   };
   const xLlmwiki: Record<string, unknown> = {
-    buildlore: page.provenance,
+    buildlore: {
+      ...page.provenance,
+      citations: page.citationBindings,
+      compilerSources: page.compilerSources,
+    },
     confidence: proposal.confidence,
     fields,
-    sources: proposal.sources,
+    sources: page.compilerSources.map((source) => source.compilerSourceId),
     ...(entityType === undefined
       ? { pageDirectory: directoryFor(proposal.kind) }
       : { entityType }),
@@ -119,10 +153,35 @@ function okfFrontmatter(page: ValidatedSessionProposal): Readonly<Record<string,
   });
 }
 
-function okfPage(page: ValidatedSessionProposal): string {
+export function renderSessionOkfPage(page: ValidatedSessionProposal): string {
   const frontmatter = okfFrontmatter(page);
   const yaml = stringify(frontmatter, { lineWidth: 0, sortMapEntries: true }).trimEnd();
-  return '---\n' + yaml + '\n---\n' + citationBody(page);
+  return '---\n' + yaml + '\n---\n' + renderedBody(page);
+}
+
+export function renderSessionTypedPage(page: ValidatedSessionProposal): string {
+  const proposal = page.proposal;
+  const frontmatter = {
+    title: proposal.title,
+    summary: proposal.summary,
+    sourceRefs: proposal.citations.length === 0
+      ? page.compilerSources.map((source) => source.compilerSourceId)
+      : [...new Set(proposal.citations.map((citation) => citation.file))].sort(compareSessionText),
+    sourceRevision: proposal.planDigest,
+    confidence: proposal.confidence,
+    provenanceState: proposal.sources.length > 1 ? 'merged' : 'extracted',
+    ...(proposal.profileFields ?? {}),
+    'x-llmwiki': {
+      buildlore: {
+        ...page.provenance,
+        citations: page.citationBindings,
+        compilerSources: page.compilerSources,
+      },
+      sources: page.compilerSources.map((source) => source.compilerSourceId),
+    },
+  };
+  const yaml = stringify(frontmatter, { lineWidth: 0, sortMapEntries: true }).trimEnd();
+  return '---\n' + yaml + '\n---\n' + renderedBody(page);
 }
 
 function renderedPageMatches(page: ValidatedSessionProposal, rendered: string): boolean {
@@ -137,7 +196,7 @@ function renderedPageMatches(page: ValidatedSessionProposal, rendered: string): 
       sortMapEntries: true,
     }).trimEnd();
     return reparsedYaml === expectedYaml &&
-      rendered.slice(end + marker.length) === citationBody(page);
+      rendered.slice(end + marker.length) === renderedBody(page);
   } catch {
     return false;
   }
@@ -180,7 +239,7 @@ async function createBundle(
         throw new SessionCompileError('SESSION_ADMISSION_FAILED', page.proposal.projectId);
       }
       await mkdir(dirname(path), { mode: 0o700, recursive: true });
-      const rendered = okfPage(page);
+      const rendered = renderSessionOkfPage(page);
       await exclusiveWrite(path, rendered);
       const persisted = await readFile(path, 'utf8');
       if (sessionSha256(persisted) !== sessionSha256(rendered) ||
@@ -255,7 +314,9 @@ async function bundleStillMatches(
         SESSION_COMPILE_LIMITS.maxPlanBytes,
         projectId,
       );
-      if (rendered !== okfPage(page) || !renderedPageMatches(page, rendered)) return false;
+      if (rendered !== renderSessionOkfPage(page) || !renderedPageMatches(page, rendered)) {
+        return false;
+      }
     }
     return true;
   } catch {
@@ -362,29 +423,28 @@ function reportMatches(
     : customReportMatches(report, mode, batch);
 }
 
-function candidateRefsFromReport(
-  report: unknown,
-  batch: ValidatedSessionBatch,
-): readonly string[] {
-  if (!isRecord(report)) return Object.freeze([]);
-  const expected = new Map(batch.pages.map((page) => [
-    page.proposal.pageId + '.md',
-    page.proposal,
-  ] as const));
-  const refs = [...(safeReportArray(report, 'pages') ?? []),
-    ...(safeReportArray(report, 'typed') ?? [])].flatMap((value) => {
-    if (!isRecord(value) || typeof value.okfPath !== 'string' ||
-        typeof value.slug !== 'string') return [];
-    const proposal = expected.get(value.okfPath);
-    return proposal?.slug === value.slug ? [proposal.pageId] : [];
-  });
-  return Object.freeze([...new Set(refs)].sort());
+function stagedCandidateId(
+  value: unknown,
+  page: ValidatedSessionProposal,
+  projectId: string,
+): string {
+  if (!isRecord(value) || typeof value.id !== 'string' ||
+      !/^[a-z0-9][a-z0-9._-]{0,255}$/u.test(value.id) || !isRecord(value.target) ||
+      value.target.id !== page.proposal.pageId || value.target.slug !== page.proposal.slug ||
+      value.target.entityType !== directoryFor(page.proposal.kind)) {
+    throw new SessionCompileError('SESSION_ADMISSION_FAILED', projectId, {
+      recoveryAction: 'status',
+      sideEffectsPossible: true,
+    });
+  }
+  return value.id;
 }
 
 export function createSessionCompileAdmission(
   options: CreateSessionCompileAdmissionOptions = {},
 ): SessionCompileAdmission {
   const port = options.port ?? defaultAdmissionPort();
+  const reviewStoreFactory = options.reviewStoreFactory ?? createSessionReviewStore;
   const removeTemporary = options.removeTemporary ?? (async (path: string) =>
     rm(path, { recursive: true }));
   return {
@@ -424,20 +484,58 @@ export function createSessionCompileAdmission(
             recoveryAction: 'review',
           });
         }
-        let actual: unknown;
-        try {
-          actual = await port.importOkf(workspace, temporary.root, { trusted: false });
-        } catch {
-          throw new SessionCompileError('SESSION_ADMISSION_FAILED', projectId, {
-            recoveryAction: 'status',
-            sideEffectsPossible: true,
-          });
+        const store = reviewStoreFactory(workspace, projectId);
+        const candidates = [];
+        if (profileMode === 'default') {
+          for (const page of batch.pages) {
+            candidates.push(createSessionReviewCandidate({
+              batch,
+              page,
+              profileMode,
+              renderedPage: renderSessionOkfPage(page),
+            }));
+          }
+        } else {
+          if (port.stageEntityPage === undefined) {
+            throw new SessionCompileError('SESSION_ADMISSION_FAILED', projectId);
+          }
+          let existingStagedCount = 0;
+          for (const page of batch.pages) {
+            const renderedPage = renderSessionTypedPage(page);
+            let staged: unknown;
+            try {
+              staged = await port.stageEntityPage(workspace, {
+                body: renderedPage,
+                entityType: directoryFor(page.proposal.kind),
+                existingStagedCount,
+                slug: page.proposal.slug,
+              });
+            } catch {
+              throw new SessionCompileError('SESSION_ADMISSION_FAILED', projectId, {
+                recoveryAction: 'status',
+                sideEffectsPossible: existingStagedCount > 0,
+              });
+            }
+            existingStagedCount += 1;
+            candidates.push(createSessionReviewCandidate({
+              batch,
+              page,
+              profileMode,
+              renderedPage,
+              upstreamCandidateId: stagedCandidateId(staged, page, projectId),
+            }));
+          }
         }
-        if (!reportMatches(actual, 'staged', profileMode, batch)) {
+        try {
+          await store.stage(candidates);
+        } catch (error) {
+          if (error instanceof SessionCompileError && profileMode === 'default') throw error;
           throw new SessionCompileError('SESSION_ADMISSION_FAILED', projectId, {
-            candidateRefs: candidateRefsFromReport(actual, batch),
+            candidateRefs: profileMode === 'custom'
+              ? candidates.map((candidate) => candidate.candidateId)
+              : [],
             recoveryAction: 'status',
-            sideEffectsPossible: true,
+            sideEffectsPossible: profileMode === 'custom',
           });
         }
         result = Object.freeze({
@@ -447,12 +545,12 @@ export function createSessionCompileAdmission(
           batchDigest: batch.batchDigest,
           outcome: 'staged',
           reviewRequired: true,
-          admissionKind: 'untrusted-okf',
+          admissionKind: 'buildlore-review',
           admittedCount: batch.pages.length,
           heldCount: batch.pages.length,
           skippedCount: 0,
           candidateRefs: Object.freeze(
-            batch.pages.map((page) => page.proposal.pageId).sort(),
+            candidates.map((candidate) => candidate.candidateId).sort(compareSessionText),
           ),
           sideEffectsPossible: false,
           recoveryAction: 'review',
