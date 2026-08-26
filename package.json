@@ -30,6 +30,10 @@
     "./schemas/knowledge-parent-pin-result.schema.json": "./schemas/knowledge-parent-pin-result.schema.json",
     "./schemas/local-project-registry.schema.json": "./schemas/local-project-registry.schema.json",
     "./schemas/source-collection-manifest.schema.json": "./schemas/source-collection-manifest.schema.json",
+    "./schemas/compile-plan.schema.json": "./schemas/compile-plan.schema.json",
+    "./schemas/compile-proposal.schema.json": "./schemas/compile-proposal.schema.json",
+    "./schemas/compile-apply-result.schema.json": "./schemas/compile-apply-result.schema.json",
+    "./schemas/session-compile-provenance.schema.json": "./schemas/session-compile-provenance.schema.json",
     "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json"
   },
   "files": [

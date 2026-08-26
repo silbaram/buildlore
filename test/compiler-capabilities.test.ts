@@ -251,7 +251,7 @@ describe('compiler capability contract', () => {
     expect(serialized).not.toContain('raw warning');
   });
 
-  it('maps every capability to the approved public SDK call and safe options', async () => {
+  it('creates the package-root SDK with one confined root and maps compile, status, lint, eval, search, query, and context to approved methods only', async () => {
     const compile = vi.fn(() => Promise.resolve({}));
     const context = vi.fn(() => Promise.resolve({}));
     const evalRun = vi.fn(() => Promise.resolve({}));
@@ -379,7 +379,7 @@ describe('compiler capability contract', () => {
     expect(exportJson).toHaveBeenCalledWith({ projectId: 'alpha' });
   });
 
-  it('normalizes the review split without exposing candidate bodies or unknown reasons', async () => {
+  it('normalizes held review candidate refs without exposing bodies or treating unknown review reasons as success', async () => {
     let reason = 'low-confidence';
     const backend: CompilerBackend = {
       run: () => Promise.resolve({
@@ -820,7 +820,7 @@ describe('compiler capability contract', () => {
     expect(JSON.stringify(error)).not.toMatch(/CREDENTIAL|SOURCE|\/private/u);
   });
 
-  it('handles pre-start and post-start cancellation without racing the backend', async () => {
+  it('makes zero provider calls for pre-start cancellation and waits for post-start settlement without a Promise race before reporting possible side effects', async () => {
     let settle: ((value: unknown) => void) | undefined;
     const run = vi.fn(
       () =>

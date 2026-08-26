@@ -10,6 +10,9 @@ import {
   type CompilerRequest,
   type ProjectCheckSummary,
   type ProjectCompilerPort,
+  type ProjectSessionCompilerPort,
+  type SessionCompileApplyRequest,
+  type SessionCompilePlanRequest,
 } from '../src/compiler/index.js';
 import { runCli, type CliIo, type CliRuntime } from '../src/cli/index.js';
 import {
@@ -373,6 +376,100 @@ afterEach(async () => {
 });
 
 describe('canonical CLI workflow', () => {
+  it('routes caller-owned plan/apply without legacy compile or agent execution and returns reviewRequired safe refs, counts, digests, and recovery action', async () => {
+    const cwd = await createConfiguredRepository();
+    const planRequests: SessionCompilePlanRequest[] = [];
+    const applyRequests: SessionCompileApplyRequest[] = [];
+    let legacyCalls = 0;
+    const sessionCompiler: ProjectSessionCompilerPort = {
+      plan: (request) => {
+        planRequests.push(request);
+        return Promise.resolve({
+          schemaVersion: 'buildlore.compile-plan.v1',
+          projectId: request.projectId,
+          planDigest: digest('1'),
+          contractDigest: digest('2'),
+          profileDigest: digest('3'),
+          policyDigest: digest('4'),
+          selectionDigest: digest('5'),
+          sourceManifestDigest: digest('6'),
+          existingKnowledgeDigest: digest('7'),
+          algorithmVersion: 'buildlore.session-planner.v1',
+          limits: {
+            maxCitationsPerPage: 512,
+            maxLinksPerPage: 256,
+            maxMergeCandidates: 512,
+            maxPageBytes: 524288,
+            maxPlanBytes: 33554432,
+            maxProposalBytes: 524288,
+            maxProposals: 50,
+            maxQuoteCodeUnits: 512,
+            maxSourceBytes: 524288,
+            maxSources: 4096,
+            maxTasks: 8192,
+          },
+          sources: [],
+          tasks: [],
+          mergeCandidates: [],
+          allowedLinkTargets: [],
+        });
+      },
+      apply: (request) => {
+        applyRequests.push(request);
+        return Promise.resolve({
+          schemaVersion: 'buildlore.compile-apply-result.v1',
+          projectId: request.projectId,
+          planDigest: digest('1'),
+          batchDigest: digest('8'),
+          outcome: 'staged',
+          reviewRequired: true,
+          admissionKind: 'untrusted-okf',
+          admittedCount: request.proposalFiles.length,
+          heldCount: request.proposalFiles.length,
+          skippedCount: 0,
+          candidateRefs: ['concepts/session-page'],
+          sideEffectsPossible: false,
+          recoveryAction: 'review',
+          warnings: [],
+        });
+      },
+    };
+    const runtime: CliRuntime = {
+      cwd,
+      projectCompiler: {
+        execute: () => {
+          legacyCalls += 1;
+          return Promise.reject(new Error('legacy compile must not run'));
+        },
+        status: () => Promise.resolve({ pendingChanges: [], pendingChangesCount: 0, stateStatus: 'ok' }),
+      },
+      sessionCompiler,
+    };
+
+    const planned = await capture(['compile', 'plan', '--project', 'alpha', '--json'], runtime);
+    const applied = await capture([
+      'compile', 'apply', '--project', 'alpha', '--page', 'one.json', '--page', 'two.json',
+      '--json',
+    ], runtime);
+
+    expect(JSON.parse(planned.stdout)).toMatchObject({
+      command: 'compile.plan',
+      data: { schemaVersion: 'buildlore.compile-plan.v1' },
+      ok: true,
+    });
+    expect(JSON.parse(applied.stdout)).toMatchObject({
+      command: 'compile.apply',
+      data: { admissionKind: 'untrusted-okf', reviewRequired: true },
+      ok: true,
+    });
+    expect(planRequests).toEqual([{ projectId: 'alpha' }]);
+    expect(applyRequests).toEqual([{
+      projectId: 'alpha',
+      proposalFiles: ['one.json', 'two.json'],
+    }]);
+    expect(legacyCalls).toBe(0);
+  });
+
   it('runs the credential-free empty non-Git workflow, proves sync dry-run byte and Git invariance without compiler or provider calls, and completes init through query', async () => {
     const cwd = await createConfiguredRepository();
     await createDryRunFixture(cwd);

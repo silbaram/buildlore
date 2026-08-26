@@ -44,6 +44,7 @@ interface ProviderInput {
   readonly scanDigest: `sha256:${string}`;
   readonly source: string;
   readonly sourceKind: SecuritySourceKind;
+  readonly sourceRevisionOrContentSha256: `sha256:${string}`;
 }
 
 interface ProviderInputManifest {
@@ -249,7 +250,7 @@ async function providerInputs(
             })
           : null;
       if (sourceIdentity === null) return denied();
-      const scanBody = [document.title, sourceIdentity, document.body].join('\n');
+      const scanBody = [document.title, document.body].join('\n');
       inputs.push({
         body,
         contentDigest: sha256(body),
@@ -257,6 +258,7 @@ async function providerInputs(
         scanDigest: sha256(scanBody),
         source: document.source,
         sourceKind,
+        sourceRevisionOrContentSha256: document.buildlore.sourceRevision,
       });
       continue;
     }
@@ -264,24 +266,28 @@ async function providerInputs(
       ? 'wiki'
       : 'compiler-cache';
     const pathIdentity = sha256(relative(workspace, path)).slice('sha256:'.length);
+    const contentDigest = sha256(body);
     inputs.push({
       body,
-      contentDigest: sha256(body),
+      contentDigest,
       scanBody: body,
-      scanDigest: sha256(body),
+      scanDigest: contentDigest,
       source: `buildlore://${kind}/${pathIdentity}`,
       sourceKind: kind,
+      sourceRevisionOrContentSha256: contentDigest,
     });
   }
   const text = requestText(request);
   if (text !== null) {
+    const contentDigest = sha256(text);
     inputs.push({
       body: text,
-      contentDigest: sha256(text),
+      contentDigest,
       scanBody: text,
-      scanDigest: sha256(text),
+      scanDigest: contentDigest,
       source: `buildlore://provider-request/${request.capability}`,
       sourceKind: 'provider-request',
+      sourceRevisionOrContentSha256: contentDigest,
     });
   }
   return inputs;
@@ -306,7 +312,7 @@ async function buildManifest(
       projectId: request.projectId,
       source: input.source,
       sourceKind: input.sourceKind,
-      sourceRevisionOrContentSha256: input.scanDigest,
+      sourceRevisionOrContentSha256: input.sourceRevisionOrContentSha256,
     });
     if (!result.ok || result.report.inputDigest !== input.scanDigest ||
         result.report.outputDigest !== input.scanDigest ||
@@ -322,7 +328,7 @@ async function buildManifest(
         prepared.projectId !== request.projectId ||
         prepared.rulesVersion !== SANITIZER_RULES_VERSION ||
         prepared.source !== input.source || prepared.sourceKind !== input.sourceKind ||
-        prepared.sourceRevisionOrContentSha256 !== input.scanDigest ||
+        prepared.sourceRevisionOrContentSha256 !== input.sourceRevisionOrContentSha256 ||
         prepared.untrustedData !== result.report.summaries.some((summary) =>
           summary.action === 'quarantine' && summary.count > 0)) return denied();
     classifications.add(result.report.classification);

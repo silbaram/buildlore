@@ -72,7 +72,7 @@ describe('BuildLore lifecycle profile contract', () => {
     );
   });
 
-  it('materializes byte-identical upstream profile and review config accepted by the public SDK', async () => {
+  it('materializes a byte-identical exact-pinned profile that public SDK status identifies and lint accepts safely', async () => {
     const english = materializeLifecycleProfile(createBuildLoreLifecycleProfile('en'));
     const korean = materializeLifecycleProfile(createBuildLoreLifecycleProfile('ko'));
     expect(english.profileJson).toBe(korean.profileJson);

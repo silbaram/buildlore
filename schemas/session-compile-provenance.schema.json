@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/session-compile-provenance.schema.json",
+  "title": "BuildLore Session Compile Provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "planDigest",
+    "proposalDigest",
+    "sourceManifestDigest",
+    "profileDigest",
+    "policyDigest",
+    "callerHarness",
+    "contractDigest",
+    "bindingDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.session-compile-provenance.v1" },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "maxLength": 64
+    },
+    "planDigest": { "$ref": "#/$defs/digest" },
+    "proposalDigest": { "$ref": "#/$defs/digest" },
+    "sourceManifestDigest": { "$ref": "#/$defs/digest" },
+    "profileDigest": { "$ref": "#/$defs/digest" },
+    "policyDigest": { "$ref": "#/$defs/digest" },
+    "callerHarness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compatibilityDigest", "kind", "version"],
+      "properties": {
+        "compatibilityDigest": { "$ref": "#/$defs/digest" },
+        "kind": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "contractDigest": { "$ref": "#/$defs/digest" },
+    "bindingDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

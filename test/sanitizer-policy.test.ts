@@ -94,6 +94,73 @@ describe('security policy', () => {
     }));
   });
 
+  it('requires the documented canonical field, rule, and newline order', async () => {
+    const item = await fixture();
+    const path = join(item.workspace, 'security-policy.json');
+    const policy: SecurityPolicy = {
+      ...allowedPolicy(),
+      classificationRules: [
+        { classification: 'internal', sourceKind: 'wiki' },
+        { classification: 'public', sourceKind: 'planning' },
+      ],
+      egressRules: [
+        { allowedClassifications: ['public'], capability: 'search' },
+        { allowedClassifications: ['public', 'internal'], capability: 'compile' },
+      ],
+      overrides: [
+        {
+          reasonCode: 'false-positive-fixture',
+          ruleId: 'entropy.candidate',
+          sourceIdentitySha256: 'b'.repeat(64),
+          sourceRevisionOrContentSha256: `sha256:${'2'.repeat(64)}`,
+        },
+        {
+          auditRef: 'SECURITY-22',
+          reasonCode: 'non-secret-identifier',
+          ruleId: 'entropy.candidate',
+          sourceIdentitySha256: 'a'.repeat(64),
+          sourceRevisionOrContentSha256: `sha256:${'1'.repeat(64)}`,
+        },
+      ],
+    };
+    const canonical = serializeSecurityPolicy(policy);
+    const parsed = parseSecurityPolicy(policy, 'alpha');
+    expect(canonical).toMatch(
+      /^\{\n[ ]{2}"schemaVersion": "buildlore\.security-policy\.v1",\n[ ]{2}"projectId": "alpha",\n[ ]{2}"defaultClassification":/u,
+    );
+    expect(parsed.classificationRules.map(({ sourceKind }) => sourceKind))
+      .toEqual(['planning', 'wiki']);
+    expect(parsed.egressRules.map(({ capability }) => capability)).toEqual(['compile', 'search']);
+    expect(parsed.egressRules[0]?.allowedClassifications).toEqual(['internal', 'public']);
+    expect(parsed.overrides.map(({ sourceIdentitySha256 }) => sourceIdentitySha256[0]))
+      .toEqual(['a', 'b']);
+    const reorderedFields = `${JSON.stringify({
+      projectId: parsed.projectId,
+      schemaVersion: parsed.schemaVersion,
+      defaultClassification: parsed.defaultClassification,
+      classificationRules: parsed.classificationRules,
+      egressRules: parsed.egressRules,
+      overrides: parsed.overrides,
+    }, null, 2)}\n`;
+    const reorderedRules = `${JSON.stringify({
+      ...parsed,
+      classificationRules: [...parsed.classificationRules].reverse(),
+    }, null, 2)}\n`;
+    for (const bytes of [
+      `\ufeff${canonical}`,
+      canonical.replaceAll('\n', '\r\n'),
+      canonical.slice(0, -1),
+      `${canonical}\n`,
+      reorderedFields,
+      reorderedRules,
+    ]) {
+      await writeFile(path, bytes, 'utf8');
+      await expect(readSecurityPolicy(item.knowledgeRoot, 'alpha')).rejects.toMatchObject({
+        code: 'SECURITY_POLICY_INVALID',
+      });
+    }
+  });
+
   it.each([
     {
       name: 'unknown field',

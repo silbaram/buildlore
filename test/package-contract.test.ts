@@ -68,6 +68,10 @@ describe('package contract', () => {
       'knowledge-parent-pin-result.schema.json',
       'local-project-registry.schema.json',
       'source-collection-manifest.schema.json',
+      'compile-plan.schema.json',
+      'compile-proposal.schema.json',
+      'compile-apply-result.schema.json',
+      'session-compile-provenance.schema.json',
     ]) {
       expect(packageJson.exports[`./schemas/${schema}`]).toBe(`./schemas/${schema}`);
     }
@@ -88,7 +92,7 @@ describe('package contract', () => {
     });
   });
 
-  it('[V9-V-24][V10-V-16] locks package-root SDK and forbids dependency/boundary expansion', async () => {
+  it('pins package-root createWiki/importOkf trusted:false and forbids deep imports, child processes, agent runtimes, direct staging/promotion, relation, lifecycle, artifact, and new dependencies', async () => {
     const packageLock = JSON.parse(
       await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'),
     ) as PackageLockContract;
@@ -160,8 +164,23 @@ describe('package contract', () => {
           !specifier.startsWith('.') &&
           !specifier.startsWith('node:'),
       );
-    expect([...new Set(externalImports)]).toEqual(['llm-wiki-compiler']);
+    expect([...new Set(externalImports)].sort()).toEqual(['llm-wiki-compiler', 'yaml']);
     expect(compilerSource).not.toMatch(/node:child_process|Promise\.race|process\.(?:on|once)\(/u);
+
+    const sessionPaths = sourcePaths.filter((path) => path.startsWith('compiler/session/'));
+    const sessionSource = (
+      await Promise.all(sessionPaths.map(async (path) =>
+        readFile(new URL(path.replaceAll('\\', '/'), sourceRoot), 'utf8')))
+    ).join('\n');
+    expect(sourcePaths.some((path) => path.startsWith('compiler/harness/'))).toBe(false);
+    expect(sessionSource).not.toMatch(
+      /node:child_process|\b(?:execFile|spawn|fork)\s*\(|shell\s*:\s*true|claude-code|@anthropic-ai|@openai\/codex|agent-sdk|llmwiki\/(?:cli|bin)|\b(?:server|scheduler|database)\b/u,
+    );
+    expect(sessionSource).not.toMatch(
+      /\.stageEntityPage\s*\(|\.promoteStagedPage\s*\(|\.writeArtifact\s*\(|\.createRelation\s*\(|\.transitionLifecycle\s*\(/u,
+    );
+    expect(sessionSource).toContain("from 'llm-wiki-compiler'");
+    expect(sessionSource).toContain('trusted: false');
 
     const projectionSource = (
       await Promise.all(
@@ -227,6 +246,10 @@ describe('package contract', () => {
       'knowledge-parent-pin-result.schema.json',
       'local-project-registry.schema.json',
       'source-collection-manifest.schema.json',
+      'compile-plan.schema.json',
+      'compile-proposal.schema.json',
+      'compile-apply-result.schema.json',
+      'session-compile-provenance.schema.json',
     ]) {
       const subpath = `./schemas/${schema}`;
       expect(packageJson.exports[subpath]).toBe(subpath);

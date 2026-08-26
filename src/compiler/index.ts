@@ -29,6 +29,7 @@ export {
   createProjectCompiler,
   type CreateProjectCompilerOptions,
 } from './service.js';
+export * from './session/index.js';
 export type {
   CompileRequest,
   CompileReviewCandidate,

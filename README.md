@@ -103,6 +103,14 @@ Create corresponding manifests in `/b` and `/c` with their own `projectId`,
 repository identity, and selections. BuildLore does not crawl undeclared directories,
 and planning-only selection does not read `.plan2agent/runs` or `run-index.json`.
 
+This manifest has one canonical byte representation. Encode it as UTF-8 without a
+BOM, indent JSON with two spaces, use LF line endings, and end it with exactly one
+LF. Keep top-level fields in this order: `projectId`, `schemaVersion`,
+`sourceRepository`, `sources`. A file declaration uses `documentKind`, `id`, `path`,
+`pathType`; a directory declaration may add `recursive` last. Sort `sources` by its
+unique ASCII `id`. BuildLore rejects a semantically equivalent file if its field
+order, declaration order, indentation, or newline bytes are not canonical.
+
 ### 3. Register and bind projects from the hub
 
 Every operation uses an explicit project ID; BuildLore never infers a default project.
@@ -177,8 +185,9 @@ export LLMWIKI_PROVIDER=openai
 export OPENAI_API_KEY=<value-from-your-secret-manager>
 ```
 
-Provider access is also controlled by
-`knowledge/projects/example/security-policy.json`. A newly registered project is
+Provider access is also controlled by `projects/<project-id>/security-policy.json`
+inside the knowledge repository (for this layout,
+`knowledge/projects/example/security-policy.json`). A newly registered project is
 fail-closed (`restricted` with no egress rules). Review the data classification and
 explicitly allow only the capabilities and `public` or `internal` classifications that
 may leave the machine. `restricted` data can never be authorized for egress.
@@ -214,8 +223,20 @@ provider processing, the reviewed policy can allow only the operations in use:
 }
 ```
 
-The policy file is canonical JSON: preserve its field and rule order. Omit any egress
-rule that the project does not need.
+The policy uses the same canonical UTF-8, two-space indentation, LF, and exactly-one
+final LF requirements as `sources.json`. Keep its top-level fields in this order:
+`schemaVersion`, `projectId`, `defaultClassification`, `classificationRules`,
+`egressRules`, `overrides`. Classification rules are sorted by `sourceKind` and then
+the optional `sourceIdentitySha256`; egress rules are sorted by `capability`, with
+`allowedClassifications` sorted as `internal`, then `public`. Overrides are sorted by
+`sourceIdentitySha256`, `sourceRevisionOrContentSha256`, then `ruleId`. An override
+uses optional `auditRef` first, followed by `reasonCode`, `ruleId`,
+`sourceIdentitySha256`, and `sourceRevisionOrContentSha256`.
+
+An override is not a wildcard. It applies only to an overridable rule for the exact
+source identity and exact source revision/content digest. Changing the selected
+bytes makes the old override stop matching. Never put the matched value or a secret
+in an override or `auditRef`. Omit any egress rule that the project does not need.
 
 ### 6. Compile and verify the wiki
 
@@ -227,6 +248,45 @@ node dist/cli/bin.js compile --project example --review
 node dist/cli/bin.js compile --project example
 node dist/cli/bin.js check --project example
 ```
+
+For generation owned by the current Claude Code or Codex session, use the separate
+provider-free plan/apply boundary:
+
+```sh
+node dist/cli/bin.js compile plan --project example --json
+node dist/cli/bin.js compile apply \
+  --project example \
+  --page proposals/session-concept.json \
+  --page proposals/session-decision.json \
+  --json
+```
+
+`compile plan` returns sanitized source text, deterministic tasks and merge
+candidates, exact original-file citation anchors, and a plan digest. BuildLore does
+not save that plan or launch a Claude/Codex executable, agent SDK, background worker,
+or child process. The current caller session may use its existing skills and
+subagents to author canonical `buildlore.compile-proposal.v1` files. `compile apply`
+regenerates the current plan, validates every proposal as one batch, scans generated
+content again, and admits matching output only through the public SDK's untrusted OKF
+import. The result is always a held review candidate; it never promotes or writes a
+live page. The public JSON contracts are exported under `schemas/compile-*.schema.json`
+and `schemas/session-compile-provenance.schema.json`.
+
+Proposal files use the property order shown by the proposal schema, two-space JSON
+indentation, LF line endings, and exactly one final LF. `proposalDigest` is
+`sha256:` plus the lowercase SHA-256 of those canonical bytes after removing only
+the `proposalDigest` property. `callerHarness.compatibilityDigest` hashes the same
+canonical JSON representation of `{ contractDigest, kind, proposalSchemaVersion,
+version }` in that exact order. The contract digest comes from the plan and the
+proposal schema version is `buildlore.compile-proposal.v1`. A mismatch is rejected
+before the public compiler SDK is called.
+
+Default-profile `concept` and `query` proposals omit `profileFields`. Custom-profile
+proposals use only their initial review state: `decision` requires `status: active`,
+`failure` requires `failureClass` and `status: open`, and `verification` requires
+`verificationKind`, one or more `evidenceRefs`, and `status: recorded`. The conditional
+rules and field bounds are normative in `compile-proposal.schema.json`; later lifecycle
+transitions remain review-owned and cannot be requested through `compile apply`.
 
 The isolated project workspace contains flat sanitized sources under `sources/`,
 generated pages under `wiki/`, compiler state under `.llmwiki/`, and the applied
@@ -312,6 +372,7 @@ must be included.
 ```text
 init -> project add -> sync --dry-run -> sync -> compile -> check
                                          |                    |
+                                         +-> compile plan -> current session -> compile apply -> review
                                          +-> search/query/context
                                          +-> publish plan -> commit -> push -> knowledge pin
 ```

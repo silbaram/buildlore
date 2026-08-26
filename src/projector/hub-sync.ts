@@ -17,8 +17,11 @@ import {
 import { readSecurityPolicy } from '../sanitizer/policy.js';
 import {
   createProjectSecurityService,
+  SANITIZATION_REPORT_SCHEMA_VERSION,
+  SANITIZER_RULES_VERSION,
   type PreparedSource,
   type SanitizationReport,
+  type SourceSecurityResult,
 } from '../sanitizer/index.js';
 import {
   createSourceCollectionAdapter,
@@ -50,10 +53,15 @@ import type {
   ProjectSyncFailurePhase,
   ProjectSyncPlanEntrySummary,
   ProjectSyncPlanSummary,
+  ProjectSyncSanitizationDiagnostics,
   ProjectSyncSummary,
   ProjectSyncWarning,
   ProjectSyncWriteSummary,
 } from './sync.js';
+import {
+  buildProjectSyncSanitizationDiagnostics,
+  type SyncSanitizationDiagnosticInput,
+} from './sync-sanitization-diagnostics.js';
 
 const EMPTY_COUNTS: ProjectSyncDecisionCounts = Object.freeze({
   blocked: 0,
@@ -68,6 +76,7 @@ interface FailureOptions {
   readonly completedTargets?: readonly string[];
   readonly partial?: boolean;
   readonly recoveryAction?: 'inspect-plan' | 'retry-sync';
+  readonly sanitization?: ProjectSyncSanitizationDiagnostics;
 }
 
 export interface HubSyncFailurePort {
@@ -90,15 +99,28 @@ export interface HubSyncOptions {
   readonly sourceRevisionReader?: SourceRevisionReader;
 }
 
-interface SanitizedCandidate {
+interface PreparedCandidate {
   readonly bodyPrepared: PreparedSource;
   readonly candidate: CollectionCandidate;
   readonly input: ProjectSourceInput;
   readonly report: SanitizationReport;
-  readonly snapshot: ProjectSourceTargetSnapshot;
   readonly sourceKind: 'markdown' | 'planning';
   readonly titlePrepared: PreparedSource;
 }
+
+interface SanitizedCandidate extends PreparedCandidate {
+  readonly snapshot: ProjectSourceTargetSnapshot;
+}
+
+interface RejectedCandidate {
+  readonly candidate: CollectionCandidate;
+  readonly reports: readonly SanitizationReport[];
+  readonly sourceKind: 'markdown' | 'planning';
+}
+
+type CandidatePreparationOutcome =
+  | Readonly<{ readonly ok: false; readonly rejected: RejectedCandidate }>
+  | Readonly<{ readonly ok: true; readonly prepared: PreparedCandidate }>;
 
 interface PlannedState {
   readonly binding: ResolvedLocalProjectBinding;
@@ -174,14 +196,60 @@ function inventoryDigest(inventory: SourceSelectionInventory): Sha256Digest {
   }));
 }
 
-function hasSuspectedSecret(report: SanitizationReport): boolean {
-  return report.summaries.some((summary) =>
-    summary.count > 0 && (
-      summary.ruleId.startsWith('credential.') ||
-      summary.ruleId.startsWith('private-key.') ||
-      summary.ruleId === 'entropy.candidate' ||
-      summary.ruleId === 'input.redaction-incomplete'
-    ));
+function reportAllowsPreparedSource(
+  report: SanitizationReport,
+  expected: {
+    readonly bodyDigest: Sha256Digest;
+    readonly policyDigest: Sha256Digest;
+    readonly projectId: string;
+    readonly sourceIdentitySha256: string;
+  },
+): boolean {
+  return report.schemaVersion === SANITIZATION_REPORT_SCHEMA_VERSION &&
+    report.rulesVersion === SANITIZER_RULES_VERSION && report.decision === 'include' &&
+    report.findingsOverflow === false && report.inputDigest === expected.bodyDigest &&
+    report.policyDigest === expected.policyDigest && report.projectId === expected.projectId &&
+    report.sourceIdentitySha256 === expected.sourceIdentitySha256 &&
+    report.summaries.every((summary) =>
+      ['block', 'quarantine', 'redact'].includes(summary.action) &&
+      Number.isSafeInteger(summary.count) && summary.count > 0 &&
+      Number.isSafeInteger(summary.overriddenCount) && summary.overriddenCount >= 0 &&
+      summary.overriddenCount <= summary.count &&
+      /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u.test(summary.ruleId) &&
+      (summary.action === 'redact' || summary.count === summary.overriddenCount));
+}
+
+function validatedPreparedResult(
+  result: SourceSecurityResult,
+  expected: {
+    readonly bodyDigest: Sha256Digest;
+    readonly policyDigest: Sha256Digest;
+    readonly projectId: string;
+    readonly source: string;
+    readonly sourceKind: 'markdown' | 'planning';
+    readonly sourceRevision: Sha256Digest;
+  },
+): PreparedSourceBinding | null {
+  if (!result.ok) return null;
+  const sourceIdentitySha256 = sha256(expected.source).slice('sha256:'.length);
+  if (!reportAllowsPreparedSource(result.report, {
+    bodyDigest: expected.bodyDigest,
+    policyDigest: expected.policyDigest,
+    projectId: expected.projectId,
+    sourceIdentitySha256,
+  })) return null;
+  const binding = inspectPreparedSource(result.prepared);
+  if (
+    binding === null || binding.inputBodyDigest !== expected.bodyDigest ||
+    binding.policyDigest !== expected.policyDigest || binding.projectId !== expected.projectId ||
+    binding.rulesVersion !== SANITIZER_RULES_VERSION ||
+    binding.source !== expected.source || binding.sourceKind !== expected.sourceKind ||
+    binding.sourceRevisionOrContentSha256 !== expected.sourceRevision ||
+    binding.approvedBodyDigest !== result.report.outputDigest ||
+    binding.classification !== result.report.classification ||
+    sha256(binding.approvedBody) !== binding.approvedBodyDigest
+  ) return null;
+  return binding;
 }
 
 function assertPrepared(
@@ -199,6 +267,7 @@ function assertPrepared(
   if (
     binding === null || binding.inputBodyDigest !== expected.bodyDigest ||
     binding.policyDigest !== expected.policyDigest || binding.projectId !== expected.projectId ||
+    binding.rulesVersion !== SANITIZER_RULES_VERSION ||
     binding.source !== expected.source || binding.sourceKind !== expected.sourceKind ||
     binding.sourceRevisionOrContentSha256 !== expected.sourceRevision
   ) failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
@@ -209,61 +278,63 @@ async function prepareCandidate(
   candidate: CollectionCandidate,
   security: ReturnType<typeof createProjectSecurityService>,
   policyDigest: Sha256Digest,
-  writer: ProjectSourceWriter,
   failure: HubSyncFailurePort,
-): Promise<SanitizedCandidate> {
+): Promise<CandidatePreparationOutcome> {
   if (candidate.sourceKind !== 'markdown' && candidate.sourceKind !== 'planning') {
     return failure.fail('SYNC_SELECTION_FAILED', 'selection');
   }
   const sourceKind = candidate.sourceKind;
   const titleSource = candidate.sourceUri;
-  let titleResult;
-  let bodyResult;
-  try {
-    [titleResult, bodyResult] = await Promise.all([
-      security.prepareSource({
+  const settled = await Promise.allSettled([
+    security.prepareSource({
         body: candidate.title,
         bodyDigest: sha256(candidate.title),
         projectId: candidate.projectId,
         source: titleSource,
         sourceKind,
         sourceRevisionOrContentSha256: candidate.sourceRevision,
-      }),
-      security.prepareSource({
+    }),
+    security.prepareSource({
         body: candidate.body,
         bodyDigest: sha256(candidate.body),
         projectId: candidate.projectId,
         source: candidate.sourceUri,
         sourceKind,
         sourceRevisionOrContentSha256: candidate.sourceRevision,
-      }),
-    ]);
-  } catch (cause) {
-    return failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization', { cause });
+    }),
+  ]);
+  const reports = settled.flatMap((outcome) =>
+    outcome.status === 'fulfilled' ? [outcome.value.report] : []);
+  const titleResult = settled[0];
+  const bodyResult = settled[1];
+  if (titleResult?.status !== 'fulfilled' || bodyResult?.status !== 'fulfilled') {
+    return Object.freeze({
+      ok: false as const,
+      rejected: Object.freeze({ candidate, reports: Object.freeze(reports), sourceKind }),
+    });
   }
-  if (
-    !titleResult.ok || !bodyResult.ok ||
-    titleResult.report.policyDigest !== policyDigest ||
-    bodyResult.report.policyDigest !== policyDigest ||
-    hasSuspectedSecret(titleResult.report) || hasSuspectedSecret(bodyResult.report)
-  ) return failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
-
-  const title = assertPrepared(inspectPreparedSource(titleResult.prepared), {
+  const title = validatedPreparedResult(titleResult.value, {
     bodyDigest: sha256(candidate.title),
     policyDigest,
     projectId: candidate.projectId,
     source: titleSource,
     sourceKind,
     sourceRevision: candidate.sourceRevision,
-  }, failure);
-  const body = assertPrepared(inspectPreparedSource(bodyResult.prepared), {
+  });
+  const body = validatedPreparedResult(bodyResult.value, {
     bodyDigest: sha256(candidate.body),
     policyDigest,
     projectId: candidate.projectId,
     source: candidate.sourceUri,
     sourceKind,
     sourceRevision: candidate.sourceRevision,
-  }, failure);
+  });
+  if (title === null || body === null || !titleResult.value.ok || !bodyResult.value.ok) {
+    return Object.freeze({
+      ok: false as const,
+      rejected: Object.freeze({ candidate, reports: Object.freeze(reports), sourceKind }),
+    });
+  }
   const input: ProjectSourceInput = Object.freeze({
     body: body.approvedBody,
     ingestedAt: candidate.ingestedAt,
@@ -274,20 +345,16 @@ async function prepareCandidate(
     target: candidate.target,
     title: title.approvedBody,
   });
-  let snapshot;
-  try {
-    snapshot = await writer.inspect(input);
-  } catch (cause) {
-    return failure.fail('SYNC_TARGET_COLLISION', 'write', { cause });
-  }
   return Object.freeze({
-    bodyPrepared: bodyResult.prepared,
-    candidate,
-    input,
-    report: bodyResult.report,
-    snapshot,
-    sourceKind,
-    titlePrepared: titleResult.prepared,
+    ok: true as const,
+    prepared: Object.freeze({
+      bodyPrepared: bodyResult.value.prepared,
+      candidate,
+      input,
+      report: bodyResult.value.report,
+      sourceKind,
+      titlePrepared: titleResult.value.prepared,
+    }),
   });
 }
 
@@ -465,15 +532,38 @@ export async function runHubProjectSync(
   } catch (cause) {
     return failure.fail('SYNC_TARGET_COLLISION', 'write', { cause });
   }
-  const prepared: SanitizedCandidate[] = [];
+  const preparedWithoutSnapshots: PreparedCandidate[] = [];
+  const rejected: RejectedCandidate[] = [];
   for (const candidate of collection.candidates) {
-    prepared.push(await prepareCandidate(
+    const outcome = await prepareCandidate(
       candidate,
       security,
       planned.policyDigest,
-      writer,
       failure,
-    ));
+    );
+    if (outcome.ok) preparedWithoutSnapshots.push(outcome.prepared);
+    else rejected.push(outcome.rejected);
+  }
+  if (rejected.length > 0) {
+    const diagnosticInputs: SyncSanitizationDiagnosticInput[] = rejected.map((item) => ({
+      reports: item.reports,
+      sourceIdentitySha256: sha256(item.candidate.sourceUri).slice('sha256:'.length),
+      sourceKind: item.sourceKind,
+      sourceRef: item.candidate.sourceRef,
+    }));
+    return failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization', {
+      sanitization: buildProjectSyncSanitizationDiagnostics(diagnosticInputs),
+    });
+  }
+  const prepared: SanitizedCandidate[] = [];
+  for (const item of preparedWithoutSnapshots) {
+    let snapshot;
+    try {
+      snapshot = await writer.inspect(item.input);
+    } catch (cause) {
+      return failure.fail('SYNC_TARGET_COLLISION', 'write', { cause });
+    }
+    prepared.push(Object.freeze({ ...item, snapshot }));
   }
   const entries = collectionEntries(prepared, collection.planningEntries);
   if (entries.some((entry) =>
