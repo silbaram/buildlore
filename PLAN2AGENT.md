@@ -17,4 +17,4 @@ The project constitution remains at `.plan2agent/constitution.json`. Planning Ga
 
 The generated `.plan2agent/` directory is local harness state and is ignored by git.
 Keep application/source commits focused on product code, and persist P2A planning and run
-history through Plan2Agent Memory or an explicit export when needed.
+knowledge through BuildLore's separate Git-backed knowledge repository when needed.

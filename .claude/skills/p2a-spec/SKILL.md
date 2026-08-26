@@ -12,7 +12,7 @@ Create a development-ready product and implementation specification from approve
 - `intake_json` is `ready_for_spec` with a valid Gate A approval audit.
 - A new project has an approved `.plan2agent/constitution.json`; a legacy project may use `.plan2agent/style.md` as compatibility guidance.
 - High-impact user decisions, explicit constraints, and non-goals are present.
-- Optional inputs include a validated baseline, prior draft spec, Feature Radar evidence, a validated entry reference bundle, and relevant Planning Memory reports.
+- Optional inputs include a validated baseline, prior draft spec, Feature Radar evidence, a validated entry reference bundle, and relevant committed BuildLore knowledge.
 
 Treat a legacy `interview` object as opaque compatibility data. Never inspect a legacy `interview` object to derive routing or block Gate B.
 
@@ -22,7 +22,7 @@ The canonical conditions live in `.agents/context-routes.json`.
 
 1. Required, on-demand; stages: gate-b — `references/spec-contract.md` — A Gate B specification is about to be authored or validated.
 2. Required, conditional; stages: gate-b — `references/technology-reconnaissance.md` — A material external technology or reusable implementation choice may be stale, current-version-sensitive, or consequential.
-3. Required, conditional; stages: gate-b — `references/baseline-and-memory.md` — The intake carries a validated baseline, a prior spec is reused, or a relevant Planning Memory report exists.
+3. Required, conditional; stages: gate-b — `references/baseline-and-buildlore.md` — The intake carries a validated baseline, a prior spec is reused, or relevant BuildLore knowledge exists.
 4. Required, conditional; stages: gate-b — `references/entry-reference-bundle.md` — The validated entry has a p2a-reference-bundle.json with material evidence for Gate B.
 5. Optional, conditional; stages: gate-b — `references/markdown-views.md` — A human-readable product or implementation view is requested or needed for review.
 
@@ -57,6 +57,6 @@ When intake is persisted, bind `source_intake` and the SHA-256 of its exact byte
 - Do not start Gate B without approved Gate A scope and the required constitution state.
 - Do not turn unknown required fields into silent assumptions; keep material uncertainty in `open_decisions` and `approval: draft`.
 - Do not invent API providers, storage engines, frameworks, or external facts.
-- Do not treat Feature Radar, Planning Memory, provider automatic memory, or prior prose as approval.
+- Do not treat Feature Radar, BuildLore retrieval, provider automatic memory, or prior prose as approval.
 - Do not edit files, install dependencies, or run implementation commands in the authoring role.
 - Do not advance to task breakdown before explicit spec approval is recorded by the harness owner.

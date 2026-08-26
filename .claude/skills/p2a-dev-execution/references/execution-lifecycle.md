@@ -40,13 +40,9 @@ p2a tasks ready --artifacts <dir>
 
 The envelope source hash, objective, scope, `mustPreserve`, non-goals, acceptance, verification, authority, and visual contract are canonical. The work item is only an ownership and recovery boundary.
 
-For a retry whose latest run is `failed` or `blocked`, inspect the failure class and localization before starting. When Memory is configured, perform one same-project hybrid search using the task title, failure class, and localization and save it beside the failed run as `<failed-run-id>.memory-recall.json`. Apply only materially similar evidence. After starting the retry, add:
+For a retry whose latest run is `failed` or `blocked`, inspect that local run's failure class, localization, and verification evidence before starting. If already-committed BuildLore knowledge is materially relevant, one explicit same-project search may supplement that evidence; apply only a clearly similar mitigation and cite the inspected knowledge source in the run notes. Do not synchronize, compile, commit, or publish BuildLore as an implicit retry step.
 
-```text
-MEMORY_RETRY: sourceRun=<id>; report=<path>; applied=<mitigation or none>; status=<succeeded|fallback|failed|skipped>
-```
-
-Do not query Memory for a normal first attempt. A failed or empty recall is not a blocker unless the approved contract explicitly requires it.
+Do not query BuildLore for a normal first attempt. Unavailable, empty, or fallback retrieval is not a blocker unless the approved contract explicitly requires historical knowledge.
 
 ## Start or resume the run
 
