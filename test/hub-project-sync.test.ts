@@ -226,13 +226,14 @@ describe('hub-bound project sync', () => {
   it('persists only approved placeholders for synthetic credential and JWT values', async () => {
     const current = await fixture();
     const secret = ['super', 'secret', 'value', '1234567890'].join('-');
+    const machinePath = '/opt/synthetic-buildlore/private/source.md';
     const jwt = [
       'eyJhbGciOiJIUzI1NiJ9',
       'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
       'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
     ].join('.');
     const sourceRoot = await registerProject(current, 'alpha', {
-      'docs/redacted.md': `# Redacted value\n\nAPI_KEY=${secret}\ntoken=${jwt}\n`,
+      'docs/redacted.md': `# Redacted value\n\nAPI_KEY=${secret}\ntoken=${jwt}\npath=${machinePath}\n`,
     });
     const sourcesRoot = join(current.knowledgeRoot, 'projects/alpha/sources');
     const sourceStatusBefore = await git(
@@ -258,14 +259,17 @@ describe('hub-bound project sync', () => {
     expect(targets).toHaveLength(1);
     const stored = await readFile(join(sourcesRoot, targets[0] as string), 'utf8');
     expect(stored).toContain('<REDACTED:CREDENTIAL>');
+    expect(stored).toContain('<ABSOLUTE_PATH>');
     expect(stored).not.toContain(secret);
     expect(stored).not.toContain(jwt);
+    expect(stored).not.toContain(machinePath);
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(JSON.stringify(result)).not.toContain(jwt);
     const diff = await diffFromEmpty(join(sourcesRoot, targets[0] as string));
     const snapshot = JSON.stringify({ diff, logged, result, stored });
     expect(snapshot).not.toContain(secret);
     expect(snapshot).not.toContain(jwt);
+    expect(snapshot).not.toContain(machinePath);
     expect(await git(sourceRoot, ['status', '--porcelain=v1', '--untracked-files=all']))
       .toBe(sourceStatusBefore);
   });
@@ -307,6 +311,29 @@ describe('hub-bound project sync', () => {
       },
     });
     expect(JSON.stringify((rejected as ProjectSyncError).toJSON())).not.toContain(unsafeValue);
+    expect(await readdir(sourcesRoot)).toEqual([]);
+  });
+
+  it('fails before writing when an absolute path overlaps a credential finding', async () => {
+    const current = await fixture();
+    const credential = ['sk-', 'A1b2C3d4E5f6G7h8J9k0', 'LmNoPqRs'].join('');
+    const machinePath = `D:\\synthetic-root\\${credential}\\notes.md`;
+    await registerProject(current, 'alpha', {
+      'docs/unsafe-path.md': `# Unsafe path\n\nlocation=${machinePath}\n`,
+    });
+    const sourcesRoot = join(current.knowledgeRoot, 'projects/alpha/sources');
+
+    const rejected = await createProjectSyncService().sync(input(current.hubRoot))
+      .catch((error: unknown) => error);
+
+    expect(rejected).toMatchObject({
+      code: 'SYNC_SANITIZATION_FAILED',
+      completedTargets: [],
+      failedPhase: 'sanitization',
+    });
+    const serialized = JSON.stringify(rejected);
+    expect(serialized).not.toContain(machinePath);
+    expect(serialized).not.toContain(credential);
     expect(await readdir(sourcesRoot)).toEqual([]);
   });
 

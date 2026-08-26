@@ -9,6 +9,7 @@ import {
   type CompilerBackend,
 } from '../src/compiler/index.js';
 import {
+  issueCompilerSecurityPermit,
   prepareCompilerEgress,
   verifyAndConsumeCompilerEgress,
 } from '../src/compiler/security.js';
@@ -491,5 +492,35 @@ describe('compiler production security gate', () => {
       item.workspace,
       { capability: 'search', projectId: 'alpha', question: 'Safe question' },
     )).rejects.toThrow('Compiler egress security preflight failed.');
+  });
+
+  it('rejects a v1 egress permit and accepts a freshly rescanned v2 permit', async () => {
+    const item = await fixture();
+    await writeSecurityPolicy(item.knowledgeRoot, 'alpha');
+    await writeCanonicalSource(item.workspace, 'Approved public security design.');
+    const request = { capability: 'compile' as const, projectId: 'alpha' };
+    const stale = issueCompilerSecurityPermit({
+      capability: request.capability,
+      manifestDigest: digest('stale-manifest'),
+      manifestSchemaVersion: 'buildlore.provider-input-manifest.v1',
+      policyDigest: digest('stale-policy'),
+      projectId: request.projectId,
+      rulesVersion: 'buildlore.sanitizer-rules.v1',
+    });
+
+    await expect(verifyAndConsumeCompilerEgress(
+      stale,
+      item.knowledgeRoot,
+      item.workspace,
+      request,
+    )).rejects.toThrow('Compiler egress security preflight failed.');
+
+    const fresh = await prepareCompilerEgress(item.knowledgeRoot, item.workspace, request);
+    await expect(verifyAndConsumeCompilerEgress(
+      fresh,
+      item.knowledgeRoot,
+      item.workspace,
+      request,
+    )).resolves.toBeUndefined();
   });
 });
