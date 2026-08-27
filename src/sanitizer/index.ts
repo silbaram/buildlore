@@ -1,4 +1,8 @@
-export { SecurityOperationError, type SecurityOperationErrorCode } from './errors.js';
+export {
+  SecurityOperationError,
+  type SecurityOperationErrorCode,
+  type SecurityPolicyFailureKind,
+} from './errors.js';
 export {
   classificationFor,
   defaultSecurityPolicy,

@@ -43,7 +43,8 @@ const PATH_TOKEN_TERMINATORS = new Set([
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const SAFE_SOURCE_PATTERN = /^[\u0020-\u007e]{1,4096}$/u;
 const PROJECT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-const TOKEN_PATTERN = /[A-Za-z0-9_+./=-]{20,512}/gu;
+const TOKEN_PATTERN = /(?<![A-Za-z0-9+.-])(?:https:\/\/[A-Za-z0-9_+./=%@-]{12,}|http:\/\/[A-Za-z0-9_+./=%@-]{13,})|[A-Za-z0-9_+./=-]{20,}/giu;
+const MAX_NEW_SAFE_ENTROPY_TOKEN_LENGTH = 128;
 const SOURCE_KINDS = new Set([
   'compiler-cache',
   'execution',
@@ -611,6 +612,62 @@ function shannonEntropy(value: string): number {
   return entropy;
 }
 
+function technicalIdentifierSegments(value: string): readonly string[] | null {
+  const segments: string[] = [];
+  let index = 0;
+  while (index < value.length) {
+    const rest = value.slice(index);
+    const capitalized = /^[A-Z][a-z]{1,15}(?=[A-Z0-9]|$)/u.exec(rest)?.[0];
+    const lowercase = /^[a-z]{2,16}(?=[A-Z0-9]|$)/u.exec(rest)?.[0];
+    const acronymBoundary = /^[A-Z]{2,8}(?=[A-Z][a-z])/u.exec(rest)?.[0];
+    const acronym = /^[A-Z]{2,8}(?=[0-9]|$)/u.exec(rest)?.[0];
+    const numericSuffix = /^[0-9]{1,4}D?(?=$)/u.exec(rest)?.[0];
+    const segment = capitalized ?? lowercase ?? acronymBoundary ?? acronym ?? numericSuffix;
+    if (segment === undefined) return null;
+    segments.push(segment);
+    index += segment.length;
+  }
+  return segments;
+}
+
+function safeTechnicalIdentifier(value: string): boolean {
+  if (value.length < 20 || value.length > MAX_NEW_SAFE_ENTROPY_TOKEN_LENGTH ||
+      !/^[A-Za-z][A-Za-z0-9]*$/u.test(value)) return false;
+  const segments = technicalIdentifierSegments(value);
+  if (segments === null || segments.length < 2 || segments.length > 12) return false;
+  const alphabetic = segments.filter((segment) => /^[A-Za-z]+$/u.test(segment));
+  return alphabetic.length >= 2 &&
+    alphabetic.some((segment) => /[a-z]/u.test(segment));
+}
+
+function safeEnvironmentVariableName(value: string): boolean {
+  if (value.length < 20 || value.length > MAX_NEW_SAFE_ENTROPY_TOKEN_LENGTH) return false;
+  const segments = value.split('_');
+  return segments.length >= 2 && segments.length <= 8 && segments.every((segment) =>
+    /^[A-Z][A-Z0-9]{0,15}$/u.test(segment) && !/[0-9][A-Z]/u.test(segment));
+}
+
+function safeTechnicalTaxonomy(value: string): boolean {
+  if (value.length < 20 || value.length > MAX_NEW_SAFE_ENTROPY_TOKEN_LENGTH ||
+      value.startsWith('/') || value.endsWith('/') || value.includes('//')) return false;
+  const segments = value.split('/');
+  if (segments.length < 2 || segments.length > 8) return false;
+  return segments.some((segment) => /[a-z]/u.test(segment)) && segments.every((segment) =>
+    /^(?:[a-z]{2,16}|[A-Z][a-z]{1,15}|[A-Z]{2,8})$/u.test(segment));
+}
+
+function safeCredentialFreeHttpUri(value: string): boolean {
+  if (value.length > MAX_NEW_SAFE_ENTROPY_TOKEN_LENGTH) return false;
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+      parsed.hostname.length > 0 && parsed.username === '' && parsed.password === '' &&
+      parsed.search === '' && parsed.hash === '';
+  } catch {
+    return false;
+  }
+}
+
 function safeEntropyToken(value: string): boolean {
   if (/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value) ||
       /^sha256:[a-f0-9]{64}$/u.test(value) ||
@@ -619,12 +676,16 @@ function safeEntropyToken(value: string): boolean {
       /^(?:[A-Za-z0-9._-]{1,64}\/)+[A-Za-z0-9._-]{1,64}\.(?:cjs|js|json|md|mjs|ts|tsx|yaml|yml)$/u.test(value) ||
       /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(value) ||
       /^<(?:HOME|WORKSPACE|REDACTED:CREDENTIAL)>$/u.test(value)) return true;
-  try {
-    const parsed = new URL(value);
-    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
-      parsed.username === '' && parsed.password === '' && parsed.search === '' && parsed.hash === '';
-  } catch {
-    return false;
+  return safeTechnicalIdentifier(value) || safeEnvironmentVariableName(value) ||
+    safeTechnicalTaxonomy(value) || safeCredentialFreeHttpUri(value);
+}
+
+function collectEntropyCandidate(state: ScanState, value: string): void {
+  if (value.length < 20) return;
+  const classCount = [/[a-z]/u, /[A-Z]/u, /[0-9]/u, /[_+./=-]/u]
+    .filter((pattern) => pattern.test(value)).length;
+  if (classCount >= 3 && shannonEntropy(value) >= 4 && !safeEntropyToken(value)) {
+    addFinding(state, { action: 'block', ruleId: 'entropy.candidate' });
   }
 }
 
@@ -633,11 +694,11 @@ function collectEntropyFindings(state: ScanState, body: string): void {
   let match = TOKEN_PATTERN.exec(body);
   while (match !== null) {
     const value = match[0];
-    const classCount = [/[a-z]/u, /[A-Z]/u, /[0-9]/u, /[_+./=-]/u]
-      .filter((pattern) => pattern.test(value)).length;
-    if (classCount >= 3 && shannonEntropy(value) >= 4 && !safeEntropyToken(value)) {
-      addFinding(state, { action: 'block', ruleId: 'entropy.candidate' });
-    }
+    const assignmentSeparator = value.indexOf('=');
+    const assignmentName = assignmentSeparator < 0 ? '' : value.slice(0, assignmentSeparator);
+    if (safeEnvironmentVariableName(assignmentName)) {
+      collectEntropyCandidate(state, value.slice(assignmentSeparator + 1));
+    } else collectEntropyCandidate(state, value);
     match = TOKEN_PATTERN.exec(body);
   }
 }

@@ -10,6 +10,7 @@ export default tseslint.config(
       '.codex/**',
       '.gemini/**',
       '.plan2agent/**',
+      '.test-tmp/**',
       'dist/**',
       'eslint.config.mjs',
       'node_modules/**',

@@ -1,5 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
+import { ESLint } from 'eslint';
 import { describe, expect, it } from 'vitest';
 
 interface PackageContract {
@@ -40,6 +42,33 @@ const approvedRuntimeDependencies = {
 } as const;
 
 describe('package contract', () => {
+  it('ignores only repository-root generated test residue in the lint configuration', async () => {
+    const eslintConfig = await readFile(
+      new URL('../eslint.config.mjs', import.meta.url),
+      'utf8',
+    );
+
+    expect(eslintConfig.match(/['"]\.test-tmp\/\*\*['"]/gu)).toHaveLength(1);
+    expect(eslintConfig).toContain("'.test-tmp/**'");
+    expect(eslintConfig).toContain("'node_modules/**'");
+    expect(eslintConfig).not.toMatch(/['"](?:src|test|scripts)\/\*\*['"]/gu);
+
+    const eslint = new ESLint({
+      cwd: fileURLToPath(new URL('../', import.meta.url)),
+    });
+    await expect(eslint.isPathIgnored(
+      '.test-tmp/buildlore-installed-cli-review/package/dist/index.js',
+    )).resolves.toBe(true);
+    for (const path of [
+      'src/sanitizer/service.ts',
+      'test/sanitizer-rules.test.ts',
+      'scripts/bootstrap-p2a.mjs',
+      '.other-generated/residue.ts',
+    ]) {
+      await expect(eslint.isPathIgnored(path)).resolves.toBe(false);
+    }
+  });
+
   it('pins the approved runtime and development toolchain exactly', async () => {
     const packageJson = JSON.parse(
       await readFile(new URL('../package.json', import.meta.url), 'utf8'),
