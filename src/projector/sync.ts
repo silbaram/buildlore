@@ -1,6 +1,7 @@
 import { posix } from 'node:path';
 
 import {
+  generatedSourceFilenameKind,
   SANITIZATION_REPORT_SCHEMA_VERSION,
   SANITIZER_RULES_VERSION,
   type SanitizationReport,
@@ -185,7 +186,7 @@ export class ProjectSyncError extends Error {
     this.code = code;
     this.completedTargets = Object.freeze(
       [...new Set(options.completedTargets ?? [])]
-        .filter((target) => TARGET_PATTERN.test(target))
+        .filter((target) => generatedSourceFilenameKind(target) !== null)
         .sort(),
     );
     this.failedPhase = options.failedPhase;
@@ -211,7 +212,6 @@ export class ProjectSyncError extends Error {
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const RULE_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
-const TARGET_PATTERN = /^(?:execution|markdown|planning)--[a-f0-9]{64}\.md$/u;
 const PLANNING_DECISIONS = new Set(['blocked', 'error', 'exclude', 'include', 'quarantine']);
 const EXECUTION_DECISIONS = new Set(['blocked', 'exclude', 'include', 'quarantine']);
 const WRITE_STATUSES = new Set(['create', 'unchanged', 'update']);
@@ -475,7 +475,7 @@ function summarizePlan(
     if (
       !/^[a-z0-9]+(?:[_-][a-z0-9]+)*$/u.test(entry.reasonCode) ||
       (entry.sourceRevision !== null && !DIGEST_PATTERN.test(entry.sourceRevision)) ||
-      (entry.target !== null && !TARGET_PATTERN.test(entry.target)) ||
+      (entry.target !== null && generatedSourceFilenameKind(entry.target) === null) ||
       (entry.writeStatus !== null && !WRITE_STATUSES.has(entry.writeStatus))
     ) {
       return fail('SYNC_PLAN_FAILED', failedPhase);
@@ -553,7 +553,8 @@ function writeSummaries(
     })),
   ];
   if (results.some((write) =>
-    !DIGEST_PATTERN.test(write.sourceRevision) || !TARGET_PATTERN.test(write.target) ||
+    !DIGEST_PATTERN.test(write.sourceRevision) ||
+    generatedSourceFilenameKind(write.target) === null ||
     !WRITE_STATUSES.has(write.writeStatus))) {
     fail('SYNC_APPLY_FAILED', 'execution-apply', { partial: true, recoveryAction: 'retry-sync' });
   }

@@ -4,6 +4,7 @@ import { link, lstat, open, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative } from 'node:path';
 
 import { syncDirectory } from '../knowledge/atomic-file.js';
+import { generatedSourceFilenameKind } from '../sanitizer/index.js';
 import { ProjectionError } from './errors.js';
 import type { ProjectionWriteStatus } from './planning-types.js';
 import {
@@ -13,8 +14,6 @@ import {
 } from './source-document.js';
 
 const MAX_TARGET_BYTES = 512 * 1024;
-const TARGET_PATTERN = /^(?:execution|markdown|planning)--[a-f0-9]{64}\.md$/u;
-
 export type ProjectSourceProducer = 'buildlore' | 'p2a';
 export type ProjectSourceKind = 'execution' | 'markdown' | 'planning';
 
@@ -102,8 +101,10 @@ function assertDerivedTarget(input: ProjectSourceInput): void {
   const expectedTarget = `${input.sourceKind}--${
     sha256(input.sourceUri).slice('sha256:'.length)
   }.md`;
+  const targetKind = generatedSourceFilenameKind(input.target);
   if (
-    !TARGET_PATTERN.test(input.target) ||
+    targetKind === null ||
+    targetKind !== input.sourceKind ||
     basename(input.target) !== input.target ||
     input.target !== expectedTarget
   ) {

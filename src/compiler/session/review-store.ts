@@ -12,6 +12,11 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { serializeCanonicalJson, syncDirectory, writeJsonAtomic } from '../../knowledge/atomic-file.js';
 import { parseJsonStrict } from '../../knowledge/strict-json.js';
+import {
+  generatedSourceFilenameKind,
+  isGeneratedIdentifier,
+  type GeneratedIdentifierPrefix,
+} from '../../sanitizer/index.js';
 import { compareSessionText, digestSessionValue, sessionSha256 } from './canonical.js';
 import { SESSION_COMPILE_LIMITS } from './contracts.js';
 import { SessionCompileError } from './errors.js';
@@ -28,10 +33,7 @@ import {
 import type { ValidatedSessionBatch, ValidatedSessionProposal } from './validator.js';
 
 const STORE_DIRECTORY = 'buildlore-session';
-const CANDIDATE_ID_PATTERN = /^candidate-[a-f0-9]{64}$/u;
 const UPSTREAM_CANDIDATE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,255}$/u;
-const SOURCE_ID_PATTERN = /^source-[a-f0-9]{64}$/u;
-const COMPILER_SOURCE_PATTERN = /^(?:markdown|planning)--[a-f0-9]{64}\.md$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const PAGE_ID_PATTERN = /^(?:concepts|queries|decisions|failures|verifications)\/[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const MAX_STORE_FILES = SESSION_COMPILE_LIMITS.maxProposals * 100;
@@ -104,6 +106,25 @@ function digest(value: unknown, projectId: string): SessionSha256Digest {
   return text(value, projectId, 71, DIGEST_PATTERN) as SessionSha256Digest;
 }
 
+function generatedIdentifier(
+  value: unknown,
+  projectId: string,
+  prefix: GeneratedIdentifierPrefix,
+): string {
+  const result = text(value, projectId, 128);
+  return isGeneratedIdentifier(result, prefix)
+    ? result
+    : fail('SESSION_CANDIDATE_STORE_INVALID', projectId);
+}
+
+function compilerSourceIdentifier(value: unknown, projectId: string): string {
+  const result = text(value, projectId, 96);
+  const kind = generatedSourceFilenameKind(result);
+  return kind === 'markdown' || kind === 'planning'
+    ? result
+    : fail('SESSION_CANDIDATE_STORE_INVALID', projectId);
+}
+
 function safeOriginalFile(value: unknown, projectId: string): string {
   const result = text(value, projectId, 512);
   if (result.startsWith('/') || result.startsWith('~') || result.includes('\\') ||
@@ -119,8 +140,8 @@ function compilerSource(value: unknown, projectId: string): SessionCompilerSourc
   exactKeys(value, ['compilerSourceContentDigest', 'compilerSourceId', 'sourceId'], [], projectId);
   return Object.freeze({
     compilerSourceContentDigest: digest(value.compilerSourceContentDigest, projectId),
-    compilerSourceId: text(value.compilerSourceId, projectId, 96, COMPILER_SOURCE_PATTERN),
-    sourceId: text(value.sourceId, projectId, 128, SOURCE_ID_PATTERN),
+    compilerSourceId: compilerSourceIdentifier(value.compilerSourceId, projectId),
+    sourceId: generatedIdentifier(value.sourceId, projectId, 'source'),
   });
 }
 
@@ -154,11 +175,11 @@ function citationBinding(value: unknown, projectId: string): SessionCitationBind
   return Object.freeze({
     citationId: text(value.citationId, projectId, 128, /^[a-z0-9][a-z0-9._-]{0,127}$/u),
     compilerSourceContentDigest: digest(value.compilerSourceContentDigest, projectId),
-    compilerSourceId: text(value.compilerSourceId, projectId, 96, COMPILER_SOURCE_PATTERN),
+    compilerSourceId: compilerSourceIdentifier(value.compilerSourceId, projectId),
     originalFile: safeOriginalFile(value.originalFile, projectId),
     originalLine: Number(value.originalLine),
     quoteDigest: digest(value.quoteDigest, projectId),
-    sourceId: text(value.sourceId, projectId, 128, SOURCE_ID_PATTERN),
+    sourceId: generatedIdentifier(value.sourceId, projectId, 'source'),
   });
 }
 
@@ -324,7 +345,7 @@ export function parseSessionReviewCandidate(
   }
   const candidate: SessionReviewCandidateV1 = Object.freeze({
     schemaVersion: SESSION_REVIEW_CANDIDATE_SCHEMA_VERSION,
-    candidateId: text(value.candidateId, expectedProjectId, 74, CANDIDATE_ID_PATTERN),
+    candidateId: generatedIdentifier(value.candidateId, expectedProjectId, 'candidate'),
     candidateDigest: digest(value.candidateDigest, expectedProjectId),
     projectId: expectedProjectId,
     profileMode,
@@ -421,7 +442,7 @@ export function parseSessionPromotionProof(
     schemaVersion: SESSION_PROMOTION_PROOF_SCHEMA_VERSION,
     proofDigest: digest(value.proofDigest, expectedProjectId),
     projectId: expectedProjectId,
-    candidateId: text(value.candidateId, expectedProjectId, 74, CANDIDATE_ID_PATTERN),
+    candidateId: generatedIdentifier(value.candidateId, expectedProjectId, 'candidate'),
     candidateDigest: digest(value.candidateDigest, expectedProjectId),
     pageId: text(value.pageId, expectedProjectId, 260, PAGE_ID_PATTERN),
     profileMode: value.profileMode,
@@ -698,7 +719,7 @@ export function createSessionReviewStore(
         compareSessionText(left.candidateId, right.candidateId)));
     },
     async claim(candidateId) {
-      if (!CANDIDATE_ID_PATTERN.test(candidateId)) {
+      if (!isGeneratedIdentifier(candidateId, 'candidate')) {
         fail('SESSION_CANDIDATE_NOT_FOUND', projectId);
       }
       const store = await existingStore(workspace, projectId);
@@ -754,7 +775,7 @@ export function createSessionReviewStore(
       }
     },
     async readProof(candidateId) {
-      if (!CANDIDATE_ID_PATTERN.test(candidateId)) return null;
+      if (!isGeneratedIdentifier(candidateId, 'candidate')) return null;
       const store = await existingStore(workspace, projectId);
       if (store === null) return null;
       const path = join(store.proofs, candidateName(candidateId));

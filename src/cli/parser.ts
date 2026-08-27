@@ -1,3 +1,4 @@
+import { isGeneratedIdentifier } from '../sanitizer/index.js';
 import type {
   CliCommandId,
   CliOperation,
@@ -389,7 +390,7 @@ function validateSessionCompileOptions(
 ): void {
   if (commandId === 'compile.approve') {
     const candidateId = values['--candidate'];
-    if (typeof candidateId !== 'string' || !/^candidate-[a-f0-9]{64}$/u.test(candidateId)) {
+    if (typeof candidateId !== 'string' || !isGeneratedIdentifier(candidateId, 'candidate')) {
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
     return;

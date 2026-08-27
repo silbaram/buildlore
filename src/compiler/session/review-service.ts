@@ -308,7 +308,7 @@ async function createSinglePageBundle(
   candidate: SessionReviewCandidateV1,
 ): Promise<Readonly<{ readonly parent: string; readonly root: string }>> {
   const parent = await mkdtemp(join(tmpdir(), 'buildlore-approve-'));
-  const root = join(parent, `bundle-${candidate.candidateId.slice('candidate-'.length)}`);
+  const root = join(parent, candidate.candidateId.slice('candidate-'.length));
   try {
     await mkdir(root, { mode: 0o700 });
     await exclusiveWrite(

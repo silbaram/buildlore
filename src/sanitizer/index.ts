@@ -13,6 +13,14 @@ export {
   type LoadedSecurityPolicy,
 } from './policy.js';
 export { MAX_SANITIZER_INPUT_BYTES, MAX_SECURITY_FINDINGS, SECURITY_RULES } from './rules.js';
+export {
+  GENERATED_IDENTIFIER_PREFIXES,
+  GENERATED_SOURCE_KINDS,
+  generatedSourceFilenameKind,
+  isGeneratedIdentifier,
+  type GeneratedIdentifierPrefix,
+  type GeneratedSourceKind,
+} from './generated-identifiers.js';
 export { createProjectSecurityService, sourceIdentitySha256 } from './service.js';
 export {
   SANITIZER_RULES_VERSION,

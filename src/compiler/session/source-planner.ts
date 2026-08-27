@@ -29,6 +29,7 @@ import {
 import { consumePreparedSource } from '../../sanitizer/approval.js';
 import {
   createProjectSecurityService,
+  generatedSourceFilenameKind,
   readSecurityPolicy,
   SANITIZER_RULES_VERSION,
   type LoadedSecurityPolicy,
@@ -219,7 +220,12 @@ async function assertStoredSource(
 }
 
 function compilerSourceId(candidate: CollectionCandidate, projectId: string): string {
-  if (!/^(?:markdown|planning)--[a-f0-9]{64}\.md$/u.test(candidate.target)) {
+  const sourceKind = generatedSourceFilenameKind(candidate.target);
+  if (
+    sourceKind === null ||
+    sourceKind === 'execution' ||
+    sourceKind !== candidate.sourceKind
+  ) {
     return denied(projectId);
   }
   return candidate.target;

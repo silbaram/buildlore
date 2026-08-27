@@ -2,6 +2,7 @@ import { validateProjectId } from '../../knowledge/validation.js';
 import { resolveProjectWorkspace } from '../../knowledge/paths.js';
 import { showProject } from '../../knowledge/workspace.js';
 import { createProfileBindingPreflight } from '../../profile/preflight.js';
+import { isGeneratedIdentifier } from '../../sanitizer/index.js';
 import { compareSessionText } from './canonical.js';
 import {
   readSessionCompileProposalFile,
@@ -118,7 +119,7 @@ function approveRequest(input: SessionCompileApproveRequest): Readonly<{
   }
   const projectId = validProjectId(input.projectId);
   if (typeof input.candidateId !== 'string' ||
-      !/^candidate-[a-f0-9]{64}$/u.test(input.candidateId)) {
+      !isGeneratedIdentifier(input.candidateId, 'candidate')) {
     throw new SessionCompileError('SESSION_CANDIDATE_NOT_FOUND', projectId);
   }
   return Object.freeze({ candidateId: input.candidateId, projectId });
