@@ -55,6 +55,20 @@ function providerToken(): string {
   return ['gh', 'p_', 'A1b2C3d4E5f6G7h8J9k0', 'LmNoPq'].join('');
 }
 
+function exactLengthTechnicalIdentifier(): string {
+  return [
+    'Abcdefghijklmnop',
+    'Bqrstuvwxyzabcde',
+    'Cfghijklmnopqrst',
+    'Duvwxyzabcdefghi',
+    'Ejklmnopqrstuvwx',
+    'Fyzabcdefghijklm',
+    'Gnopqrstuvwxyzab',
+    'Hcdefghijklmno',
+    '2D',
+  ].join('');
+}
+
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map(async (root) =>
     rm(root, { force: true, recursive: true })));
@@ -94,10 +108,10 @@ describe('deterministic sanitizer rules', () => {
     ]);
     expect(Object.isFrozen(SECURITY_RULES)).toBe(true);
     expect(SECURITY_RULES.every((rule) => Object.isFrozen(rule))).toBe(true);
-    expect(SANITIZER_RULES_VERSION).toBe('buildlore.sanitizer-rules.v2');
+    expect(SANITIZER_RULES_VERSION).toBe('buildlore.sanitizer-rules.v3');
   });
 
-  it('rejects a v1 approval and accepts a freshly rescanned v2 approval', async () => {
+  it('rejects a v2 approval and accepts a freshly rescanned v3 approval', async () => {
     const item = await fixture();
     const body = 'stable documentation body';
     const bodyDigest = sha256(body);
@@ -108,7 +122,7 @@ describe('deterministic sanitizer rules', () => {
       inputBodyDigest: bodyDigest,
       policyDigest: sha256('stale-policy'),
       projectId: 'alpha',
-      rulesVersion: 'buildlore.sanitizer-rules.v1',
+      rulesVersion: 'buildlore.sanitizer-rules.v2',
       source: 'buildlore://planning/example',
       sourceKind: 'planning',
       sourceRevisionOrContentSha256: sha256('revision'),
@@ -123,7 +137,7 @@ describe('deterministic sanitizer rules', () => {
       ok: true,
       report: { rulesVersion: SANITIZER_RULES_VERSION },
     });
-    if (!fresh.ok) throw new Error('expected fresh v2 approval');
+    if (!fresh.ok) throw new Error('expected fresh v3 approval');
     expect(consumePreparedSource(fresh.prepared)).toMatchObject({
       approvedBody: body,
       rulesVersion: SANITIZER_RULES_VERSION,
@@ -376,6 +390,167 @@ describe('deterministic sanitizer rules', () => {
       ]),
     );
   });
+
+  it.each([
+    'ferrumEngineCollisionPipeline2D',
+    'FerrumEngineAABBCollision2D',
+    'FERRUM_COLLISION_PIPELINE_MODE_V2',
+    'A_FERRUM_COLLISION_PIPELINE_MODE_V2',
+    'AABB/circle/polygon/collision',
+    'https://docs.example.test/ferrum/collisionPipeline2D',
+    exactLengthTechnicalIdentifier(),
+  ])('includes the bounded technical entropy token %s in every Markdown context', async (token) => {
+    const item = await fixture();
+    const service = createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot });
+    for (const body of [
+      `Technical token: ${token}`,
+      `Technical token: \`${token}\``,
+      ['```text', token, '```'].join('\n'),
+    ]) {
+      const result = await service.prepareSource(request(body));
+      expect(result).toMatchObject({ ok: true, report: { decision: 'include' } });
+      expect(result.report.summaries).not.toContainEqual(expect.objectContaining({
+        ruleId: 'entropy.candidate',
+      }));
+    }
+  });
+
+  it.each([
+    highEntropyCandidate(),
+    'AB12CD34_EF56GH78_IJ90KL12',
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ0_'.repeat(5),
+    highEntropyCandidate().repeat(5).slice(0, 129),
+    `Ferrum${'abcdefghijklmnopq'}2D`,
+    'AABB/circle/polygon/collision/segmentThatIsTooLong',
+    'aB3dE5fG7hJ9kL2mN4pQ6rS8T0vX+',
+    `https://${highEntropyCandidate()}@example.test/reference`,
+  ])('keeps the unsafe technical lookalike blocked: %s', async (token) => {
+    const item = await fixture();
+    const result = await createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot })
+      .prepareSource(request(`candidate=${token}`));
+    expect(result).toMatchObject({ ok: false, report: { decision: 'blocked' } });
+    expect(result.report.summaries).toContainEqual(expect.objectContaining({
+      ruleId: 'entropy.candidate',
+    }));
+  });
+
+  it('scans an environment name independently from benign and unsafe assignment values', async () => {
+    const item = await fixture();
+    const service = createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot });
+    const name = 'FERRUM_COLLISION_PIPELINE_MODE_V2';
+    const benignBody = `${name}=enabled`;
+    const benign = await service.prepareSource(request(benignBody));
+    expect(benign).toMatchObject({ ok: true, report: { decision: 'include' } });
+    if (!benign.ok) throw new Error('expected benign environment assignment');
+    expect(consumePreparedSource(benign.prepared)?.approvedBody).toBe(benignBody);
+    expect(benign.report.summaries).not.toContainEqual(expect.objectContaining({
+      ruleId: 'entropy.candidate',
+    }));
+
+    const secret = providerToken();
+    const credential = await service.prepareSource(request(`${name}=${secret}`));
+    expect(credential.ok).toBe(true);
+    if (!credential.ok) throw new Error('expected known credential redaction');
+    expect(consumePreparedSource(credential.prepared)?.approvedBody).not.toContain(secret);
+    expect(credential.report.summaries).toContainEqual(expect.objectContaining({
+      ruleId: 'credential.provider.github',
+    }));
+
+    const candidate = highEntropyCandidate();
+    const unsafe = await service.prepareSource(request(`${name}=${candidate}`));
+    expect(unsafe).toMatchObject({ ok: false, report: { decision: 'blocked' } });
+    expect(unsafe.report.summaries).toContainEqual(expect.objectContaining({
+      ruleId: 'entropy.candidate',
+    }));
+  });
+
+  it.each(['?', '#'] as const)(
+    'does not let an HTTP URI %s component hide a general entropy candidate',
+    async (separator) => {
+      const item = await fixture();
+      const candidate = highEntropyCandidate();
+      const suffix = separator === '?' ? `token=${candidate}` : candidate;
+      const result = await createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot })
+        .prepareSource(request(
+          `https://docs.example.test/ferrum/collisionPipeline2D${separator}${suffix}`,
+        ));
+      expect(result).toMatchObject({ ok: false, report: { decision: 'blocked' } });
+      expect(result.report.summaries).toContainEqual(expect.objectContaining({
+        ruleId: 'entropy.candidate',
+      }));
+    },
+  );
+
+  it.each(['prose', 'inline-code', 'fenced-code'] as const)(
+    'does not grant a credential, private-key, or entropy exemption in %s',
+    async (context) => {
+      const item = await fixture();
+      const service = createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot });
+      const wrap = (value: string): string => context === 'prose'
+        ? value
+        : context === 'inline-code'
+          ? `\`${value}\``
+          : ['```text', value, '```'].join('\n');
+      const secrets = {
+        anthropic: `sk-ant-${'A1b2C3d4E5f6G7h8J9k0LmNoPq'}`,
+        aws: `AKIA${'A1B2C3D4E5F6G7H8'}`,
+        github: providerToken(),
+        google: `AIza${'A1b2C3d4E5f6G7h8J9k0LmNoPqRsTuVw'}`,
+        jwt: ['Abcdefgh', 'Ijklmnop', 'Qrstuvwx'].join('.'),
+        npm: `npm_${'A1b2C3d4E5f6G7h8J9k0LmNo'}`,
+        openai: `sk-${'A1b2C3d4E5f6G7h8J9k0LmNo'}`,
+      };
+      const credentialBody = [
+        `ACCESS_TOKEN=${secrets.github}`,
+        `anthropic=${secrets.anthropic}`,
+        `aws=${secrets.aws}`,
+        `google=${secrets.google}`,
+        `jwt=${secrets.jwt}`,
+        `npm=${secrets.npm}`,
+        `openai=${secrets.openai}`,
+      ].join('\n');
+      const credential = await service.prepareSource(request(wrap(credentialBody)));
+      expect(['blocked', 'include']).toContain(credential.report.decision);
+      if (credential.ok) {
+        const approved = consumePreparedSource(credential.prepared)?.approvedBody ?? '';
+        for (const secret of Object.values(secrets)) expect(approved).not.toContain(secret);
+      }
+      expect(credential.report.summaries.map(({ ruleId }) => ruleId)).toEqual(
+        expect.arrayContaining([
+          'credential.environment',
+          'credential.jwt',
+          'credential.provider.anthropic',
+          'credential.provider.aws',
+          'credential.provider.github',
+          'credential.provider.google',
+          'credential.provider.npm',
+          'credential.provider.openai',
+        ]),
+      );
+
+      const privateKey = '-----BEGIN PRIVATE KEY-----';
+      const blockedKey = await service.prepareSource(request(wrap(privateKey)));
+      expect(blockedKey).toMatchObject({ ok: false, report: { decision: 'blocked' } });
+      expect(blockedKey.report.summaries).toContainEqual(expect.objectContaining({
+        ruleId: 'private-key.pem',
+      }));
+
+      const candidate = highEntropyCandidate();
+      const blockedEntropy = await service.prepareSource(request(wrap(
+        `FERRUM_COLLISION_PIPELINE_MODE_V2=${candidate}`,
+      )));
+      expect(blockedEntropy).toMatchObject({ ok: false, report: { decision: 'blocked' } });
+      expect(blockedEntropy.report.summaries).toContainEqual(expect.objectContaining({
+        ruleId: 'entropy.candidate',
+      }));
+      const diagnostics = JSON.stringify([
+        credential.report,
+        blockedKey.report,
+        blockedEntropy.report,
+      ]);
+      for (const secret of Object.values(secrets)) expect(diagnostics).not.toContain(secret);
+    },
+  );
 
   it('fails closed on ambiguous redaction overlap and entropy boundaries', async () => {
     const item = await fixture();

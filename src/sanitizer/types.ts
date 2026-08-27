@@ -1,4 +1,4 @@
-export const SANITIZER_RULES_VERSION = 'buildlore.sanitizer-rules.v2' as const;
+export const SANITIZER_RULES_VERSION = 'buildlore.sanitizer-rules.v3' as const;
 export const SANITIZATION_REPORT_SCHEMA_VERSION = 'buildlore.sanitization-report.v1' as const;
 export const SECURITY_POLICY_SCHEMA_VERSION = 'buildlore.security-policy.v1' as const;
 

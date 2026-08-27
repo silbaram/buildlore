@@ -190,6 +190,56 @@ describe('CLI presentation and exit taxonomy', () => {
     expect(rendered.message).not.toContain('"stack"');
   });
 
+  it.each(['invalid-content', 'noncanonical-format'] as const)(
+    'renders the value-free security policy failure kind %s in both output modes',
+    (policyFailureKind) => {
+      const error = new SecurityOperationError('SECURITY_POLICY_INVALID', {
+        policyFailureKind,
+        projectId: 'alpha',
+      });
+      Object.defineProperty(error, 'cause', {
+        value: new Error('must-not-be-reflected policy parser detail'),
+      });
+      const failure = mapCliError(error, { command: 'sync', projectId: 'alpha' });
+      const human = renderCliResult(failure, 'human');
+      const json = renderCliResult(failure, 'json');
+
+      expect(failure).toMatchObject({
+        data: { policyFailureKind },
+        errors: [{
+          code: 'SECURITY_POLICY_INVALID',
+          message: 'Security policy rejected the operation.',
+        }],
+        exitCode: 3,
+        ok: false,
+      });
+      expect(human.message).toContain(`"policyFailureKind": "${policyFailureKind}"`);
+      expect(json.message).toContain(`"policyFailureKind":"${policyFailureKind}"`);
+      expect(error.toJSON()).toEqual({
+        code: 'SECURITY_POLICY_INVALID',
+        policyFailureKind,
+        projectId: 'alpha',
+        ruleIds: [],
+      });
+      for (const rendered of [human, json]) {
+        expect(rendered.message).not.toContain('must-not-be-reflected');
+        expect(rendered.message).not.toContain('security-policy.json');
+        expect(rendered.message).not.toContain('SyntaxError');
+      }
+    },
+  );
+
+  it('keeps unsafe-file policy failures generic and subtype-free', () => {
+    const failure = mapCliError(
+      new SecurityOperationError('SECURITY_POLICY_INVALID', { projectId: 'alpha' }),
+      { command: 'sync', projectId: 'alpha' },
+    );
+
+    expect(failure.exitCode).toBe(3);
+    expect(failure.data).toBeUndefined();
+    expect(renderCliResult(failure, 'json').message).not.toContain('policyFailureKind');
+  });
+
   it.each([
     {
       error: new CompilerOperationError(

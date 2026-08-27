@@ -324,7 +324,12 @@ export function mapCliError(
     );
   }
   if (error instanceof SecurityOperationError) {
-    return baseFailure(context, 3, error.code, 'Security policy rejected the operation.');
+    const failure = baseFailure(context, 3, error.code, 'Security policy rejected the operation.');
+    if (error.policyFailureKind === undefined) return failure;
+    return Object.freeze({
+      ...failure,
+      data: Object.freeze({ policyFailureKind: error.policyFailureKind }),
+    });
   }
   if (error instanceof ProfileOperationError) {
     const runtimeFailure = error.code === 'PROFILE_APPLY_FAILED' ||

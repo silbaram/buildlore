@@ -7,8 +7,11 @@ export type SecurityOperationErrorCode =
   | 'SECURITY_PROMPT_INJECTION'
   | 'SECURITY_SECRET_SUSPECTED';
 
+export type SecurityPolicyFailureKind = 'invalid-content' | 'noncanonical-format';
+
 export class SecurityOperationError extends Error {
   readonly code: SecurityOperationErrorCode;
+  readonly policyFailureKind?: SecurityPolicyFailureKind;
   readonly projectId: string;
   readonly ruleIds: readonly string[];
   readonly sourceIdentitySha256?: string;
@@ -17,6 +20,7 @@ export class SecurityOperationError extends Error {
     code: SecurityOperationErrorCode,
     options: {
       readonly projectId: string;
+      readonly policyFailureKind?: SecurityPolicyFailureKind;
       readonly ruleIds?: readonly string[];
       readonly sourceIdentitySha256?: string;
     },
@@ -25,6 +29,9 @@ export class SecurityOperationError extends Error {
     this.name = 'SecurityOperationError';
     this.code = code;
     this.projectId = options.projectId;
+    if (code === 'SECURITY_POLICY_INVALID' && options.policyFailureKind !== undefined) {
+      this.policyFailureKind = options.policyFailureKind;
+    }
     this.ruleIds = Object.freeze([...(options.ruleIds ?? [])].sort());
     if (options.sourceIdentitySha256 !== undefined) {
       this.sourceIdentitySha256 = options.sourceIdentitySha256;
@@ -34,6 +41,9 @@ export class SecurityOperationError extends Error {
   toJSON(): Readonly<Record<string, unknown>> {
     return {
       code: this.code,
+      ...(this.policyFailureKind === undefined
+        ? {}
+        : { policyFailureKind: this.policyFailureKind }),
       projectId: this.projectId,
       ruleIds: this.ruleIds,
       ...(this.sourceIdentitySha256 === undefined

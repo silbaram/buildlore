@@ -61,6 +61,20 @@ function fail(projectId: string): never {
   throw new SecurityOperationError('SECURITY_POLICY_INVALID', { projectId });
 }
 
+function invalidContent(projectId: string): never {
+  throw new SecurityOperationError('SECURITY_POLICY_INVALID', {
+    policyFailureKind: 'invalid-content',
+    projectId,
+  });
+}
+
+function noncanonicalFormat(projectId: string): never {
+  throw new SecurityOperationError('SECURITY_POLICY_INVALID', {
+    policyFailureKind: 'noncanonical-format',
+    projectId,
+  });
+}
+
 function sha256(value: string): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
 }
@@ -85,25 +99,25 @@ function compareText(left: string, right: string): number {
 
 function parseClassification(value: unknown, projectId: string): DataClassification {
   if (typeof value !== 'string' || !CLASSIFICATIONS.has(value as DataClassification)) {
-    return fail(projectId);
+    return invalidContent(projectId);
   }
   return value as DataClassification;
 }
 
 function parseSourceKind(value: unknown, projectId: string): SecuritySourceKind {
   if (typeof value !== 'string' || !SOURCE_KINDS.has(value as SecuritySourceKind)) {
-    return fail(projectId);
+    return invalidContent(projectId);
   }
   return value as SecuritySourceKind;
 }
 
 function parseClassificationRule(value: unknown, projectId: string): SecurityClassificationRule {
   if (!isRecord(value) || !exactKeys(value, ['classification', 'sourceKind'], ['sourceIdentitySha256'])) {
-    return fail(projectId);
+    return invalidContent(projectId);
   }
   const identity = value.sourceIdentitySha256;
   if (identity !== undefined && (typeof identity !== 'string' || !SHA256_PATTERN.test(identity))) {
-    return fail(projectId);
+    return invalidContent(projectId);
   }
   return {
     classification: parseClassification(value.classification, projectId),
@@ -117,10 +131,12 @@ function parseEgressRule(value: unknown, projectId: string): SecurityEgressRule 
       !Array.isArray(value.allowedClassifications) || value.allowedClassifications.length > 2 ||
       typeof value.capability !== 'string' ||
       !EGRESS_CAPABILITIES.has(value.capability as SecurityEgressCapability)) {
-    return fail(projectId);
+    return invalidContent(projectId);
   }
   const allowed = value.allowedClassifications.map((item) => parseClassification(item, projectId));
-  if (allowed.includes('restricted') || new Set(allowed).size !== allowed.length) return fail(projectId);
+  if (allowed.includes('restricted') || new Set(allowed).size !== allowed.length) {
+    return invalidContent(projectId);
+  }
   return {
     allowedClassifications: [...allowed].sort() as Array<'internal' | 'public'>,
     capability: value.capability as SecurityEgressCapability,
@@ -179,7 +195,7 @@ function parseOverride(value: unknown, projectId: string): SecurityOverride {
       !PREFIXED_SHA256_PATTERN.test(value.sourceRevisionOrContentSha256) ||
       (value.auditRef !== undefined &&
         (typeof value.auditRef !== 'string' || !validAuditRef(value.auditRef)))) {
-    return fail(projectId);
+    return invalidContent(projectId);
   }
   return {
     ...(value.auditRef === undefined ? {} : { auditRef: value.auditRef }),
@@ -215,7 +231,7 @@ export function parseSecurityPolicy(value: unknown, expectedProjectId: string): 
       value.classificationRules.length > MAX_CLASSIFICATION_RULES ||
       !Array.isArray(value.egressRules) || value.egressRules.length > MAX_EGRESS_RULES ||
       !Array.isArray(value.overrides) || value.overrides.length > MAX_OVERRIDES) {
-    return fail(projectId);
+    return invalidContent(projectId);
   }
   const classificationRules = value.classificationRules.map((item) =>
     parseClassificationRule(item, projectId)).sort((left, right) => compareText(
@@ -237,7 +253,7 @@ export function parseSecurityPolicy(value: unknown, expectedProjectId: string): 
   if (new Set(classificationKeys).size !== classificationKeys.length ||
       new Set(egressKeys).size !== egressKeys.length ||
       new Set(overrideKeys).size !== overrideKeys.length) {
-    return fail(projectId);
+    return invalidContent(projectId);
   }
   return Object.freeze({
     schemaVersion: SECURITY_POLICY_SCHEMA_VERSION,
@@ -332,11 +348,16 @@ export async function readSecurityPolicy(
   try {
     decoded = JSON.parse(contents) as unknown;
   } catch {
-    return fail(canonicalProjectId);
+    if (!contents.startsWith('\ufeff')) return invalidContent(canonicalProjectId);
+    try {
+      decoded = JSON.parse(contents.slice(1)) as unknown;
+    } catch {
+      return invalidContent(canonicalProjectId);
+    }
   }
   const policy = parseSecurityPolicy(decoded, canonicalProjectId);
   const canonical = serializeSecurityPolicy(policy);
-  if (contents !== canonical) return fail(canonicalProjectId);
+  if (contents !== canonical) return noncanonicalFormat(canonicalProjectId);
   return { digest: sha256(canonical), policy, workspace };
 }
 

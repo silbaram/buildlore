@@ -9,6 +9,7 @@ import {
   parseSecurityPolicy,
   readSecurityPolicy,
   SECURITY_POLICY_SCHEMA_VERSION,
+  SecurityOperationError,
   serializeSecurityPolicy,
   type SecurityPolicy,
 } from '../src/sanitizer/index.js';
@@ -41,6 +42,18 @@ function allowedPolicy(): SecurityPolicy {
     ],
     overrides: [],
   };
+}
+
+async function rejectedSecurityError(
+  operation: () => Promise<unknown>,
+): Promise<SecurityOperationError> {
+  try {
+    await operation();
+  } catch (error) {
+    if (error instanceof SecurityOperationError) return error;
+    throw error;
+  }
+  throw new Error('expected security policy rejection');
 }
 
 afterEach(async () => {
@@ -157,6 +170,7 @@ describe('security policy', () => {
       await writeFile(path, bytes, 'utf8');
       await expect(readSecurityPolicy(item.knowledgeRoot, 'alpha')).rejects.toMatchObject({
         code: 'SECURITY_POLICY_INVALID',
+        policyFailureKind: 'noncanonical-format',
       });
     }
   });
@@ -165,6 +179,10 @@ describe('security policy', () => {
     {
       name: 'unknown field',
       value: { ...allowedPolicy(), unexpected: true },
+    },
+    {
+      name: 'wrong schema',
+      value: { ...allowedPolicy(), schemaVersion: 'buildlore.security-policy.v0' },
     },
     {
       name: 'wrong project',
@@ -304,11 +322,14 @@ describe('security policy', () => {
     })),
   ])('rejects $name without echoing policy values', ({ value }) => {
     expect(() => parseSecurityPolicy(value, 'alpha')).toThrowError(
-      expect.objectContaining({ code: 'SECURITY_POLICY_INVALID' }),
+      expect.objectContaining({
+        code: 'SECURITY_POLICY_INVALID',
+        policyFailureKind: 'invalid-content',
+      }),
     );
   });
 
-  it('rejects non-canonical and symlink policy files', async () => {
+  it('distinguishes invalid content from non-canonical bytes and unsafe files', async () => {
     const nonCanonical = await fixture();
     await writeFile(
       join(nonCanonical.workspace, 'security-policy.json'),
@@ -317,14 +338,55 @@ describe('security policy', () => {
     );
     await expect(readSecurityPolicy(nonCanonical.knowledgeRoot, 'alpha')).rejects.toMatchObject({
       code: 'SECURITY_POLICY_INVALID',
+      policyFailureKind: 'noncanonical-format',
     });
+
+    const malformed = await fixture();
+    await writeFile(
+      join(malformed.workspace, 'security-policy.json'),
+      '{"private-sentinel":"must-not-be-reflected"',
+      'utf8',
+    );
+    const malformedError = await rejectedSecurityError(async () =>
+      readSecurityPolicy(malformed.knowledgeRoot, 'alpha'));
+    expect(malformedError).toMatchObject({
+      code: 'SECURITY_POLICY_INVALID',
+      policyFailureKind: 'invalid-content',
+    });
+    expect(malformedError.toJSON()).toEqual({
+      code: 'SECURITY_POLICY_INVALID',
+      policyFailureKind: 'invalid-content',
+      projectId: 'alpha',
+      ruleIds: [],
+    });
+    expect(JSON.stringify(malformedError)).not.toContain('must-not-be-reflected');
 
     const linked = await fixture();
     const outside = join(linked.knowledgeRoot, 'outside-policy.json');
     await writeFile(outside, serializeSecurityPolicy(allowedPolicy()), 'utf8');
     await symlink(outside, join(linked.workspace, 'security-policy.json'));
-    await expect(readSecurityPolicy(linked.knowledgeRoot, 'alpha')).rejects.toMatchObject({
-      code: 'SECURITY_POLICY_INVALID',
-    });
+    const linkedError = await rejectedSecurityError(async () =>
+      readSecurityPolicy(linked.knowledgeRoot, 'alpha'));
+    expect(linkedError).toMatchObject({ code: 'SECURITY_POLICY_INVALID' });
+    expect(linkedError.policyFailureKind).toBeUndefined();
+    expect(JSON.stringify(linkedError)).not.toContain('outside-policy.json');
+
+    const oversized = await fixture();
+    await writeFile(
+      join(oversized.workspace, 'security-policy.json'),
+      'x'.repeat((256 * 1024) + 1),
+      'utf8',
+    );
+    const oversizedError = await rejectedSecurityError(async () =>
+      readSecurityPolicy(oversized.knowledgeRoot, 'alpha'));
+    expect(oversizedError).toMatchObject({ code: 'SECURITY_POLICY_INVALID' });
+    expect(oversizedError.policyFailureKind).toBeUndefined();
+
+    const nonRegular = await fixture();
+    await mkdir(join(nonRegular.workspace, 'security-policy.json'));
+    const nonRegularError = await rejectedSecurityError(async () =>
+      readSecurityPolicy(nonRegular.knowledgeRoot, 'alpha'));
+    expect(nonRegularError).toMatchObject({ code: 'SECURITY_POLICY_INVALID' });
+    expect(nonRegularError.policyFailureKind).toBeUndefined();
   });
 });
