@@ -108,10 +108,10 @@ describe('deterministic sanitizer rules', () => {
     ]);
     expect(Object.isFrozen(SECURITY_RULES)).toBe(true);
     expect(SECURITY_RULES.every((rule) => Object.isFrozen(rule))).toBe(true);
-    expect(SANITIZER_RULES_VERSION).toBe('buildlore.sanitizer-rules.v3');
+    expect(SANITIZER_RULES_VERSION).toBe('buildlore.sanitizer-rules.v4');
   });
 
-  it('rejects a v2 approval and accepts a freshly rescanned v3 approval', async () => {
+  it('rejects a v3 approval and accepts a freshly rescanned v4 approval', async () => {
     const item = await fixture();
     const body = 'stable documentation body';
     const bodyDigest = sha256(body);
@@ -122,7 +122,7 @@ describe('deterministic sanitizer rules', () => {
       inputBodyDigest: bodyDigest,
       policyDigest: sha256('stale-policy'),
       projectId: 'alpha',
-      rulesVersion: 'buildlore.sanitizer-rules.v2',
+      rulesVersion: 'buildlore.sanitizer-rules.v3',
       source: 'buildlore://planning/example',
       sourceKind: 'planning',
       sourceRevisionOrContentSha256: sha256('revision'),
@@ -137,7 +137,7 @@ describe('deterministic sanitizer rules', () => {
       ok: true,
       report: { rulesVersion: SANITIZER_RULES_VERSION },
     });
-    if (!fresh.ok) throw new Error('expected fresh v3 approval');
+    if (!fresh.ok) throw new Error('expected fresh v4 approval');
     expect(consumePreparedSource(fresh.prepared)).toMatchObject({
       approvedBody: body,
       rulesVersion: SANITIZER_RULES_VERSION,
@@ -413,6 +413,46 @@ describe('deterministic sanitizer rules', () => {
         ruleId: 'entropy.candidate',
       }));
     }
+  });
+
+  it.each([
+    `execution--${'0123456789abcdef'.repeat(4)}.md`,
+    `markdown--${'0123456789abcdef'.repeat(4)}.md`,
+    `planning--${'0123456789abcdef'.repeat(4)}.md`,
+    `anchor-${'0123456789abcdef'.repeat(4)}`,
+    `candidate-${'0123456789abcdef'.repeat(4)}`,
+    `merge-${'0123456789abcdef'.repeat(4)}`,
+    `source-${'0123456789abcdef'.repeat(4)}`,
+    `task-${'0123456789abcdef'.repeat(4)}`,
+  ])('includes the exact generated entropy token %s in every Markdown context', async (token) => {
+    const item = await fixture();
+    const service = createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot });
+    for (const body of [
+      `Generated token: ${token}`,
+      `Generated token: \`${token}\``,
+      ['```text', token, '```'].join('\n'),
+    ]) {
+      const result = await service.prepareSource(request(body));
+      expect(result).toMatchObject({ ok: true, report: { decision: 'include' } });
+      expect(result.report.summaries).not.toContainEqual(expect.objectContaining({
+        ruleId: 'entropy.candidate',
+      }));
+    }
+  });
+
+  it.each([
+    `markdown--${'0123456789abcdef'.repeat(4).slice(1)}.md`,
+    `markdown--${'0123456789abcdef'.repeat(4)}0.md`,
+    `markdown--${'0123456789abcdef'.repeat(4).toUpperCase()}.md`,
+    `source-${highEntropyCandidate()}`,
+  ])('keeps the generated-token lookalike blocked: %s', async (token) => {
+    const item = await fixture();
+    const result = await createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot })
+      .prepareSource(request(`candidate=${token}`));
+    expect(result).toMatchObject({ ok: false, report: { decision: 'blocked' } });
+    expect(result.report.summaries).toContainEqual(expect.objectContaining({
+      ruleId: 'entropy.candidate',
+    }));
   });
 
   it.each([

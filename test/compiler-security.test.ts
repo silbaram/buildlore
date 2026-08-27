@@ -494,7 +494,7 @@ describe('compiler production security gate', () => {
     )).rejects.toThrow('Compiler egress security preflight failed.');
   });
 
-  it('rejects a v2 egress permit and accepts a freshly rescanned v3 permit', async () => {
+  it('rejects a v3 egress permit and accepts a freshly rescanned v4 permit', async () => {
     const item = await fixture();
     await writeSecurityPolicy(item.knowledgeRoot, 'alpha');
     await writeCanonicalSource(item.workspace, 'Approved public security design.');
@@ -505,7 +505,7 @@ describe('compiler production security gate', () => {
       manifestSchemaVersion: 'buildlore.provider-input-manifest.v1',
       policyDigest: digest('stale-policy'),
       projectId: request.projectId,
-      rulesVersion: 'buildlore.sanitizer-rules.v2',
+      rulesVersion: 'buildlore.sanitizer-rules.v3',
     });
 
     await expect(verifyAndConsumeCompilerEgress(

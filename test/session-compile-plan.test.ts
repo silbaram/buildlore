@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  callerHarnessCompatibilityDigest,
   finalizeSessionCompilePlan,
+  proposalDigest,
   SESSION_COMPILE_CONTRACT_DIGEST,
   SESSION_COMPILE_LIMITS,
 } from '../src/compiler/session/contracts.js';
@@ -18,6 +20,8 @@ import { SessionCompileError } from '../src/compiler/session/errors.js';
 import {
   SESSION_COMPILE_ALGORITHM_VERSION,
   SESSION_COMPILE_PLAN_SCHEMA_VERSION,
+  SESSION_COMPILE_PROPOSAL_SCHEMA_VERSION,
+  type SessionCompileProposalV1,
   type SessionPlannedSource,
 } from '../src/compiler/session/types.js';
 import { sessionSha256 } from '../src/compiler/session/canonical.js';
@@ -37,6 +41,7 @@ import {
   selectDeclaredSourceFiles,
 } from '../src/projector/source-manifest.js';
 import { createSessionCompilePlanner } from '../src/compiler/session/source-planner.js';
+import { createProjectSessionCompilerForTest } from '../src/compiler/session/service.js';
 import { readSessionKnowledgeInventory } from '../src/compiler/session/inventory.js';
 import {
   prepareCompilerEgress,
@@ -48,6 +53,7 @@ import {
   readSecurityPolicy,
 } from '../src/sanitizer/index.js';
 import { consumePreparedSource } from '../src/sanitizer/approval.js';
+import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 
 const DIGEST = `sha256:${'a'.repeat(64)}` as const;
 
@@ -518,8 +524,201 @@ describe('session compile deterministic plan', () => {
       ]);
       expect(await directoryDigest(workspace)).toBe(before);
 
+      const compiler = createProjectSessionCompilerForTest({
+        hubRoot,
+        knowledgeRoot,
+        planner,
+      });
+      const completeRoundTrip = async (slug: string): Promise<string> => {
+        const sessionStep = async <T>(label: string, operation: Promise<T>): Promise<T> => {
+          try {
+            return await operation;
+          } catch (error) {
+            const code = typeof error === 'object' && error !== null && 'code' in error &&
+              typeof error.code === 'string'
+              ? error.code
+              : 'unknown';
+            throw new Error(
+              `Session round-trip ${label} failed with ${code} after ${phases.at(-1) ?? 'start'}.`,
+              { cause: error },
+            );
+          }
+        };
+        const activePlan = await sessionStep(
+          'initial-plan',
+          compiler.plan({ projectId: 'alpha' }),
+        );
+        const activeSource = activePlan.sources[0];
+        const activeTask = activePlan.tasks[0];
+        const citation = activeSource?.citationAnchors.find((anchor) =>
+          anchor.quote === 'Original public evidence.');
+        if (activeSource === undefined || activeTask === undefined || citation === undefined) {
+          throw new Error('missing round-trip plan evidence');
+        }
+        const draft: SessionCompileProposalV1 = {
+          schemaVersion: SESSION_COMPILE_PROPOSAL_SCHEMA_VERSION,
+          projectId: 'alpha',
+          planDigest: activePlan.planDigest,
+          proposalId: `proposal-${slug}`,
+          proposalDigest: DIGEST,
+          taskId: activeTask.taskId,
+          mergeCandidateIds: [],
+          pageId: `concepts/${slug}`,
+          slug,
+          title: `Session ${slug}`,
+          kind: 'concept',
+          summary: 'A locally verified generated-identifier round trip.',
+          body: 'Original public evidence.[^evidence]',
+          sources: [activeSource.sourceId],
+          wikilinks: [],
+          citations: [{
+            file: citation.originalFile,
+            id: 'evidence',
+            line: citation.originalLine,
+            quote: citation.quote,
+            sourceId: citation.sourceId,
+          }],
+          confidence: 1,
+          callerHarness: {
+            compatibilityDigest: callerHarnessCompatibilityDigest('codex', '1.0.0'),
+            kind: 'codex',
+            version: '1.0.0',
+          },
+        };
+        const proposal = Object.freeze({ ...draft, proposalDigest: proposalDigest(draft) });
+        const proposalPath = join(knowledgeRoot, `${slug}.proposal.json`);
+        await writeFile(proposalPath, serializeCanonicalJson(proposal), 'utf8');
+
+        const applied = await sessionStep('apply', compiler.apply({
+            projectId: 'alpha',
+            proposalFiles: [proposalPath],
+          }));
+        const candidateId = applied.candidateRefs[0];
+        if (candidateId === undefined) throw new Error('missing staged candidate');
+        const pendingPath = join(
+          workspace,
+          '.llmwiki',
+          'buildlore-session',
+          'pending',
+          `${candidateId}.json`,
+        );
+        const candidateBody = await readFile(pendingPath, 'utf8');
+        const candidateDigest = sessionSha256(candidateBody);
+        const candidateSecurity = await createProjectSecurityService({ knowledgeRoot })
+          .prepareSource({
+            body: candidateBody,
+            bodyDigest: candidateDigest,
+            projectId: 'alpha',
+            source: `buildlore://compiler-cache/${candidateId}`,
+            sourceKind: 'compiler-cache',
+            sourceRevisionOrContentSha256: candidateDigest,
+          });
+        expect(candidateSecurity).toMatchObject({ ok: true, report: { decision: 'include' } });
+        expect(candidateSecurity.report.summaries).not.toContainEqual(expect.objectContaining({
+          ruleId: 'entropy.candidate',
+        }));
+
+        await expect(sessionStep(
+          'candidate-containing-plan',
+          compiler.plan({ projectId: 'alpha' }),
+        )).resolves.toMatchObject({
+          projectId: 'alpha',
+        });
+        await expect(sessionStep(
+          'candidate-list',
+          compiler.candidates({ projectId: 'alpha' }),
+        )).resolves.toMatchObject({
+          candidates: [{ candidateId, lifecycle: 'pending', slug }],
+        });
+        await expect(sessionStep(
+          'approve',
+          compiler.approve({ candidateId, projectId: 'alpha' }),
+        )).resolves.toMatchObject({
+          candidateId,
+          outcome: 'approved',
+          pageId: `concepts/${slug}`,
+          providerUsed: false,
+        });
+        await expect(readFile(join(workspace, 'wiki', 'concepts', `${slug}.md`), 'utf8'))
+          .resolves.toContain('Original public evidence.');
+        await expect(readFile(join(
+          workspace,
+          '.llmwiki',
+          'buildlore-session',
+          'proofs',
+          `${candidateId}.json`,
+        ), 'utf8')).resolves.toContain(candidateId);
+        await expect(sessionStep(
+          'empty-candidate-list',
+          compiler.candidates({ projectId: 'alpha' }),
+        )).resolves.toMatchObject({
+          candidates: [],
+        });
+        return candidateId;
+      };
+
+      const firstCandidate = await completeRoundTrip('generated-round-trip-one');
+      const generatedSecurityFailures: Array<Readonly<{
+        readonly decision: string;
+        readonly findingCount: number;
+        readonly outputChanged: boolean;
+        readonly path: string;
+        readonly rules: readonly string[];
+      }>> = [];
+      for (const [directory, sourceKind] of [
+        ['wiki', 'wiki'],
+        ['.llmwiki', 'compiler-cache'],
+      ] as const) {
+        const pendingDirectories: Array<Readonly<{ path: string; relative: string }>> = [
+          { path: join(workspace, directory), relative: directory },
+        ];
+        while (pendingDirectories.length > 0) {
+          const current = pendingDirectories.pop();
+          if (current === undefined) break;
+          for (const entry of await readdir(current.path, { withFileTypes: true })) {
+            const path = join(current.path, entry.name);
+            const relativePath = `${current.relative}/${entry.name}`;
+            if (entry.isDirectory()) {
+              pendingDirectories.push({ path, relative: relativePath });
+              continue;
+            }
+            if (!entry.isFile()) continue;
+            const body = await readFile(path, 'utf8');
+            const bodyDigest = sessionSha256(body);
+            const result = await createProjectSecurityService({ knowledgeRoot }).prepareSource({
+              body,
+              bodyDigest,
+              projectId: 'alpha',
+              source: `buildlore://${sourceKind}/${sessionSha256(relativePath).slice('sha256:'.length)}`,
+              sourceKind,
+              sourceRevisionOrContentSha256: bodyDigest,
+            });
+            if (!result.ok || result.report.outputDigest !== bodyDigest) {
+              generatedSecurityFailures.push(Object.freeze({
+                decision: result.report.decision,
+                findingCount: result.report.summaries.reduce(
+                  (total, { count }) => total + count,
+                  0,
+                ),
+                outputChanged: result.report.outputDigest !== bodyDigest,
+                path: relativePath,
+                rules: Object.freeze(result.report.summaries.map(({ ruleId }) => ruleId)),
+              }));
+            }
+          }
+        }
+      }
+      expect(generatedSecurityFailures).toEqual([]);
+      const secondCandidate = await completeRoundTrip('generated-round-trip-two');
+      expect(secondCandidate).not.toBe(firstCandidate);
+      const roundTripPlan = await planner.create('alpha');
+      expect(roundTripPlan.plan.allowedLinkTargets).toEqual(expect.arrayContaining([
+        { pageId: 'concepts/generated-round-trip-one', slug: 'generated-round-trip-one' },
+        { pageId: 'concepts/generated-round-trip-two', slug: 'generated-round-trip-two' },
+      ]));
+
       await mkdir(join(workspace, '.llmwiki', 'candidates', 'archive'), { recursive: true });
-      expect((await planner.create('alpha')).plan).toEqual(first.plan);
+      expect((await planner.create('alpha')).plan).toEqual(roundTripPlan.plan);
       await writeFile(join(workspace, 'wiki', 'rogue.md'), '# Rogue page\n', 'utf8');
       await expect(planner.create('alpha')).rejects.toMatchObject({
         code: 'SESSION_PLAN_DENIED',
@@ -591,5 +790,5 @@ describe('session compile deterministic plan', () => {
       await Promise.all([hubRoot, sourceRoot].map(async (root) =>
         rm(root, { force: true, recursive: true })));
     }
-  });
+  }, 20_000);
 });

@@ -230,7 +230,7 @@ async function createBundle(
   const parent = await mkdtemp(join(tmpdir(), 'buildlore-session-'));
   try {
     const canonicalParent = await realpath(parent);
-    const root = join(canonicalParent, 'bundle-' + batch.batchDigest.slice('sha256:'.length));
+    const root = join(canonicalParent, batch.batchDigest.slice('sha256:'.length));
     await mkdir(root, { mode: 0o700 });
     await exclusiveWrite(join(root, 'index.md'), okfIndex());
     for (const page of batch.pages) {

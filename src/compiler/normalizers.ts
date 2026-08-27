@@ -2,6 +2,7 @@ import { basename, isAbsolute, posix } from 'node:path';
 
 import { KnowledgeError } from '../knowledge/errors.js';
 import type { CompilerChangeStatus, CompilerPendingChange } from '../knowledge/types.js';
+import { isGeneratedIdentifier } from '../sanitizer/index.js';
 import { CompilerOperationError } from './errors.js';
 import type {
   CompileSummary,
@@ -875,7 +876,7 @@ export function validateCompilerRequest(request: unknown): asserts request is Co
   if (
     capability === 'approve' &&
     (typeof request.candidateId !== 'string' ||
-      !/^candidate-[a-f0-9]{64}$/u.test(request.candidateId))
+      !isGeneratedIdentifier(request.candidateId, 'candidate'))
   ) {
     throw configInputError(request);
   }

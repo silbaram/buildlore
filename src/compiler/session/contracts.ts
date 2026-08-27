@@ -4,6 +4,10 @@ import { lstat, open } from 'node:fs/promises';
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
 import { decodeUtf8Strict, parseJsonStrict } from '../../knowledge/strict-json.js';
 import { validateProjectId } from '../../knowledge/validation.js';
+import {
+  isGeneratedIdentifier,
+  type GeneratedIdentifierPrefix,
+} from '../../sanitizer/index.js';
 import { SessionCompileError } from './errors.js';
 import { canonicalSessionJson, compareSessionText, digestSessionValue } from './canonical.js';
 import {
@@ -123,6 +127,15 @@ function digest(value: unknown, projectId: string): SessionSha256Digest {
   return text(value, projectId, { max: 71, pattern: DIGEST_PATTERN }) as SessionSha256Digest;
 }
 
+function generatedIdentifier(
+  value: unknown,
+  projectId: string,
+  prefix: GeneratedIdentifierPrefix,
+): string {
+  const result = text(value, projectId, { max: 128 });
+  return isGeneratedIdentifier(result, prefix) ? result : invalid(projectId);
+}
+
 function finiteNumber(
   value: unknown,
   projectId: string,
@@ -149,6 +162,25 @@ function stringArray(
     max: 128,
     pattern: options.pattern,
   }));
+  const sorted = [...result].sort(compareSessionText);
+  if (new Set(result).size !== result.length || result.some((item, index) => item !== sorted[index])) {
+    return invalid(projectId);
+  }
+  return Object.freeze(result);
+}
+
+function generatedIdentifierArray(
+  value: unknown,
+  projectId: string,
+  options: {
+    readonly max: number;
+    readonly prefix: GeneratedIdentifierPrefix;
+    readonly requireNonEmpty?: boolean;
+  },
+): readonly string[] {
+  if (!Array.isArray(value) || value.length > options.max ||
+      (options.requireNonEmpty === true && value.length === 0)) return invalid(projectId);
+  const result = value.map((item) => generatedIdentifier(item, projectId, options.prefix));
   const sorted = [...result].sort(compareSessionText);
   if (new Set(result).size !== result.length || result.some((item, index) => item !== sorted[index])) {
     return invalid(projectId);
@@ -195,7 +227,7 @@ function parseCitation(value: unknown, projectId: string): SessionProposalCitati
       min: 1,
     }),
     quote,
-    sourceId: text(citation.sourceId, projectId, { max: 128, pattern: /^source-[a-f0-9]{64}$/u }),
+    sourceId: generatedIdentifier(citation.sourceId, projectId, 'source'),
   });
 }
 
@@ -327,10 +359,10 @@ export function parseSessionCompileProposal(
     planDigest: digest(proposal.planDigest, projectId),
     proposalId: text(proposal.proposalId, projectId, { max: 128, pattern: SAFE_ID_PATTERN }),
     proposalDigest: digest(proposal.proposalDigest, projectId),
-    taskId: text(proposal.taskId, projectId, { max: 128, pattern: /^task-[a-f0-9]{64}$/u }),
-    mergeCandidateIds: stringArray(proposal.mergeCandidateIds, projectId, {
+    taskId: generatedIdentifier(proposal.taskId, projectId, 'task'),
+    mergeCandidateIds: generatedIdentifierArray(proposal.mergeCandidateIds, projectId, {
       max: SESSION_COMPILE_LIMITS.maxMergeCandidates,
-      pattern: /^merge-[a-f0-9]{64}$/u,
+      prefix: 'merge',
     }),
     pageId: text(proposal.pageId, projectId, { max: 260 }),
     slug,
@@ -338,9 +370,9 @@ export function parseSessionCompileProposal(
     kind,
     summary: text(proposal.summary, projectId, { max: 4_000 }),
     body: text(proposal.body, projectId, { max: 100_000 }),
-    sources: stringArray(proposal.sources, projectId, {
+    sources: generatedIdentifierArray(proposal.sources, projectId, {
       max: SESSION_COMPILE_LIMITS.maxSources,
-      pattern: /^source-[a-f0-9]{64}$/u,
+      prefix: 'source',
       requireNonEmpty: true,
     }),
     wikilinks: stringArray(proposal.wikilinks, projectId, {

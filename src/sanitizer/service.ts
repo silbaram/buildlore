@@ -4,6 +4,10 @@ import { homedir } from 'node:os';
 import { issuePreparedSource } from './approval.js';
 import { SecurityOperationError } from './errors.js';
 import {
+  generatedSourceFilenameKind,
+  isGeneratedIdentifier,
+} from './generated-identifiers.js';
+import {
   classificationFor,
   readSecurityPolicy,
   type LoadedSecurityPolicy,
@@ -671,7 +675,8 @@ function safeCredentialFreeHttpUri(value: string): boolean {
 function safeEntropyToken(value: string): boolean {
   if (/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value) ||
       /^sha256:[a-f0-9]{64}$/u.test(value) ||
-      /^(?:execution|planning)--[a-f0-9]{64}\.md$/u.test(value) ||
+      generatedSourceFilenameKind(value) !== null ||
+      isGeneratedIdentifier(value) ||
       /^run-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-task-[a-z0-9-]+$/u.test(value) ||
       /^(?:[A-Za-z0-9._-]{1,64}\/)+[A-Za-z0-9._-]{1,64}\.(?:cjs|js|json|md|mjs|ts|tsx|yaml|yml)$/u.test(value) ||
       /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(value) ||
