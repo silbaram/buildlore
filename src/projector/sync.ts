@@ -124,12 +124,21 @@ export interface ProjectSyncWriteSummary {
   readonly writeStatus: 'create' | 'unchanged' | 'update';
 }
 
-export interface ProjectSyncWarning {
+export interface ProjectSyncCompatibilityWarning {
   readonly code: P2aCompatibilityWarningCode;
   readonly fieldName?: string;
   readonly sourceKind: 'planning';
   readonly sourceRef: string;
 }
+
+export interface ProjectSyncRedactionWarning {
+  readonly code: 'sanitization-redaction-applied';
+  readonly occurrenceCount: number;
+  readonly ruleId: string;
+  readonly sourceCount: number;
+}
+
+export type ProjectSyncWarning = ProjectSyncCompatibilityWarning | ProjectSyncRedactionWarning;
 
 export interface ProjectSyncSummary {
   readonly appliedCount: number;
@@ -379,12 +388,12 @@ function planningSummary(plan: ProjectionPlan, projectId: string): ProjectSyncPl
 function planningWarnings(
   plan: ProjectionPlan,
   projectId: string,
-): readonly ProjectSyncWarning[] {
+): readonly ProjectSyncCompatibilityWarning[] {
   const rawWarnings: unknown = plan.compatibilityWarnings;
   if (!Array.isArray(rawWarnings) || rawWarnings.length > 32) {
     return fail('SYNC_PLAN_FAILED', 'planning-plan');
   }
-  const warnings = rawWarnings.map((warning: unknown): ProjectSyncWarning => {
+  const warnings = rawWarnings.map((warning: unknown): ProjectSyncCompatibilityWarning => {
     if (
       typeof warning !== 'object' || warning === null || Array.isArray(warning) ||
       Object.keys(warning).some((key) =>

@@ -11,6 +11,7 @@ import {
   type PlanningProjectorPort,
   type ProjectionPlan,
 } from '../src/projector/index.js';
+import { buildProjectSyncRedactionWarnings } from '../src/projector/sync-sanitization-diagnostics.js';
 import {
   SANITIZATION_REPORT_SCHEMA_VERSION,
   SANITIZER_RULES_VERSION,
@@ -159,6 +160,39 @@ function ports(options: {
 }
 
 describe('project sync orchestration', () => {
+  it('fails closed for malformed or overflowing redaction aggregates', () => {
+    const report = securityReport('include');
+    const inputFor = (reports: readonly SanitizationReport[]) => [{
+      reports,
+      sourceIdentitySha256: report.sourceIdentitySha256,
+      sourceKind: 'planning' as const,
+      sourceRef: 'current-spec.json',
+    }];
+    const malformed = {
+      ...report,
+      summaries: [{
+        action: 'block',
+        count: 1,
+        overriddenCount: 0,
+        ruleId: 'path.absolute',
+      }],
+    } as SanitizationReport;
+    const overflowing = {
+      ...report,
+      summaries: [{
+        action: 'redact',
+        count: Number.MAX_SAFE_INTEGER,
+        overriddenCount: 0,
+        ruleId: 'path.absolute',
+      }],
+    } as SanitizationReport;
+    const findingsOverflow = { ...report, findingsOverflow: true };
+
+    expect(buildProjectSyncRedactionWarnings(inputFor([malformed]))).toBeNull();
+    expect(buildProjectSyncRedactionWarnings(inputFor([overflowing, overflowing]))).toBeNull();
+    expect(buildProjectSyncRedactionWarnings(inputFor([findingsOverflow]))).toBeNull();
+  });
+
   it('returns deterministic dry-run summaries only after both sanitized plans complete', async () => {
     const events: string[] = [];
     const service = createProjectSyncService(ports({ events }));

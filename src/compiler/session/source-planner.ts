@@ -90,8 +90,11 @@ export type SessionCompilePlannerPhase =
   | 'source-stored-verified'
   | 'sources-verified';
 
-function denied(projectId: string): never {
-  throw new SessionCompileError('SESSION_PLAN_DENIED', projectId);
+function denied(
+  projectId: string,
+  recoveryAction: SessionCompileError['recoveryAction'] = 'check-config',
+): never {
+  throw new SessionCompileError('SESSION_PLAN_DENIED', projectId, { recoveryAction });
 }
 
 async function sanitizeCandidateText(
@@ -210,9 +213,9 @@ async function assertStoredSource(
   }
   if (
     renderSourceDocument(document) !== raw ||
-    renderSourceDocument(expected) !== raw ||
     document.buildlore.contentHash !== sessionSha256(document.body)
   ) return denied(projectId);
+  if (renderSourceDocument(expected) !== raw) return denied(projectId, 'sync');
   return Object.freeze({
     body: document.body,
     contentDigest: sessionSha256(raw),

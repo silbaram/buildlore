@@ -1,6 +1,8 @@
 import { isAbsolute, posix, win32 } from 'node:path';
 
 import {
+  SANITIZATION_REPORT_SCHEMA_VERSION,
+  SANITIZER_RULES_VERSION,
   SECURITY_RULES,
   type SanitizationReport,
   type SecurityFindingAction,
@@ -10,6 +12,7 @@ import type {
   ProjectSyncSanitizationDiagnostics,
   ProjectSyncSanitizationRuleSummary,
   ProjectSyncSanitizationSource,
+  ProjectSyncRedactionWarning,
 } from './sync.js';
 
 export const MAX_SYNC_SANITIZATION_DIAGNOSTIC_SOURCES = 32;
@@ -208,6 +211,53 @@ export function buildProjectSyncSanitizationDiagnostics(
     summaries: input.reports.flatMap((report) =>
       report.sourceIdentitySha256 === input.sourceIdentitySha256 ? report.summaries : []),
   })));
+}
+
+export function buildProjectSyncRedactionWarnings(
+  inputs: readonly SyncSanitizationDiagnosticInput[],
+): readonly ProjectSyncRedactionWarning[] | null {
+  const aggregates = new Map<string, {
+    occurrenceCount: number;
+    readonly sources: Set<string>;
+  }>();
+  for (const input of inputs) {
+    if (!DIGEST_PATTERN.test(input.sourceIdentitySha256) || !SOURCE_KINDS.has(input.sourceKind)) {
+      return null;
+    }
+    const sourceKey = `${input.sourceKind}:${input.sourceIdentitySha256}`;
+    for (const report of input.reports) {
+      if (
+        report.decision !== 'include' || report.findingsOverflow ||
+        report.rulesVersion !== SANITIZER_RULES_VERSION ||
+        report.schemaVersion !== SANITIZATION_REPORT_SCHEMA_VERSION ||
+        report.sourceIdentitySha256 !== input.sourceIdentitySha256
+      ) return null;
+      for (const rawSummary of report.summaries) {
+        const summary = safeSummary(rawSummary);
+        if (summary === null) return null;
+        if (summary.action !== 'redact') continue;
+        const occurrenceCount = summary.count - summary.overriddenCount;
+        if (occurrenceCount === 0) continue;
+        let aggregate = aggregates.get(summary.ruleId);
+        if (aggregate === undefined) {
+          aggregate = { occurrenceCount: 0, sources: new Set() };
+          aggregates.set(summary.ruleId, aggregate);
+        }
+        const nextCount = aggregate.occurrenceCount + occurrenceCount;
+        if (!Number.isSafeInteger(nextCount) || nextCount <= 0) return null;
+        aggregate.occurrenceCount = nextCount;
+        aggregate.sources.add(sourceKey);
+      }
+    }
+  }
+  return Object.freeze([...aggregates.entries()]
+    .sort(([left], [right]) => compareText(left, right))
+    .map(([ruleId, aggregate]) => Object.freeze({
+      code: 'sanitization-redaction-applied' as const,
+      occurrenceCount: aggregate.occurrenceCount,
+      ruleId,
+      sourceCount: aggregate.sources.size,
+    })));
 }
 
 export function normalizeProjectSyncSanitizationDiagnostics(

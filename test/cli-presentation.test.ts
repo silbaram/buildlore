@@ -96,6 +96,34 @@ describe('CLI presentation and exit taxonomy', () => {
     });
   });
 
+  it('preserves multiple structured warnings that share a discriminator', () => {
+    const result: CliSuccessResult = {
+      command: 'sync',
+      data: { partial: true },
+      exitCode: 0,
+      ok: true,
+      partial: true,
+      projectId: 'alpha',
+      warnings: [
+        {
+          code: 'sanitization-redaction-applied',
+          message: 'Sanitizer rule credential.provider.openai redacted 2 occurrence(s) across 2 source(s).',
+        },
+        {
+          code: 'sanitization-redaction-applied',
+          message: 'Sanitizer rule path.absolute redacted 4 occurrence(s) across 2 source(s).',
+        },
+      ],
+    };
+
+    const human = renderCliResult(result, 'human').message;
+    const json = JSON.parse(renderCliResult(result, 'json').message) as {
+      readonly warnings: readonly { readonly message: string }[];
+    };
+    expect(json.warnings).toHaveLength(2);
+    expect(human.match(/warning sanitization-redaction-applied:/gu)).toHaveLength(2);
+  });
+
   it('[V9-V-12][V10-V-13] preserves the complete search verdict in human and JSON output', () => {
     const data = {
       embeddingCompatibility: {
@@ -291,6 +319,24 @@ describe('CLI presentation and exit taxonomy', () => {
 
     expect(rendered.exitCode).toBe(exitCode);
     expect(rendered.message).not.toContain('do-not-reflect');
+  });
+
+  it('maps stored source drift to the exact safe sync recovery command', () => {
+    const failure = mapCliError(
+      new SessionCompileError('SESSION_PLAN_DENIED', 'alpha', { recoveryAction: 'sync' }),
+      { command: 'compile.plan', projectId: 'alpha' },
+    );
+
+    expect(failure).toMatchObject({
+      data: { recoveryAction: 'sync' },
+      errors: [{ recoveryCommand: ['sync', '--project', 'alpha'] }],
+      exitCode: 3,
+    });
+    expect(renderCliResult(failure, 'human').message)
+      .toContain('recovery: buildlore sync --project alpha\n');
+    expect(JSON.parse(renderCliResult(failure, 'json').message)).toMatchObject({
+      errors: [{ recoveryCommand: ['sync', '--project', 'alpha'] }],
+    });
   });
 
   it('adds only bounded safe sanitization diagnostics to sync failures', () => {

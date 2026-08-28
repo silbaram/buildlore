@@ -38,6 +38,21 @@ const WORKSPACE_PLACEHOLDER = '<WORKSPACE>';
 const ABSOLUTE_PATH_START_DELIMITERS = new Set([
   '"', "'", '`', '<', '>', '[', ']', '(', ')', '{', '}', '|', ',', ';', '!', '?', '=', ':',
 ]);
+const POSIX_ABSOLUTE_PATH_ROOTS = Object.freeze([
+  '/home/',
+  '/Users/',
+  '/root/',
+  '/var/',
+  '/etc/',
+  '/opt/',
+  '/srv/',
+  '/usr/',
+  '/tmp/',
+  '/mnt/',
+  '/media/',
+  '/proc/',
+  '/dev/',
+]);
 const HTTP_URI_TERMINATORS = new Set([
   '"', "'", '`', '<', '>',
 ]);
@@ -370,6 +385,7 @@ function absolutePathEnd(body: string, start: number, allowInvalidHttpBoundary: 
   if (first === '/') {
     if (body[start + 1] === '/' || isPathTokenTerminator(body[start + 1])) return null;
     if (followsDrivePrefix(body, start)) return null;
+    if (!POSIX_ABSOLUTE_PATH_ROOTS.some((root) => body.startsWith(root, start))) return null;
     if (!allowInvalidHttpBoundary && !isGenericPathBoundary(body, start) &&
         !followsNonHttpUriRoot(body, start)) return null;
     let end = start + 1;

@@ -59,6 +59,7 @@ import type {
   ProjectSyncWriteSummary,
 } from './sync.js';
 import {
+  buildProjectSyncRedactionWarnings,
   buildProjectSyncSanitizationDiagnostics,
   type SyncSanitizationDiagnosticInput,
 } from './sync-sanitization-diagnostics.js';
@@ -104,6 +105,7 @@ interface PreparedCandidate {
   readonly candidate: CollectionCandidate;
   readonly input: ProjectSourceInput;
   readonly report: SanitizationReport;
+  readonly reports: readonly SanitizationReport[];
   readonly sourceKind: 'markdown' | 'planning';
   readonly titlePrepared: PreparedSource;
 }
@@ -352,6 +354,7 @@ async function prepareCandidate(
       candidate,
       input,
       report: bodyResult.value.report,
+      reports: Object.freeze([titleResult.value.report, bodyResult.value.report]),
       sourceKind,
       titlePrepared: titleResult.value.prepared,
     }),
@@ -491,7 +494,7 @@ function collectionEntries(
 
 function warningsFor(
   warnings: readonly Readonly<{
-    readonly code: ProjectSyncWarning['code'];
+    readonly code: Extract<ProjectSyncWarning, { readonly sourceKind: 'planning' }>['code'];
     readonly fieldName?: string;
     readonly sourceArtifact: string;
   }>[],
@@ -502,6 +505,12 @@ function warningsFor(
     sourceKind: 'planning' as const,
     sourceRef: safePlanningRef(warning.sourceArtifact) ?? 'unavailable',
   })));
+}
+
+function warningSortKey(warning: ProjectSyncWarning): string {
+  return warning.code === 'sanitization-redaction-applied'
+    ? `${warning.code}\u0000${warning.ruleId}`
+    : `${warning.code}\u0000${warning.sourceRef}\u0000${warning.fieldName ?? ''}`;
 }
 
 export async function runHubProjectSync(
@@ -585,7 +594,19 @@ export async function runHubProjectSync(
     { ...summaryBinding, sourceKind: 'planning' },
   );
   const execution = emptyPlan(input.projectId);
-  const warnings = warningsFor(collection.compatibilityWarnings);
+  const redactionWarnings = buildProjectSyncRedactionWarnings(prepared.map((item) => ({
+    reports: item.reports,
+    sourceIdentitySha256: sha256(item.candidate.sourceUri).slice('sha256:'.length),
+    sourceKind: item.sourceKind,
+    sourceRef: item.candidate.sourceRef,
+  })));
+  if (redactionWarnings === null) {
+    return failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
+  }
+  const warnings = Object.freeze([
+    ...warningsFor(collection.compatibilityWarnings),
+    ...redactionWarnings,
+  ].sort((left, right) => compareText(warningSortKey(left), warningSortKey(right))));
   const common = {
     bindingDigest: planned.binding.bindingDigest,
     collection: aggregate,

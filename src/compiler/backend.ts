@@ -31,6 +31,9 @@ interface CompilerSdk {
 
 type WikiFactory = (workspaceRoot: string) => CompilerSdk;
 
+const SDK_COMPILE_LOCK_BUSY_MESSAGE =
+  'Could not acquire .llmwiki/lock — another compile is in progress.';
+
 function defaultWikiFactory(workspaceRoot: string): CompilerSdk {
   return createWiki({ root: workspaceRoot });
 }
@@ -46,6 +49,12 @@ function isTimeoutError(error: unknown): boolean {
     record.code === 'ETIMEDOUT' ||
     record.code === 'UND_ERR_CONNECT_TIMEOUT'
   );
+}
+
+function isCompileLockBusyResult(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value) ||
+      !('errors' in value) || !Array.isArray(value.errors)) return false;
+  return value.errors.length === 1 && value.errors[0] === SDK_COMPILE_LOCK_BUSY_MESSAGE;
 }
 
 function classifyBackendError(error: unknown): CompilerBackendError {
@@ -69,8 +78,11 @@ async function runRequest(wiki: CompilerSdk, request: CompilerRequest): Promise<
     case 'approve':
     case 'candidates':
       throw new CompilerBackendError('failed');
-    case 'compile':
-      return request.review === true ? wiki.compile({ review: true }) : wiki.compile();
+    case 'compile': {
+      const result = await (request.review === true ? wiki.compile({ review: true }) : wiki.compile());
+      if (isCompileLockBusyResult(result)) throw new LockUnavailableError();
+      return result;
+    }
     case 'context':
       return wiki.getContextPack({
         prompt: request.prompt,
