@@ -17,6 +17,7 @@ import { CompilerBackendError } from './errors.js';
 import { digestSessionValue, sessionSha256 } from './session/canonical.js';
 import { SESSION_COMPILE_LIMITS } from './session/contracts.js';
 import { SessionCompileError } from './session/errors.js';
+import { inspectSessionExportCitations } from './session/export-citations.js';
 import {
   createSessionReviewStore,
   type SessionReviewStore,
@@ -300,7 +301,9 @@ function exactPromotionPage(
   }
   const sourceRefs = boundedStrings(raw.sources, MAX_SOURCE_REFS);
   const sourceHashes = boundedStrings(raw.sourceHashes, MAX_SOURCE_REFS);
-  if (sourceRefs === null || sourceHashes === null || proof.citationBindings.length === 0) {
+  const actualCitations = inspectSessionExportCitations(raw.citations);
+  if (sourceRefs === null || sourceHashes === null || actualCitations === null ||
+      proof.citationBindings.length === 0) {
     return false;
   }
   const actualSourceRefs = [...sourceRefs]
@@ -313,23 +316,25 @@ function exactPromotionPage(
   const expectedSourceHashes = proof.compilerSources
     .map((source) => source.compilerSourceContentDigest.slice('sha256:'.length))
     .sort();
-  const expectedCitations = proof.citationBindings.map((binding) => ({
+  const expectedCitations = inspectSessionExportCitations(proof.citationBindings.map((binding) => ({
     file: binding.compilerSourceId,
     start: binding.originalLine,
     end: binding.originalLine,
-  }));
+  })));
+  if (expectedCitations === null) return false;
   return proof.bodyDigest === sessionSha256(raw.body) &&
     proof.titleDigest === sessionSha256(raw.title) &&
     proof.summaryDigest === sessionSha256(raw.summary) &&
     proof.sourceRefsDigest === digestSessionValue(actualSourceRefs) &&
-    proof.citationsDigest === digestSessionValue(raw.citations) &&
+    proof.citationsDigest === digestSessionValue(actualCitations.raw) &&
     proof.contentHash === raw.contentHash &&
     proof.contentHash === sessionSha256(raw.body).slice('sha256:'.length) &&
     digestSessionValue(actualSourceRefs) === digestSessionValue(expectedSourceRefs) &&
     (actualSourceHashes.length === 0 ||
       digestSessionValue(actualSourceHashes) === digestSessionValue(expectedSourceHashes)) &&
     digestSessionValue(expectedSourceHashes) === digestSessionValue(proof.sourceHashes) &&
-    digestSessionValue(raw.citations) === digestSessionValue(expectedCitations);
+    digestSessionValue(actualCitations.canonical) ===
+      digestSessionValue(expectedCitations.canonical);
 }
 
 async function currentPromotionSourcesMatch(
