@@ -1,4 +1,10 @@
-export { SessionCompileError, type SessionCompileErrorCode } from './errors.js';
+export {
+  SessionCompileError,
+  type SessionCompileErrorCode,
+  type SessionExportInspectionDiagnostic,
+  type SessionExportMismatchField,
+  type SessionExportMismatchKind,
+} from './errors.js';
 export {
   createProjectSessionCompiler,
   type CreateProjectSessionCompilerOptions,

@@ -339,6 +339,65 @@ describe('CLI presentation and exit taxonomy', () => {
     });
   });
 
+  it('maps only approval recovery-required status to the exact candidates command', () => {
+    const sensitive = 'private-export-body';
+    const error = new SessionCompileError('SESSION_CANDIDATE_RECOVERY_REQUIRED', 'alpha', {
+      candidateRefs: ['candidate-safe'],
+      exportInspection: {
+        fields: ['title', 'body', 'body'],
+        mismatchKind: 'field-value',
+      },
+      recoveryAction: 'status',
+      sideEffectsPossible: true,
+    });
+    const failure = mapCliError(error, { command: 'compile.approve', projectId: 'alpha' });
+
+    expect(error.toJSON()).toMatchObject({
+      exportInspection: { fields: ['body', 'title'], mismatchKind: 'field-value' },
+    });
+    expect(failure).toMatchObject({
+      data: {
+        candidateRefs: ['candidate-safe'],
+        exportInspection: { fields: ['body', 'title'], mismatchKind: 'field-value' },
+        recoveryAction: 'status',
+        sideEffectsPossible: true,
+      },
+      errors: [{
+        code: 'SESSION_CANDIDATE_RECOVERY_REQUIRED',
+        recoveryCommand: ['compile', 'candidates', '--project', 'alpha'],
+      }],
+      exitCode: 4,
+      partial: true,
+    });
+    expect(renderCliResult(failure, 'human').message)
+      .toContain('recovery: buildlore compile candidates --project alpha\n');
+    expect(JSON.parse(renderCliResult(failure, 'json').message)).toMatchObject({
+      errors: [{ recoveryCommand: ['compile', 'candidates', '--project', 'alpha'] }],
+    });
+    expect(JSON.stringify(error)).not.toContain(sensitive);
+    expect(renderCliResult(failure, 'json').message).not.toContain(sensitive);
+
+    const unmapped = [
+      mapCliError(error, { command: 'check', projectId: 'alpha' }),
+      mapCliError(error, { command: 'compile.approve', projectId: 'beta' }),
+      mapCliError(
+        new SessionCompileError('SESSION_ADMISSION_FAILED', 'alpha', {
+          recoveryAction: 'status',
+        }),
+        { command: 'compile.approve', projectId: 'alpha' },
+      ),
+      mapCliError(
+        new SessionCompileError('SESSION_CANDIDATE_APPROVAL_FAILED', 'alpha', {
+          recoveryAction: 'retry',
+        }),
+        { command: 'compile.approve', projectId: 'alpha' },
+      ),
+    ];
+    for (const result of unmapped) {
+      expect(result.errors[0]?.recoveryCommand).toBeUndefined();
+    }
+  });
+
   it('adds only bounded safe sanitization diagnostics to sync failures', () => {
     const sensitive = ['runtime', 'credential', 'value'].join('-');
     const error = new ProjectSyncError('SYNC_SANITIZATION_FAILED', {

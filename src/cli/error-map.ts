@@ -226,7 +226,11 @@ export function mapCliError(
       error.code === 'SESSION_CANDIDATE_RECOVERY_REQUIRED';
     const recoveryCommand = error.recoveryAction === 'sync'
       ? safeRecoveryCommand(['sync', '--project', error.projectId])
-      : undefined;
+      : error.code === 'SESSION_CANDIDATE_RECOVERY_REQUIRED' &&
+          error.recoveryAction === 'status' && context.command === 'compile.approve' &&
+          context.projectId === error.projectId
+        ? safeRecoveryCommand(['compile', 'candidates', '--project', error.projectId])
+        : undefined;
     return Object.freeze({
       ...baseFailure(
         context,
@@ -241,6 +245,9 @@ export function mapCliError(
       ),
       data: Object.freeze({
         candidateRefs: error.candidateRefs,
+        ...(error.exportInspection === undefined
+          ? {}
+          : { exportInspection: error.exportInspection }),
         recoveryAction: error.recoveryAction,
         sideEffectsPossible: error.sideEffectsPossible,
       }),

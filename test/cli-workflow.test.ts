@@ -3,18 +3,32 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { createWiki } from 'llm-wiki-compiler';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  SessionCompileError,
   type CompilerOperationResult,
   type CompilerRequest,
   type ProjectCheckSummary,
   type ProjectCompilerPort,
   type ProjectSessionCompilerPort,
   type SessionCompileApplyRequest,
+  type SessionCompilePlanV1,
   type SessionCompilePlanRequest,
+  type SessionCompileProposalV1,
+  type SessionReviewCandidateV1,
 } from '../src/compiler/index.js';
+import {
+  callerHarnessCompatibilityDigest,
+  proposalDigest,
+} from '../src/compiler/session/contracts.js';
+import {
+  createSessionReviewStore,
+} from '../src/compiler/session/review-store.js';
+import { createProjectSessionCompilerForTest } from '../src/compiler/session/service.js';
 import { runCli, type CliIo, type CliRuntime } from '../src/cli/index.js';
+import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import {
   KNOWLEDGE_PUBLISH_PLAN_SCHEMA_VERSION,
   KNOWLEDGE_PUBLISH_RESULT_SCHEMA_VERSION,
@@ -33,6 +47,7 @@ import {
   type ProjectSyncSummary,
 } from '../src/projector/index.js';
 import {
+  createProjectRetrieval,
   RETRIEVAL_STRATEGY,
   type EmbeddingCompatibility,
   type ProjectContextRequest,
@@ -40,12 +55,101 @@ import {
   type ProjectSearchRequest,
   type ProjectSearchResult,
 } from '../src/retrieval/index.js';
+import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const temporaryRoots: string[] = [];
 const PLAN_FINGERPRINT =
   'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
 const oid = (character: string): string => character.repeat(40);
 const digest = (character: string): PublicationDigest => `sha256:${character.repeat(64)}`;
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function sessionPlanFrom(output: string): SessionCompilePlanV1 {
+  const envelope: unknown = JSON.parse(output);
+  const data = isRecord(envelope) ? envelope.data : undefined;
+  if (!isRecord(data) || data.schemaVersion !== 'buildlore.compile-plan.v2' ||
+      !Array.isArray(data.sources) || !Array.isArray(data.tasks)) {
+    throw new Error('invalid session plan CLI envelope');
+  }
+  return data as unknown as SessionCompilePlanV1;
+}
+
+async function writeSessionProposal(
+  cwd: string,
+  plan: SessionCompilePlanV1,
+  input: {
+    readonly body: string;
+    readonly slug: string;
+    readonly summary: string;
+    readonly title: string;
+  },
+): Promise<string> {
+  const task = plan.tasks.find((item) => item.requestedPageKinds.includes('concept'));
+  const source = task === undefined
+    ? undefined
+    : plan.sources.find((item) => task.allowedSourceIds.includes(item.sourceId) &&
+        item.citationAnchors.length > 0);
+  const citation = source?.citationAnchors[0];
+  if (task === undefined || source === undefined || citation === undefined) {
+    throw new Error('session plan lacks deterministic proposal evidence');
+  }
+  const draft: SessionCompileProposalV1 = {
+    schemaVersion: 'buildlore.compile-proposal.v1',
+    projectId: plan.projectId,
+    planDigest: plan.planDigest,
+    proposalId: `proposal-${input.slug}`,
+    proposalDigest: digest('0'),
+    taskId: task.taskId,
+    mergeCandidateIds: [],
+    pageId: `concepts/${input.slug}`,
+    slug: input.slug,
+    title: input.title,
+    kind: 'concept',
+    summary: input.summary,
+    body: `${input.body}[^evidence]`,
+    sources: task.allowedSourceIds,
+    wikilinks: [],
+    citations: [{
+      file: citation.originalFile,
+      id: 'evidence',
+      line: citation.originalLine,
+      quote: citation.quote,
+      sourceId: citation.sourceId,
+    }],
+    confidence: 1,
+    callerHarness: {
+      compatibilityDigest: callerHarnessCompatibilityDigest('codex', '1.0.0'),
+      kind: 'codex',
+      version: '1.0.0',
+    },
+  };
+  const proposal = Object.freeze({ ...draft, proposalDigest: proposalDigest(draft) });
+  const path = join(cwd, `${input.slug}.proposal.json`);
+  await writeFile(path, serializeCanonicalJson(proposal), 'utf8');
+  return path;
+}
+
+async function importCandidatePage(
+  workspace: string,
+  candidate: SessionReviewCandidateV1,
+): Promise<void> {
+  const parent = await mkdtemp(join(tmpdir(), 'buildlore-cli-session-bundle-'));
+  temporaryRoots.push(parent);
+  const bundle = join(parent, 'bundle');
+  await mkdir(bundle);
+  await writeFile(
+    join(bundle, 'index.md'),
+    '---\nokf_version: "0.1"\n---\n\n# CLI recovery fixture\n',
+    'utf8',
+  );
+  const target = join(bundle, candidate.target);
+  await mkdir(join(target, '..'), { recursive: true });
+  await writeFile(target, candidate.renderedPage, 'utf8');
+  await createWiki({ root: workspace }).importOkf(bundle, { trusted: true });
+}
 
 function publicationPlan(eligible = true): KnowledgePublishPlan {
   return {
@@ -520,6 +624,204 @@ describe('canonical CLI workflow', () => {
     expect(candidateRequests).toEqual([{ projectId: 'alpha' }]);
     expect(approveRequests).toEqual([{ candidateId, projectId: 'alpha' }]);
     expect(legacyCalls).toBe(0);
+  });
+
+  it('renders recovery-required approval as a partial failure with a safe candidates command', async () => {
+    const cwd = await createConfiguredRepository();
+    const candidateId = `candidate-${'d'.repeat(64)}`;
+    const sessionCompiler: ProjectSessionCompilerPort = {
+      plan: () => Promise.reject(new Error('unexpected plan')),
+      apply: () => Promise.reject(new Error('unexpected apply')),
+      candidates: () => Promise.reject(new Error('unexpected candidates')),
+      approve: () => Promise.reject(new SessionCompileError(
+        'SESSION_CANDIDATE_RECOVERY_REQUIRED',
+        'alpha',
+        {
+          candidateRefs: [candidateId],
+          exportInspection: { fields: ['contentHash'], mismatchKind: 'field-value' },
+          recoveryAction: 'status',
+          sideEffectsPossible: true,
+        },
+      )),
+    };
+    const runtime: CliRuntime = {
+      cwd,
+      projectCompiler: {
+        execute: () => Promise.reject(new Error('legacy compile must not run')),
+        status: () => Promise.resolve({ pendingChanges: [], pendingChangesCount: 0, stateStatus: 'ok' }),
+      },
+      sessionCompiler,
+    };
+
+    const json = await capture([
+      'compile', 'approve', '--project', 'alpha', '--candidate', candidateId, '--json',
+    ], runtime);
+    const human = await capture([
+      'compile', 'approve', '--project', 'alpha', '--candidate', candidateId,
+    ], runtime);
+
+    expect(json.exitCode).toBe(4);
+    expect(JSON.parse(json.stderr)).toMatchObject({
+      command: 'compile.approve',
+      data: {
+        candidateRefs: [candidateId],
+        exportInspection: { fields: ['contentHash'], mismatchKind: 'field-value' },
+        recoveryAction: 'status',
+        sideEffectsPossible: true,
+      },
+      errors: [{ recoveryCommand: ['compile', 'candidates', '--project', 'alpha'] }],
+      ok: false,
+      partial: true,
+    });
+    expect(human.exitCode).toBe(4);
+    expect(human.stderr).toContain('recovery: buildlore compile candidates --project alpha\n');
+  });
+
+  it('completes fresh and recovered approvals through the CLI with proof-backed lexical hits', async () => {
+    const cwd = await createConfiguredRepository();
+    const knowledgeRoot = join(cwd, 'knowledge');
+    const workspace = join(knowledgeRoot, 'projects', 'alpha');
+    const store = createSessionReviewStore(workspace, 'alpha');
+    await writeSecurityPolicy(knowledgeRoot, 'alpha');
+    const synchronized = await capture(['sync', '--project', 'alpha', '--json'], { cwd });
+    expect(synchronized.exitCode).toBe(0);
+    expect(JSON.parse(synchronized.stdout)).toMatchObject({
+      command: 'sync',
+      data: { projectId: 'alpha' },
+      ok: true,
+    });
+
+    const planned = await capture(['compile', 'plan', '--project', 'alpha', '--json'], { cwd });
+    expect(planned.exitCode, planned.stderr).toBe(0);
+    const freshProposal = await writeSessionProposal(cwd, sessionPlanFrom(planned.stdout), {
+      body: 'Fresh retrieval evidence.',
+      slug: 'fresh-cli-approval',
+      summary: 'Fresh CLI approval retrieval proof.',
+      title: 'Fresh CLI approval',
+    });
+    const applied = await capture([
+      'compile', 'apply', '--project', 'alpha', '--page', freshProposal, '--json',
+    ], { cwd });
+    expect(applied.exitCode).toBe(0);
+    expect(JSON.parse(applied.stdout)).toMatchObject({
+      command: 'compile.apply',
+      data: { admittedCount: 1, heldCount: 1, reviewRequired: true },
+      ok: true,
+    });
+    const freshStored = await store.list();
+    const freshCandidate = freshStored[0]?.candidate;
+    if (freshCandidate === undefined) throw new Error('missing fresh CLI candidate');
+    const listed = await capture([
+      'compile', 'candidates', '--project', 'alpha', '--json',
+    ], { cwd });
+    const freshApproved = await capture([
+      'compile', 'approve', '--project', 'alpha', '--candidate',
+      freshCandidate.candidateId, '--json',
+    ], { cwd });
+
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listed.stdout)).toMatchObject({
+      data: { candidates: [{ candidateId: freshCandidate.candidateId, lifecycle: 'pending' }] },
+    });
+    expect(freshApproved.exitCode).toBe(0);
+    expect(JSON.parse(freshApproved.stdout)).toMatchObject({
+      command: 'compile.approve',
+      data: {
+        candidateId: freshCandidate.candidateId,
+        outcome: 'approved',
+        providerUsed: false,
+        warnings: [],
+      },
+      ok: true,
+    });
+    await expect(store.listProofs()).resolves.toMatchObject([{
+      candidateId: freshCandidate.candidateId,
+      pageId: freshCandidate.pageId,
+    }]);
+
+    const recoveryPlanResult = await capture([
+      'compile', 'plan', '--project', 'alpha', '--json',
+    ], { cwd });
+    expect(recoveryPlanResult.exitCode).toBe(0);
+    const recoveryProposal = await writeSessionProposal(
+      cwd,
+      sessionPlanFrom(recoveryPlanResult.stdout),
+      {
+        body: 'Recovered retrieval evidence.',
+        slug: 'recovered-cli-approval',
+        summary: 'Recovered CLI approval retrieval proof.',
+        title: 'Recovered CLI approval',
+      },
+    );
+    const recoveryApplied = await capture([
+      'compile', 'apply', '--project', 'alpha', '--page', recoveryProposal, '--json',
+    ], { cwd });
+    expect(recoveryApplied.exitCode).toBe(0);
+    const recoveredCandidate = (await store.list())
+      .find((item) => item.candidate.slug === 'recovered-cli-approval')?.candidate;
+    if (recoveredCandidate === undefined) throw new Error('missing recovery CLI candidate');
+    await store.claim(recoveredCandidate.candidateId);
+    await importCandidatePage(workspace, recoveredCandidate);
+    const recoveredCompiler = createProjectSessionCompilerForTest({
+      hubRoot: cwd,
+      knowledgeRoot,
+      planner: {
+        create: () => Promise.reject(new Error('stale snapshot must not be read during recovery')),
+      },
+    });
+    const recoveredApproved = await capture([
+      'compile', 'approve', '--project', 'alpha', '--candidate',
+      recoveredCandidate.candidateId, '--json',
+    ], { cwd, sessionCompiler: recoveredCompiler });
+
+    expect(recoveredApproved.exitCode).toBe(0);
+    expect(JSON.parse(recoveredApproved.stdout)).toMatchObject({
+      command: 'compile.approve',
+      data: {
+        candidateId: recoveredCandidate.candidateId,
+        outcome: 'approved',
+        providerUsed: false,
+        warnings: [{ code: 'recovered-approving-candidate' }],
+      },
+      ok: true,
+    });
+    await expect(store.list()).resolves.toEqual([]);
+    await expect(store.listProofs()).resolves.toHaveLength(2);
+
+    const searched = await capture([
+      'search', '--project', 'alpha', '--query', 'recovered approval retrieval',
+      '--mode', 'lexical', '--json',
+    ], { cwd });
+    expect(searched.exitCode).toBe(0);
+    const searchEnvelope: unknown = JSON.parse(searched.stdout);
+    expect(searchEnvelope).toMatchObject({
+      command: 'search',
+      data: {
+        effectiveMode: 'lexical',
+        excluded: { unverified: 0 },
+        requestedMode: 'lexical',
+      },
+      ok: true,
+    });
+    if (!isRecord(searchEnvelope) || !isRecord(searchEnvelope.data) ||
+        !Array.isArray(searchEnvelope.data.hits)) {
+      throw new Error('invalid search envelope fixture');
+    }
+    expect(searchEnvelope.data.hits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ pageId: recoveredCandidate.pageId }),
+    ]));
+    const retrieval = await createProjectRetrieval({ knowledgeRoot }).search({
+      mode: 'lexical',
+      projectId: 'alpha',
+      query: 'fresh recovered approval retrieval',
+    });
+    expect(retrieval.excluded.unverified).toBe(0);
+    expect(retrieval.hits.map((hit) => hit.pageId)).toEqual(expect.arrayContaining([
+      freshCandidate.pageId,
+      recoveredCandidate.pageId,
+    ]));
+    expect(retrieval.hits.flatMap((hit) => hit.sourceRefs)
+      .filter((sourceRef) => sourceRef.startsWith('okf:'))).toEqual([]);
   });
 
   it('runs the credential-free empty non-Git workflow, proves sync dry-run byte and Git invariance without compiler or provider calls, and completes init through query', async () => {
