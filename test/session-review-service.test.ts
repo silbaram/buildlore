@@ -41,7 +41,40 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function batch(): ValidatedSessionBatch {
+function batch(options: {
+  readonly reorderedDuplicateCitations?: boolean;
+} = {}): ValidatedSessionBatch {
+  const citations: SessionCompileProposalV1['citations'] = options.reorderedDuplicateCitations
+    ? [
+        {
+          file: 'docs/evidence.md',
+          id: 'alpha',
+          line: 4,
+          quote: 'First evidence.',
+          sourceId: SOURCE_ID,
+        },
+        {
+          file: 'docs/evidence.md',
+          id: 'beta',
+          line: 4,
+          quote: 'Repeated evidence.',
+          sourceId: SOURCE_ID,
+        },
+        {
+          file: 'docs/evidence.md',
+          id: 'gamma',
+          line: 5,
+          quote: 'Later evidence.',
+          sourceId: SOURCE_ID,
+        },
+      ]
+    : [{
+        file: 'docs/evidence.md',
+        id: 'evidence',
+        line: 4,
+        quote: 'Evidence.',
+        sourceId: SOURCE_ID,
+      }];
   const proposal: SessionCompileProposalV1 = {
     schemaVersion: SESSION_COMPILE_PROPOSAL_SCHEMA_VERSION,
     projectId: 'alpha',
@@ -55,16 +88,12 @@ function batch(): ValidatedSessionBatch {
     title: 'Session output',
     kind: 'concept',
     summary: 'Review-only session output.',
-    body: 'Evidence.[^evidence]',
+    body: options.reorderedDuplicateCitations
+      ? 'Ordered evidence.[^gamma][^alpha][^beta]'
+      : 'Evidence.[^evidence]',
     sources: [SOURCE_ID],
     wikilinks: [],
-    citations: [{
-      file: 'docs/evidence.md',
-      id: 'evidence',
-      line: 4,
-      quote: 'Evidence.',
-      sourceId: SOURCE_ID,
-    }],
+    citations,
     confidence: 0.75,
     callerHarness: { compatibilityDigest: DIGEST, kind: 'codex', version: '1.0.0' },
   };
@@ -86,15 +115,17 @@ function batch(): ValidatedSessionBatch {
     pages: Object.freeze([Object.freeze({
       proposal,
       provenance,
-      citationBindings: Object.freeze([Object.freeze({
-        citationId: 'evidence',
+      citationBindings: Object.freeze(citations.map((citation) => Object.freeze({
+        citationId: citation.id,
         compilerSourceContentDigest: COMPILER_SOURCE_DIGEST,
         compilerSourceId: COMPILER_SOURCE_ID,
-        originalFile: 'docs/evidence.md',
-        originalLine: 4,
-        quoteDigest: DIGEST,
+        originalFile: citation.file,
+        originalLine: citation.line,
+        quoteDigest: options.reorderedDuplicateCitations
+          ? sessionSha256(citation.quote)
+          : DIGEST,
         sourceId: SOURCE_ID,
-      })]),
+      }))),
       compilerSources: Object.freeze([Object.freeze({
         compilerSourceContentDigest: COMPILER_SOURCE_DIGEST,
         compilerSourceId: COMPILER_SOURCE_ID,
@@ -860,7 +891,7 @@ describe('session review service', () => {
       COMPILER_SOURCE_BODY,
       'utf8',
     );
-    const validated = batch();
+    const validated = batch({ reorderedDuplicateCitations: true });
     const page = validated.pages[0];
     if (page === undefined) throw new Error('missing test page');
     const candidate = createSessionReviewCandidate({
@@ -887,12 +918,14 @@ describe('session review service', () => {
       join(workspace, 'wiki', 'concepts', 'session-concept.md'),
       'utf8',
     );
-    expect(livePage).toContain(`^[${COMPILER_SOURCE_ID}:4]`);
+    expect(livePage).toContain(
+      `^[${COMPILER_SOURCE_ID}:5]^[${COMPILER_SOURCE_ID}:4]^[${COMPILER_SOURCE_ID}:4]`,
+    );
     const proofs = await store.listProofs();
     expect(proofs[0]?.sourceHashes).toEqual([
       COMPILER_SOURCE_DIGEST.slice('sha256:'.length),
     ]);
-    expect(proofs[0]?.citationBindings).toHaveLength(1);
+    expect(proofs[0]?.citationBindings).toHaveLength(3);
     await expect(compiler.execute({ capability: 'status', projectId: 'alpha' }))
       .resolves.toMatchObject({ data: { pageCount: 1, pendingCandidates: 0 } });
     const evaluation = await compiler.execute({ capability: 'eval-fast', projectId: 'alpha' });

@@ -12,6 +12,11 @@ import {
   type SessionExportMismatchKind,
 } from './errors.js';
 import {
+  inspectSessionExportCitations,
+  type SessionExportCitation,
+  type SessionExportCitationInspection,
+} from './export-citations.js';
+import {
   countLegacyUpstreamCandidates,
   createSessionReviewStore,
   finalizeSessionPromotionProof,
@@ -58,7 +63,7 @@ export interface CreateSessionReviewServiceOptions {
 
 interface VerifiedExportPage {
   readonly body: string;
-  readonly citations: readonly UnknownRecord[];
+  readonly citations: readonly SessionExportCitation[];
   readonly contentHash: string;
   readonly sourceHashes: readonly string[];
   readonly sourceRefs: readonly string[];
@@ -130,12 +135,16 @@ function pageFrontmatter(renderedPage: string): UnknownRecord | null {
   }
 }
 
-function expectedCitations(candidate: SessionReviewCandidateV1): readonly UnknownRecord[] {
-  return Object.freeze(candidate.citationBindings.map((binding) => Object.freeze({
+function expectedCitations(candidate: SessionReviewCandidateV1): SessionExportCitationInspection {
+  const inspection = inspectSessionExportCitations(candidate.citationBindings.map((binding) => ({
     file: binding.compilerSourceId,
     start: binding.originalLine,
     end: binding.originalLine,
   })));
+  if (inspection === null) {
+    fail('SESSION_CANDIDATE_STORE_INVALID', candidate.projectId, candidate.candidateId);
+  }
+  return inspection;
 }
 
 function sameCanonical(left: unknown, right: unknown): boolean {
@@ -190,6 +199,7 @@ function inspectDefaultExport(
   }
   const sources = stringArray(page.sources);
   const sourceHashes = stringArray(page.sourceHashes);
+  const citations = inspectSessionExportCitations(page.citations);
   const pageShapeFields: SessionExportMismatchField[] = [];
   if (typeof page.body !== 'string') pageShapeFields.push('body');
   if (typeof page.title !== 'string') pageShapeFields.push('title');
@@ -199,11 +209,11 @@ function inspectDefaultExport(
   }
   if (sources === null) pageShapeFields.push('sourceRefs');
   if (sourceHashes === null) pageShapeFields.push('sourceHashes');
-  if (!Array.isArray(page.citations)) pageShapeFields.push('citations');
+  if (citations === null) pageShapeFields.push('citations');
   if (pageShapeFields.length !== 0) return mismatch('page-shape', pageShapeFields);
   if (typeof page.body !== 'string' || typeof page.title !== 'string' ||
       typeof page.summary !== 'string' || typeof page.contentHash !== 'string' ||
-      sources === null || sourceHashes === null || !Array.isArray(page.citations)) {
+      sources === null || sourceHashes === null || citations === null) {
     return mismatch('page-shape', ['page']);
   }
   const expectedSources = candidate.compilerSources
@@ -222,7 +232,9 @@ function inspectDefaultExport(
   if (page.title !== frontmatter.title) valueFields.push('title');
   if (page.summary !== frontmatter.description) valueFields.push('summary');
   if (!sameCanonical(actualSources, expectedSources)) valueFields.push('sourceRefs');
-  if (!sameCanonical(page.citations, expectedCitations(candidate))) valueFields.push('citations');
+  if (!sameCanonical(citations.canonical, expectedCitations(candidate).canonical)) {
+    valueFields.push('citations');
+  }
   if (page.contentHash !== sessionSha256(body).slice('sha256:'.length)) {
     valueFields.push('contentHash');
   }
@@ -235,7 +247,7 @@ function inspectDefaultExport(
     kind: 'match',
     page: Object.freeze({
       body,
-      citations: Object.freeze(page.citations.filter(isRecord)),
+      citations: citations.raw,
       contentHash: page.contentHash,
       sourceHashes: Object.freeze(effectiveSourceHashes),
       sourceRefs: Object.freeze(actualSources),
@@ -307,7 +319,7 @@ function inspectCustomExport(
     kind: 'match',
     page: Object.freeze({
       body,
-      citations: expectedCitations(candidate),
+      citations: expectedCitations(candidate).raw,
       contentHash: sessionSha256(body).slice('sha256:'.length),
       sourceHashes: Object.freeze(candidate.compilerSources.map((source) =>
         source.compilerSourceContentDigest.slice('sha256:'.length)).sort(compareSessionText)),
