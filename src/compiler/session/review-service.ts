@@ -5,7 +5,12 @@ import { dirname, join } from 'node:path';
 import { parse } from 'yaml';
 
 import { compareSessionText, digestSessionValue, sessionSha256 } from './canonical.js';
-import { SessionCompileError } from './errors.js';
+import {
+  SessionCompileError,
+  type SessionExportInspectionDiagnostic,
+  type SessionExportMismatchField,
+  type SessionExportMismatchKind,
+} from './errors.js';
 import {
   countLegacyUpstreamCandidates,
   createSessionReviewStore,
@@ -64,7 +69,10 @@ interface VerifiedExportPage {
 type ExportInspection =
   | Readonly<{ readonly kind: 'absent' }>
   | Readonly<{ readonly kind: 'match'; readonly page: VerifiedExportPage }>
-  | Readonly<{ readonly kind: 'mismatch' }>;
+  | Readonly<{
+    readonly diagnostic: SessionExportInspectionDiagnostic;
+    readonly kind: 'mismatch';
+  }>;
 
 function defaultPort(): SessionReviewServicePort {
   const port: SessionReviewServicePort = {
@@ -134,27 +142,69 @@ function sameCanonical(left: unknown, right: unknown): boolean {
   return digestSessionValue(left) === digestSessionValue(right);
 }
 
+function mismatch(
+  mismatchKind: SessionExportMismatchKind,
+  fields: readonly SessionExportMismatchField[],
+): ExportInspection {
+  return Object.freeze({
+    diagnostic: Object.freeze({
+      fields: Object.freeze([...new Set(fields)].sort(compareSessionText)),
+      mismatchKind,
+    }),
+    kind: 'mismatch',
+  });
+}
+
+function diagnosticFor(
+  inspection: ExportInspection | null,
+): SessionExportInspectionDiagnostic | undefined {
+  return inspection?.kind === 'mismatch' ? inspection.diagnostic : undefined;
+}
+
 function inspectDefaultExport(
   document: UnknownRecord,
   candidate: SessionReviewCandidateV1,
 ): ExportInspection {
-  if (!Array.isArray(document.pages)) return Object.freeze({ kind: 'mismatch' });
+  if (!Array.isArray(document.pages)) return mismatch('export-shape', ['pageCollection']);
   const matches = (document.pages as unknown[]).filter((value) =>
     isRecord(value) && value.path === `wiki/${candidate.pageId}.md`);
   if (matches.length === 0) return Object.freeze({ kind: 'absent' });
-  if (matches.length !== 1) return Object.freeze({ kind: 'mismatch' });
+  if (matches.length !== 1) return mismatch('page-cardinality', ['page']);
   const page = matches[0];
-  if (!isRecord(page)) return Object.freeze({ kind: 'mismatch' });
+  if (!isRecord(page)) return mismatch('page-shape', ['page']);
   const body = pageBody(candidate.renderedPage);
   const frontmatter = pageFrontmatter(candidate.renderedPage);
+  const candidateShapeFields: SessionExportMismatchField[] = [];
+  if (body === null) candidateShapeFields.push('body');
+  if (frontmatter === null) candidateShapeFields.push('frontmatter');
+  if (frontmatter !== null && typeof frontmatter.title !== 'string') {
+    candidateShapeFields.push('title');
+  }
+  if (frontmatter !== null && typeof frontmatter.description !== 'string') {
+    candidateShapeFields.push('summary');
+  }
+  if (candidateShapeFields.length !== 0) return mismatch('page-shape', candidateShapeFields);
+  if (body === null || frontmatter === null || typeof frontmatter.title !== 'string' ||
+      typeof frontmatter.description !== 'string') {
+    return mismatch('page-shape', ['page']);
+  }
   const sources = stringArray(page.sources);
   const sourceHashes = stringArray(page.sourceHashes);
-  if (body === null || frontmatter === null || typeof page.body !== 'string' ||
-      page.body !== body || typeof page.title !== 'string' ||
+  const pageShapeFields: SessionExportMismatchField[] = [];
+  if (typeof page.body !== 'string') pageShapeFields.push('body');
+  if (typeof page.title !== 'string') pageShapeFields.push('title');
+  if (typeof page.summary !== 'string') pageShapeFields.push('summary');
+  if (typeof page.contentHash !== 'string' || !/^[a-f0-9]{64}$/u.test(page.contentHash)) {
+    pageShapeFields.push('contentHash');
+  }
+  if (sources === null) pageShapeFields.push('sourceRefs');
+  if (sourceHashes === null) pageShapeFields.push('sourceHashes');
+  if (!Array.isArray(page.citations)) pageShapeFields.push('citations');
+  if (pageShapeFields.length !== 0) return mismatch('page-shape', pageShapeFields);
+  if (typeof page.body !== 'string' || typeof page.title !== 'string' ||
       typeof page.summary !== 'string' || typeof page.contentHash !== 'string' ||
-      !/^[a-f0-9]{64}$/u.test(page.contentHash) || sources === null || sourceHashes === null ||
-      !Array.isArray(page.citations)) {
-    return Object.freeze({ kind: 'mismatch' });
+      sources === null || sourceHashes === null || !Array.isArray(page.citations)) {
+    return mismatch('page-shape', ['page']);
   }
   const expectedSources = candidate.compilerSources
     .map((source) => source.compilerSourceId)
@@ -167,16 +217,20 @@ function inspectDefaultExport(
   const effectiveSourceHashes = sourceHashes.length === 0
     ? expectedSourceHashes
     : [...sourceHashes].sort(compareSessionText);
-  const expectedTitle = frontmatter.title;
-  const expectedSummary = frontmatter.description;
-  if (page.title !== expectedTitle || page.summary !== expectedSummary ||
-      !sameCanonical(actualSources, expectedSources) ||
-      !sameCanonical(page.citations, expectedCitations(candidate)) ||
-      page.contentHash !== sessionSha256(body).slice('sha256:'.length) ||
-      !sameCanonical(effectiveSourceHashes, expectedSourceHashes) ||
-      effectiveSourceHashes.some((hash) => !/^[a-f0-9]{64}$/u.test(hash))) {
-    return Object.freeze({ kind: 'mismatch' });
+  const valueFields: SessionExportMismatchField[] = [];
+  if (page.body !== body) valueFields.push('body');
+  if (page.title !== frontmatter.title) valueFields.push('title');
+  if (page.summary !== frontmatter.description) valueFields.push('summary');
+  if (!sameCanonical(actualSources, expectedSources)) valueFields.push('sourceRefs');
+  if (!sameCanonical(page.citations, expectedCitations(candidate))) valueFields.push('citations');
+  if (page.contentHash !== sessionSha256(body).slice('sha256:'.length)) {
+    valueFields.push('contentHash');
   }
+  if (!sameCanonical(effectiveSourceHashes, expectedSourceHashes) ||
+      effectiveSourceHashes.some((hash) => !/^[a-f0-9]{64}$/u.test(hash))) {
+    valueFields.push('sourceHashes');
+  }
+  if (valueFields.length !== 0) return mismatch('field-value', valueFields);
   return Object.freeze({
     kind: 'match',
     page: Object.freeze({
@@ -196,25 +250,59 @@ function inspectCustomExport(
   candidate: SessionReviewCandidateV1,
 ): ExportInspection {
   if (!isRecord(document.profile) || !Array.isArray(document.profile.entityPages)) {
-    return Object.freeze({ kind: 'mismatch' });
+    return mismatch('export-shape', ['pageCollection']);
   }
   const matches = (document.profile.entityPages as unknown[]).filter((value) =>
     isRecord(value) && value.id === candidate.pageId);
   if (matches.length === 0) return Object.freeze({ kind: 'absent' });
-  if (matches.length !== 1) return Object.freeze({ kind: 'mismatch' });
+  if (matches.length !== 1) return mismatch('page-cardinality', ['page']);
   const page = matches[0];
-  if (!isRecord(page) || !isRecord(page.frontmatter) || typeof page.body !== 'string') {
-    return Object.freeze({ kind: 'mismatch' });
+  if (!isRecord(page)) return mismatch('page-shape', ['page']);
+  const liveFrontmatter = page.frontmatter;
+  const liveSourceRefs = isRecord(liveFrontmatter)
+    ? stringArray(liveFrontmatter.sourceRefs)
+    : null;
+  const pageShapeFields: SessionExportMismatchField[] = [];
+  if (!isRecord(liveFrontmatter)) pageShapeFields.push('frontmatter');
+  if (typeof page.body !== 'string') pageShapeFields.push('body');
+  if (isRecord(liveFrontmatter) && typeof liveFrontmatter.title !== 'string') {
+    pageShapeFields.push('title');
+  }
+  if (isRecord(liveFrontmatter) && typeof liveFrontmatter.summary !== 'string') {
+    pageShapeFields.push('summary');
+  }
+  if (liveSourceRefs === null) pageShapeFields.push('sourceRefs');
+  if (pageShapeFields.length !== 0) return mismatch('page-shape', pageShapeFields);
+  if (!isRecord(liveFrontmatter) || typeof page.body !== 'string' ||
+      typeof liveFrontmatter.title !== 'string' ||
+      typeof liveFrontmatter.summary !== 'string' || liveSourceRefs === null) {
+    return mismatch('page-shape', ['page']);
   }
   const body = pageBody(candidate.renderedPage);
   const frontmatter = pageFrontmatter(candidate.renderedPage);
-  if (body === null || frontmatter === null || page.body !== body ||
-      !sameCanonical(page.frontmatter, frontmatter) || typeof frontmatter.title !== 'string' ||
-      typeof frontmatter.summary !== 'string') {
-    return Object.freeze({ kind: 'mismatch' });
+  const expectedSourceRefs = frontmatter === null ? null : stringArray(frontmatter.sourceRefs);
+  const candidateShapeFields: SessionExportMismatchField[] = [];
+  if (body === null) candidateShapeFields.push('body');
+  if (frontmatter === null) candidateShapeFields.push('frontmatter');
+  if (frontmatter !== null && typeof frontmatter.title !== 'string') {
+    candidateShapeFields.push('title');
   }
-  const sourceRefs = stringArray(frontmatter.sourceRefs);
-  if (sourceRefs === null) return Object.freeze({ kind: 'mismatch' });
+  if (frontmatter !== null && typeof frontmatter.summary !== 'string') {
+    candidateShapeFields.push('summary');
+  }
+  if (expectedSourceRefs === null) candidateShapeFields.push('sourceRefs');
+  if (candidateShapeFields.length !== 0) return mismatch('page-shape', candidateShapeFields);
+  if (body === null || frontmatter === null || typeof frontmatter.title !== 'string' ||
+      typeof frontmatter.summary !== 'string' || expectedSourceRefs === null) {
+    return mismatch('page-shape', ['page']);
+  }
+  const valueFields: SessionExportMismatchField[] = [];
+  if (page.body !== body) valueFields.push('body');
+  if (!sameCanonical(liveFrontmatter, frontmatter)) valueFields.push('frontmatter');
+  if (liveFrontmatter.title !== frontmatter.title) valueFields.push('title');
+  if (liveFrontmatter.summary !== frontmatter.summary) valueFields.push('summary');
+  if (!sameCanonical(liveSourceRefs, expectedSourceRefs)) valueFields.push('sourceRefs');
+  if (valueFields.length !== 0) return mismatch('field-value', valueFields);
   return Object.freeze({
     kind: 'match',
     page: Object.freeze({
@@ -223,17 +311,17 @@ function inspectCustomExport(
       contentHash: sessionSha256(body).slice('sha256:'.length),
       sourceHashes: Object.freeze(candidate.compilerSources.map((source) =>
         source.compilerSourceContentDigest.slice('sha256:'.length)).sort(compareSessionText)),
-      sourceRefs: Object.freeze([...sourceRefs].sort(compareSessionText)),
-      summary: frontmatter.summary,
-      title: frontmatter.title,
+      sourceRefs: Object.freeze([...liveSourceRefs].sort(compareSessionText)),
+      summary: liveFrontmatter.summary,
+      title: liveFrontmatter.title,
     }),
   });
 }
 
 function inspectExport(raw: unknown, candidate: SessionReviewCandidateV1): ExportInspection {
-  if (!isRecord(raw) || raw.schemaVersion !== 1 || raw.projectId !== candidate.projectId) {
-    return Object.freeze({ kind: 'mismatch' });
-  }
+  if (!isRecord(raw)) return mismatch('export-shape', ['document']);
+  if (raw.schemaVersion !== 1) return mismatch('schema-version', ['schemaVersion']);
+  if (raw.projectId !== candidate.projectId) return mismatch('project-binding', ['projectId']);
   return candidate.profileMode === 'default'
     ? inspectDefaultExport(raw, candidate)
     : inspectCustomExport(raw, candidate);
@@ -330,8 +418,15 @@ async function finishExactPromotion(
   candidate: SessionReviewCandidateV1,
   page: VerifiedExportPage,
 ): Promise<void> {
-  await store.writeProof(proofFor(candidate, page));
-  await store.complete(candidate);
+  try {
+    await store.writeProof(proofFor(candidate, page));
+    await store.complete(candidate);
+  } catch {
+    fail('SESSION_CANDIDATE_RECOVERY_REQUIRED', candidate.projectId, candidate.candidateId, {
+      recoveryAction: 'status',
+      sideEffectsPossible: true,
+    });
+  }
 }
 
 async function inspectLive(
@@ -399,12 +494,6 @@ export function createSessionReviewService(
       }
       let candidate = stored.candidate;
       if (stored.lifecycle === 'approving') {
-        validateCurrentSnapshot(
-          candidate,
-          await refreshSnapshot(),
-          workspace,
-          projectId,
-        );
         const inspection = await inspectLive(port, workspace, projectId, candidate);
         if (inspection?.kind === 'match') {
           await finishExactPromotion(store, candidate, inspection.page);
@@ -422,7 +511,9 @@ export function createSessionReviewService(
         if (inspection?.kind === 'absent') {
           await store.restore(candidate);
         } else {
+          const exportInspection = diagnosticFor(inspection);
           fail('SESSION_CANDIDATE_RECOVERY_REQUIRED', projectId, candidateId, {
+            ...(exportInspection === undefined ? {} : { exportInspection }),
             recoveryAction: 'status',
             sideEffectsPossible: true,
           });
@@ -431,63 +522,79 @@ export function createSessionReviewService(
       candidate = await store.claim(candidateId);
       let mutationAttempted = false;
       let temporary: Awaited<ReturnType<typeof createSinglePageBundle>> | undefined;
+      let approvalFailure: Readonly<{ readonly error: unknown }> | undefined;
       try {
-        validateCurrentSnapshot(candidate, await refreshSnapshot(), workspace, projectId);
-        mutationAttempted = true;
-        if (candidate.profileMode === 'default') {
-          temporary = await createSinglePageBundle(candidate);
-          await port.importOkf(workspace, temporary.root, { trusted: true });
-        } else {
-          const upstreamCandidateId = candidate.upstreamCandidateId;
-          if (upstreamCandidateId === undefined) {
-            fail('SESSION_CANDIDATE_STORE_INVALID', projectId, candidateId);
+        try {
+          validateCurrentSnapshot(candidate, await refreshSnapshot(), workspace, projectId);
+          mutationAttempted = true;
+          if (candidate.profileMode === 'default') {
+            temporary = await createSinglePageBundle(candidate);
+            await port.importOkf(workspace, temporary.root, { trusted: true });
+          } else {
+            const upstreamCandidateId = candidate.upstreamCandidateId;
+            if (upstreamCandidateId === undefined) {
+              fail('SESSION_CANDIDATE_STORE_INVALID', projectId, candidateId);
+            }
+            await port.promoteStagedPage(workspace, upstreamCandidateId);
           }
-          await port.promoteStagedPage(workspace, upstreamCandidateId);
-        }
-        const inspection = await inspectLive(port, workspace, projectId, candidate);
-        if (inspection?.kind !== 'match') {
-          fail('SESSION_CANDIDATE_RECOVERY_REQUIRED', projectId, candidateId, {
-            recoveryAction: 'status',
-            sideEffectsPossible: true,
-          });
-        }
-        await finishExactPromotion(store, candidate, inspection.page);
-      } catch (error) {
-        if (!mutationAttempted) {
-          await store.restore(candidate);
-          throw error;
-        }
-        const inspection = await inspectLive(port, workspace, projectId, candidate);
-        if (inspection?.kind === 'match') {
-          await finishExactPromotion(store, candidate, inspection.page);
-        } else if (inspection?.kind === 'absent') {
-          await store.restore(candidate);
-          if (error instanceof LockUnavailableError) {
-            fail('SESSION_CANDIDATE_BUSY', projectId, candidateId, { retryable: true });
-          }
-          if (error instanceof SessionCompileError) throw error;
-          fail('SESSION_CANDIDATE_APPROVAL_FAILED', projectId, candidateId, {
-            recoveryAction: 'retry',
-            retryable: true,
-          });
-        } else {
-          fail('SESSION_CANDIDATE_RECOVERY_REQUIRED', projectId, candidateId, {
-            recoveryAction: 'status',
-            sideEffectsPossible: true,
-          });
-        }
-      } finally {
-        if (temporary !== undefined) {
-          try {
-            await removeTemporary(temporary.parent);
-          } catch {
+          const inspection = await inspectLive(port, workspace, projectId, candidate);
+          if (inspection?.kind !== 'match') {
+            const exportInspection = diagnosticFor(inspection);
             fail('SESSION_CANDIDATE_RECOVERY_REQUIRED', projectId, candidateId, {
+              ...(exportInspection === undefined ? {} : { exportInspection }),
+              recoveryAction: 'status',
+              sideEffectsPossible: true,
+            });
+          }
+          await finishExactPromotion(store, candidate, inspection.page);
+        } catch (error) {
+          if (!mutationAttempted) {
+            await store.restore(candidate);
+            throw error;
+          }
+          const inspection = await inspectLive(port, workspace, projectId, candidate);
+          if (inspection?.kind === 'match') {
+            await finishExactPromotion(store, candidate, inspection.page);
+          } else if (inspection?.kind === 'absent') {
+            await store.restore(candidate);
+            if (error instanceof LockUnavailableError) {
+              fail('SESSION_CANDIDATE_BUSY', projectId, candidateId, { retryable: true });
+            }
+            if (error instanceof SessionCompileError) throw error;
+            fail('SESSION_CANDIDATE_APPROVAL_FAILED', projectId, candidateId, {
+              recoveryAction: 'retry',
+              retryable: true,
+            });
+          } else {
+            const previousExportInspection = error instanceof SessionCompileError
+              ? error.exportInspection
+              : undefined;
+            const exportInspection = previousExportInspection ?? diagnosticFor(inspection);
+            fail('SESSION_CANDIDATE_RECOVERY_REQUIRED', projectId, candidateId, {
+              ...(exportInspection === undefined ? {} : { exportInspection }),
               recoveryAction: 'status',
               sideEffectsPossible: true,
             });
           }
         }
+      } catch (error) {
+        approvalFailure = Object.freeze({ error });
       }
+      try {
+        if (temporary !== undefined) {
+          await removeTemporary(temporary.parent);
+        }
+      } catch {
+        const exportInspection = approvalFailure?.error instanceof SessionCompileError
+          ? approvalFailure.error.exportInspection
+          : undefined;
+        fail('SESSION_CANDIDATE_RECOVERY_REQUIRED', projectId, candidateId, {
+          ...(exportInspection === undefined ? {} : { exportInspection }),
+          recoveryAction: 'status',
+          sideEffectsPossible: true,
+        });
+      }
+      if (approvalFailure !== undefined) throw approvalFailure.error;
       return Object.freeze({
         schemaVersion: SESSION_CANDIDATE_APPROVAL_SCHEMA_VERSION,
         projectId,
