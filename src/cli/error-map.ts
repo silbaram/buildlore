@@ -224,6 +224,9 @@ export function mapCliError(
     const operationalFailure = error.code === 'SESSION_CANDIDATE_APPROVAL_FAILED' ||
       error.code === 'SESSION_CANDIDATE_BUSY' ||
       error.code === 'SESSION_CANDIDATE_RECOVERY_REQUIRED';
+    const recoveryCommand = error.recoveryAction === 'sync'
+      ? safeRecoveryCommand(['sync', '--project', error.projectId])
+      : undefined;
     return Object.freeze({
       ...baseFailure(
         context,
@@ -234,6 +237,7 @@ export function mapCliError(
           : error.code === 'SESSION_PLAN_STALE'
             ? 'Session compile plan changed and must be regenerated.'
             : 'Session compile input or output was rejected safely.',
+        recoveryCommand,
       ),
       data: Object.freeze({
         candidateRefs: error.candidateRefs,

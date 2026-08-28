@@ -20,7 +20,7 @@ export type SessionCompileErrorCode =
 export class SessionCompileError extends Error {
   readonly code: SessionCompileErrorCode;
   readonly projectId: string;
-  readonly recoveryAction: 'check-config' | 'review' | 'retry' | 'status';
+  readonly recoveryAction: 'check-config' | 'review' | 'retry' | 'status' | 'sync';
   readonly retryable: boolean;
   readonly sideEffectsPossible: boolean;
   readonly candidateRefs: readonly string[];
@@ -30,7 +30,7 @@ export class SessionCompileError extends Error {
     projectId: string,
     options: {
       readonly candidateRefs?: readonly string[];
-      readonly recoveryAction?: 'check-config' | 'review' | 'retry' | 'status';
+      readonly recoveryAction?: 'check-config' | 'review' | 'retry' | 'status' | 'sync';
       readonly retryable?: boolean;
       readonly sideEffectsPossible?: boolean;
     } = {},

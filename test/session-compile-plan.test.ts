@@ -32,7 +32,11 @@ import {
 } from '../src/knowledge/local-project-registry.js';
 import { addProject } from '../src/knowledge/index.js';
 import { createProjectSyncService } from '../src/projector/index.js';
-import { parseSourceDocument, renderSourceDocument } from '../src/projector/source-document.js';
+import {
+  createSourceDocument,
+  parseSourceDocument,
+  renderSourceDocument,
+} from '../src/projector/source-document.js';
 import {
   createSourceCollectionAdapter,
 } from '../src/projector/collection-adapters.js';
@@ -336,7 +340,7 @@ describe('session compile deterministic plan', () => {
       ]);
       await writeFile(
         join(sourceRoot, 'docs', 'overview.md'),
-        '# Session Compile\n\nOriginal public evidence.\n',
+        '# Session Compile\n\nOriginal public evidence.\n\nRoute: /starter-runtime\n',
         'utf8',
       );
       await writeFile(join(sourceRoot, '.buildlore', 'sources.json'), JSON.stringify({
@@ -414,7 +418,7 @@ describe('session compile deterministic plan', () => {
       const stored = parseSourceDocument(storedRaw);
       expect(renderSourceDocument(stored)).toBe(storedRaw);
       expect(stored).toMatchObject({
-        body: '# Session Compile\n\nOriginal public evidence.\n',
+        body: '# Session Compile\n\nOriginal public evidence.\n\nRoute: /starter-runtime\n',
         buildlore: { projectId: 'alpha', sourceKind: 'markdown' },
         title: 'Session Compile',
       });
@@ -490,7 +494,7 @@ describe('session compile deterministic plan', () => {
       expect(first.plan.sources).toHaveLength(1);
       expect(first.plan.sources[0]?.sourceRef).toBe('docs/overview.md');
       expect(first.plan.sources[0]?.citationAnchors.map((anchor) => anchor.originalLine))
-        .toEqual([1, 3]);
+        .toEqual([1, 3, 5]);
       expect(first.plan.tasks.length).toBeGreaterThan(0);
       expect(first.plan.allowedLinkTargets).toEqual([{
         pageId: 'concepts/existing-page',
@@ -523,6 +527,30 @@ describe('session compile deterministic plan', () => {
         'inventory-read',
       ]);
       expect(await directoryDigest(workspace)).toBe(before);
+
+      const storedPath = join(workspace, 'sources', storedNames[0] ?? '');
+      const staleApprovedBody = stored.body.replace('/starter-runtime', '<ABSOLUTE_PATH>');
+      await writeFile(storedPath, renderSourceDocument(createSourceDocument({
+        body: staleApprovedBody,
+        ingestedAt: stored.ingestedAt,
+        producer: stored.buildlore.producer,
+        projectId: stored.buildlore.projectId,
+        source: stored.source,
+        sourceKind: stored.buildlore.sourceKind,
+        sourceRevision: stored.buildlore.sourceRevision,
+        ...(stored.sourceType === undefined ? {} : { sourceType: stored.sourceType }),
+        title: stored.title,
+      })), 'utf8');
+      const staleApprovedError = await planner.create('alpha').catch((error: unknown) => error);
+      expect(staleApprovedError).toMatchObject({
+        code: 'SESSION_PLAN_DENIED',
+        projectId: 'alpha',
+        recoveryAction: 'sync',
+      });
+      expect(JSON.stringify(staleApprovedError)).not.toContain(staleApprovedBody.trim());
+      await createProjectSyncService().sync({ dryRun: false, hubRoot, projectId: 'alpha' });
+      await expect(planner.create('alpha')).resolves.toMatchObject({ plan: first.plan });
+      await expect(directoryDigest(workspace)).resolves.toBe(before);
 
       const compiler = createProjectSessionCompilerForTest({
         hubRoot,

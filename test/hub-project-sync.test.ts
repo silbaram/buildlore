@@ -24,6 +24,7 @@ import {
   ProjectSyncError,
   type HubProjectSyncInput,
   type ProjectSyncSanitizationDiagnostics,
+  type ProjectSyncSummary,
 } from '../src/projector/sync.js';
 import { createCollectionSourceIdentity } from '../src/projector/source-identity.js';
 import {
@@ -247,14 +248,21 @@ describe('hub-bound project sync', () => {
       vi.spyOn(console, 'log').mockImplementation((...values) => logged.push(values)),
       vi.spyOn(console, 'warn').mockImplementation((...values) => logged.push(values)),
     ];
-    let result;
+    let result: ProjectSyncSummary;
     try {
       result = await createProjectSyncService().sync(input(current.hubRoot));
     } finally {
       for (const spy of logSpies) spy.mockRestore();
     }
 
-    expect(result).toMatchObject({ appliedCount: 1, partial: false });
+    expect(result).toMatchObject({
+      appliedCount: 1,
+      partial: true,
+    });
+    expect(result.warnings).toContainEqual(expect.objectContaining({
+      code: 'sanitization-redaction-applied',
+      ruleId: 'path.absolute',
+    }));
     const targets = await readdir(sourcesRoot);
     expect(targets).toHaveLength(1);
     const stored = await readFile(join(sourcesRoot, targets[0] as string), 'utf8');
@@ -272,6 +280,100 @@ describe('hub-bound project sync', () => {
     expect(snapshot).not.toContain(machinePath);
     expect(await git(sourceRoot, ['status', '--porcelain=v1', '--untracked-files=all']))
       .toBe(sourceStatusBefore);
+  });
+
+  it.each([true, false])(
+    'aggregates successful title/body redactions without source values when dryRun=%s',
+    async (dryRun) => {
+      const current = await fixture();
+      const openAiToken = `sk-${'A1b2C3d4E5f6G7h8J9k0LmNo'}`;
+      const headingPath = '/opt/synthetic-buildlore/heading-private.md';
+      const bodyPath = '/etc/synthetic-buildlore/body-private.conf';
+      const secondPath = '/tmp/synthetic-buildlore/second-private.md';
+      await registerProject(current, 'alpha', {
+        'docs/first.md': `# ${headingPath}\n\nbody=${bodyPath}\ntoken=${openAiToken}\n`,
+        'docs/second.md': `# Second\n\nbody=${secondPath}\ntoken=${openAiToken}\n`,
+      });
+
+      const result = await createProjectSyncService().sync(input(current.hubRoot, 'alpha', dryRun));
+
+      expect(result).toMatchObject({
+        dryRun,
+        partial: true,
+        warnings: [
+          {
+            code: 'sanitization-redaction-applied',
+            occurrenceCount: 2,
+            ruleId: 'credential.provider.openai',
+            sourceCount: 2,
+          },
+          {
+            code: 'sanitization-redaction-applied',
+            occurrenceCount: 4,
+            ruleId: 'path.absolute',
+            sourceCount: 2,
+          },
+        ],
+      });
+      expect(result.appliedCount).toBe(dryRun ? 0 : 2);
+      expect(result.remainingCount).toBe(dryRun ? 2 : 0);
+      const serializedWarnings = JSON.stringify(result.warnings);
+      for (const unsafe of [openAiToken, headingPath, bodyPath, secondPath, 'docs/first.md']) {
+        expect(serializedWarnings).not.toContain(unsafe);
+      }
+      expect(serializedWarnings).not.toMatch(/sourceRef|digest|snippet|offset/iu);
+    },
+  );
+
+  it('sorts compatibility and redaction warning variants by code and rule identity', async () => {
+    const current = await fixture();
+    await registerProject(current, 'alpha', {
+      'docs/redacted.md': '# Redacted\n\npath=/opt/synthetic-buildlore/private.md\n',
+    });
+    const delegate = createSourceCollectionAdapter();
+
+    const result = await runHubProjectSync(input(current.hubRoot, 'alpha', true), {
+      collectionAdapter: {
+        collect: async (adapterInput) => {
+          const collected = await delegate.collect(adapterInput);
+          return Object.freeze({
+            ...collected,
+            compatibilityWarnings: Object.freeze([
+              {
+                code: 'p2a-document-compatibility-excluded' as const,
+                sourceArtifact: 'a-source.json',
+              },
+              {
+                code: 'p2a-additive-field-ignored' as const,
+                fieldName: 'future_summary',
+                sourceArtifact: 'z-source.json',
+              },
+            ]),
+          });
+        },
+      },
+      failure: failure(),
+    });
+
+    expect(result.warnings).toEqual([
+      {
+        code: 'p2a-additive-field-ignored',
+        fieldName: 'future_summary',
+        sourceKind: 'planning',
+        sourceRef: 'z-source.json',
+      },
+      {
+        code: 'p2a-document-compatibility-excluded',
+        sourceKind: 'planning',
+        sourceRef: 'a-source.json',
+      },
+      {
+        code: 'sanitization-redaction-applied',
+        occurrenceCount: 1,
+        ruleId: 'path.absolute',
+        sourceCount: 1,
+      },
+    ]);
   });
 
   it('rejects unresolved findings for the whole collection before target inspection', async () => {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -126,6 +126,50 @@ afterEach(async () => {
 });
 
 describe('llm-wiki-compiler offline SDK integration', () => {
+  it('reclaims a dead-owner public SDK lock and keeps a live-owner lock busy', async () => {
+    const provider = await startFakeOpenAiServer();
+    servers.push(provider);
+    setEnvironment('LLMWIKI_PROVIDER', 'openai');
+    setEnvironment('OPENAI_API_KEY', 'fixture-key-not-a-secret');
+    setEnvironment('OPENAI_BASE_URL', provider.baseUrl);
+    setEnvironment('OPENAI_EMBEDDINGS_BASE_URL', provider.baseUrl);
+    setEnvironment('LLMWIKI_MODEL', 'fixture-model');
+    setEnvironment('LLMWIKI_EMBEDDING_MODEL', 'fixture-embedding-model');
+
+    const knowledgeRoot = await mkdtemp(join(process.cwd(), '.test-tmp-compiler-lock-'));
+    temporaryRoots.push(knowledgeRoot);
+    await createProjectSource(knowledgeRoot, 'alpha');
+    await createProjectSource(knowledgeRoot, 'beta');
+    const alphaLock = join(knowledgeRoot, 'projects', 'alpha', '.llmwiki', 'lock');
+    const betaLock = join(knowledgeRoot, 'projects', 'beta', '.llmwiki', 'lock');
+    await Promise.all([
+      mkdir(join(alphaLock, '..'), { recursive: true }),
+      mkdir(join(betaLock, '..'), { recursive: true }),
+    ]);
+    await writeFile(alphaLock, JSON.stringify({ pid: 2_147_483_647 }), 'utf8');
+    const compiler = createProjectCompiler({ knowledgeRoot });
+
+    await expect(compiler.execute({ capability: 'compile', projectId: 'alpha' }))
+      .resolves.toMatchObject({ outcome: 'succeeded', projectId: 'alpha' });
+    await expect(access(alphaLock)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const liveOwner = JSON.stringify({ pid: process.pid });
+    await writeFile(betaLock, liveOwner, 'utf8');
+    const betaWorkspace = join(knowledgeRoot, 'projects', 'beta');
+    const betaBeforeBusy = await treeDigest(betaWorkspace);
+    const providerCallsBeforeBusy = provider.chatCalls + provider.embeddingCalls;
+    await expect(compiler.execute({ capability: 'compile', projectId: 'beta' }))
+      .rejects.toMatchObject({
+        code: 'COMPILER_BUSY',
+        recoveryAction: 'status',
+        retryable: true,
+        sideEffectsPossible: false,
+      });
+    await expect(readFile(betaLock, 'utf8')).resolves.toBe(liveOwner);
+    expect(provider.chatCalls + provider.embeddingCalls).toBe(providerCallsBeforeBusy);
+    await expect(treeDigest(betaWorkspace)).resolves.toBe(betaBeforeBusy);
+  });
+
   it('forwards review:true, returns normalized candidate refs, and stages review output without live-page approval', async () => {
     const provider = await startFakeOpenAiServer();
     servers.push(provider);

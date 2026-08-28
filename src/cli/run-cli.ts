@@ -31,6 +31,7 @@ import {
   type LocalSourceStatus,
   type ProjectSyncPort,
 } from '../projector/index.js';
+import { SECURITY_RULES } from '../sanitizer/index.js';
 import { readSourceCollectionManifest } from '../projector/source-manifest.js';
 import {
   createKnowledgePublicationService,
@@ -561,20 +562,51 @@ function safeKnowledgeRevision(value: unknown): string | null {
 function safeWarnings(data: unknown): readonly { readonly code: string; readonly message: string }[] {
   if (typeof data !== 'object' || data === null || !('warnings' in data) ||
       !Array.isArray(data.warnings)) return [];
-  const codes = data.warnings.map((warning: unknown) => {
+  const redactionRuleIds = new Set(SECURITY_RULES
+    .filter((rule) => rule.action === 'redact')
+    .map((rule) => rule.ruleId));
+  const warnings = data.warnings.map((warning: unknown) => {
     if (typeof warning === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(warning)) {
-      return warning;
+      return Object.freeze({
+        code: warning,
+        message: 'The command completed with a structured warning.',
+      });
     }
     if (typeof warning !== 'object' || warning === null || !('code' in warning) ||
         typeof warning.code !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(warning.code)) {
       return null;
     }
-    return warning.code;
+    if (warning.code !== 'sanitization-redaction-applied') {
+      return Object.freeze({
+        code: warning.code,
+        message: 'The command completed with a structured warning.',
+      });
+    }
+    if (
+      Object.keys(warning).some((key) =>
+        !['code', 'occurrenceCount', 'ruleId', 'sourceCount'].includes(key)) ||
+      !('ruleId' in warning) || typeof warning.ruleId !== 'string' ||
+      !redactionRuleIds.has(warning.ruleId) ||
+      !('occurrenceCount' in warning) || typeof warning.occurrenceCount !== 'number' ||
+      !Number.isSafeInteger(warning.occurrenceCount) || warning.occurrenceCount <= 0 ||
+      !('sourceCount' in warning) || typeof warning.sourceCount !== 'number' ||
+      !Number.isSafeInteger(warning.sourceCount) || warning.sourceCount <= 0 ||
+      warning.sourceCount > warning.occurrenceCount
+    ) return null;
+    return Object.freeze({
+      code: warning.code,
+      message: `Sanitizer rule ${warning.ruleId} redacted ${warning.occurrenceCount} occurrence(s) across ${warning.sourceCount} source(s).`,
+    });
   });
-  if (codes.some((code) => code === null)) return [];
-  return [...new Set(codes as string[])].sort().map((code) => Object.freeze({
-    code,
-    message: 'The command completed with a structured warning.',
+  if (warnings.some((warning) => warning === null)) return [];
+  const unique = new Map<string, Readonly<{ readonly code: string; readonly message: string }>>();
+  for (const warning of warnings) {
+    if (warning !== null) unique.set(`${warning.code}\u0000${warning.message}`, warning);
+  }
+  return Object.freeze([...unique.values()].sort((left, right) => {
+    const leftKey = `${left.code}\u0000${left.message}`;
+    const rightKey = `${right.code}\u0000${right.message}`;
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
   }));
 }
 

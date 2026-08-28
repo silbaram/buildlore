@@ -108,10 +108,10 @@ describe('deterministic sanitizer rules', () => {
     ]);
     expect(Object.isFrozen(SECURITY_RULES)).toBe(true);
     expect(SECURITY_RULES.every((rule) => Object.isFrozen(rule))).toBe(true);
-    expect(SANITIZER_RULES_VERSION).toBe('buildlore.sanitizer-rules.v4');
+    expect(SANITIZER_RULES_VERSION).toBe('buildlore.sanitizer-rules.v5');
   });
 
-  it('rejects a v3 approval and accepts a freshly rescanned v4 approval', async () => {
+  it('rejects a v4 approval and accepts a freshly rescanned v5 approval', async () => {
     const item = await fixture();
     const body = 'stable documentation body';
     const bodyDigest = sha256(body);
@@ -122,7 +122,7 @@ describe('deterministic sanitizer rules', () => {
       inputBodyDigest: bodyDigest,
       policyDigest: sha256('stale-policy'),
       projectId: 'alpha',
-      rulesVersion: 'buildlore.sanitizer-rules.v3',
+      rulesVersion: 'buildlore.sanitizer-rules.v4',
       source: 'buildlore://planning/example',
       sourceKind: 'planning',
       sourceRevisionOrContentSha256: sha256('revision'),
@@ -137,7 +137,7 @@ describe('deterministic sanitizer rules', () => {
       ok: true,
       report: { rulesVersion: SANITIZER_RULES_VERSION },
     });
-    if (!fresh.ok) throw new Error('expected fresh v4 approval');
+    if (!fresh.ok) throw new Error('expected fresh v5 approval');
     expect(consumePreparedSource(fresh.prepared)).toMatchObject({
       approvedBody: body,
       rulesVersion: SANITIZER_RULES_VERSION,
@@ -320,6 +320,42 @@ describe('deterministic sanitizer rules', () => {
     });
   });
 
+  it('redacts every approved POSIX system root without making backticks a bypass', async () => {
+    const item = await fixture();
+    const paths = [
+      '/home/synthetic-buildlore-user/private.md',
+      '/Users/synthetic-buildlore-user/private.md',
+      '/root/synthetic-buildlore/private.md',
+      '/var/synthetic-buildlore/private.md',
+      '/etc/synthetic-buildlore/private.conf',
+      '/opt/synthetic-buildlore/private.md',
+      '/srv/synthetic-buildlore/private.md',
+      '/usr/synthetic-buildlore/private.md',
+      '/tmp/synthetic-buildlore/private.md',
+      '/mnt/synthetic-buildlore/private.md',
+      '/media/synthetic-buildlore/private.md',
+      '/proc/synthetic-buildlore/private',
+      '/dev/synthetic-buildlore-private',
+    ];
+    const body = paths.map((path) => `bounded=\`${path}\``).join('\n');
+
+    const result = await createProjectSecurityService({ knowledgeRoot: item.knowledgeRoot })
+      .prepareSource(request(body));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected approved POSIX root redaction');
+    const approved = consumePreparedSource(result.prepared)?.approvedBody ?? '';
+    for (const value of paths) {
+      expect(approved).not.toContain(value);
+      expect(JSON.stringify(result.report)).not.toContain(value);
+    }
+    expect(approved.match(/<(?:ABSOLUTE_PATH|HOME)>/gu)).toHaveLength(paths.length);
+    expect(result.report.summaries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'redact', ruleId: 'path.absolute' }),
+      expect.objectContaining({ action: 'redact', ruleId: 'path.home' }),
+    ]));
+  });
+
   it('does not classify URLs, relative Markdown, options, or generated identities as paths', async () => {
     const item = await fixture();
     const syntheticHome = '/home/synthetic-buildlore-user';
@@ -333,6 +369,13 @@ describe('deterministic sanitizer rules', () => {
       'https://example.test/a{ref}/srv/reference',
       'http://example.test/reference',
       '[Guide](docs/page.md)',
+      '/starter-runtime',
+      '/starter-runtime/',
+      '`/core`',
+      '| /quality | generated site route |',
+      '@scope/pkg/dist/scene-composition.js',
+      'assets: { baseUrl: "/base" },',
+      'relative-output=dist/scene-composition.js',
       '# Relative heading',
       '--project alpha --json',
       'citation=docs/evidence.md',

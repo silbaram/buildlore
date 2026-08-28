@@ -676,6 +676,85 @@ describe('canonical CLI workflow', () => {
     expect(human.stdout).toContain('warning p2a-additive-field-ignored:');
   });
 
+  it('presents every value-free sanitizer redaction aggregate without code-based loss', async () => {
+    const cwd = await createConfiguredRepository();
+    const sentinel = '/opt/synthetic-buildlore/private-source.md';
+    const runtime: CliRuntime = {
+      cwd,
+      sync: {
+        sync: (input) => Promise.resolve({
+          ...syncSummary(input),
+          partial: true,
+          warnings: [
+            {
+              code: 'sanitization-redaction-applied',
+              occurrenceCount: 2,
+              ruleId: 'credential.provider.openai',
+              sourceCount: 2,
+            },
+            {
+              code: 'sanitization-redaction-applied',
+              occurrenceCount: 4,
+              ruleId: 'path.absolute',
+              sourceCount: 2,
+            },
+          ],
+        }),
+      },
+    };
+
+    const json = await capture(['sync', '--project', 'alpha', '--dry-run', '--json'], runtime);
+    const envelope = JSON.parse(json.stdout) as {
+      readonly data: { readonly warnings: readonly unknown[] };
+      readonly warnings: readonly { readonly code: string; readonly message: string }[];
+    };
+    expect(json).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(envelope.data.warnings).toHaveLength(2);
+    expect(envelope.warnings).toEqual([
+      {
+        code: 'sanitization-redaction-applied',
+        message: 'Sanitizer rule credential.provider.openai redacted 2 occurrence(s) across 2 source(s).',
+      },
+      {
+        code: 'sanitization-redaction-applied',
+        message: 'Sanitizer rule path.absolute redacted 4 occurrence(s) across 2 source(s).',
+      },
+    ]);
+
+    const human = await capture(['sync', '--project', 'alpha', '--dry-run'], runtime);
+    expect(human).toMatchObject({ exitCode: 0, stderr: '' });
+    expect(human.stdout).toContain(envelope.warnings[0]?.message);
+    expect(human.stdout).toContain(envelope.warnings[1]?.message);
+    expect(`${json.stdout}${human.stdout}`).not.toContain(sentinel);
+  });
+
+  it('rejects an impossible sanitizer aggregate at the CLI warning boundary', async () => {
+    const cwd = await createConfiguredRepository();
+    const runtime: CliRuntime = {
+      cwd,
+      sync: {
+        sync: (input) => Promise.resolve({
+          ...syncSummary(input),
+          partial: true,
+          warnings: [{
+            code: 'sanitization-redaction-applied',
+            occurrenceCount: 1,
+            ruleId: 'path.absolute',
+            sourceCount: 2,
+          }],
+        }),
+      },
+    };
+
+    const json = await capture(['sync', '--project', 'alpha', '--dry-run', '--json'], runtime);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      data: { warnings: [{ occurrenceCount: 1, sourceCount: 2 }] },
+      warnings: [],
+    });
+    const human = await capture(['sync', '--project', 'alpha', '--dry-run'], runtime);
+    expect(human.stdout).not.toContain('warning sanitization-redaction-applied:');
+  });
+
   it('returns quality exit 5 and rejects an unknown project before domain execution', async () => {
     const cwd = await createConfiguredRepository();
     const compilerRequests: CompilerRequest[] = [];
