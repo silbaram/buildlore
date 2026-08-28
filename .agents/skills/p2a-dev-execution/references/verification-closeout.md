@@ -19,6 +19,12 @@ p2a runs verify --run-id <id> --artifacts <dir> \
 
 Do not invent verification labels or use `source: manual`/`exitCode: null` as a substitute for execution. A failed or unavailable verification record is immutable; correct the problem and use a new retry run.
 
+When a final verification or review command could not start because of the execution environment, finish that final run as `environment_failure`. The implementation task remains done and only the final evidence run is retried. Reopen implementation only when executed product behavior fails or the review finds a product defect.
+
+A child-process spawn error is an environment failure even if the runtime reports exit status zero. Conversely, an executed verification recorded as `failed` always reopens implementation and must not be hidden by an `environment_failure` label.
+
+A validated blocking visual or acceptance review is also a product failure and takes precedence over unrelated unavailable command evidence.
+
 Shell composition must propagate every evidence-producing command's status. Avoid pipelines or command substitutions that can turn an unavailable command into a false pass. Preflight absolute executables with `test -x`, use a status-preserving wrapper, and inspect non-empty `stderrTail` before finish.
 
 ## Planned checkpoints
@@ -33,8 +39,9 @@ p2a runs checkpoint --run-id <id> --artifacts <dir> --milestone <milestone-id>
 
 ## Conditional reviews
 
+- Optional closeout product review is read-only. Inspect the completed diff, code, tests, and existing current-revision final verification evidence; do not rerun product commands solely because review was selected. Remediation edits return through normal verification.
 - For UI/mixed work or an envelope with `visualContract`, follow `visual-evidence.md`.
-- For acceptance policy `on`, explicit opt-in, or an already-started acceptance run, follow `acceptance-review.md` after non-visual work is integrated. A required visual contract replaces this non-visual review path.
+- For acceptance policy `on` with current-iteration behavior criteria, explicit opt-in, or an already-started acceptance run, follow `acceptance-review.md` after non-visual work is integrated. A valid current-iteration contract with no new behavior criteria skips this review, and a required visual contract replaces it.
 - When the run was started with `--require-monitor`, follow `monitor-gate.md`. Ordinary runs do not load or invoke monitor protocol.
 
 ## Finish
