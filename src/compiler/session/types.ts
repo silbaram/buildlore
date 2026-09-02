@@ -1,7 +1,7 @@
-export const SESSION_COMPILE_PLAN_SCHEMA_VERSION = 'buildlore.compile-plan.v2' as const;
+export const SESSION_COMPILE_PLAN_SCHEMA_VERSION = 'buildlore.compile-plan.v4' as const;
 export const SESSION_COMPILE_PROPOSAL_SCHEMA_VERSION = 'buildlore.compile-proposal.v1' as const;
 export const SESSION_COMPILE_APPLY_RESULT_SCHEMA_VERSION =
-  'buildlore.compile-apply-result.v1' as const;
+  'buildlore.compile-apply-result.v2' as const;
 export const SESSION_COMPILE_PROVENANCE_SCHEMA_VERSION =
   'buildlore.session-compile-provenance.v1' as const;
 export const SESSION_REVIEW_CANDIDATE_SCHEMA_VERSION =
@@ -12,18 +12,20 @@ export const SESSION_CANDIDATE_APPROVAL_SCHEMA_VERSION =
   'buildlore.session-candidate-approval.v1' as const;
 export const SESSION_PROMOTION_PROOF_SCHEMA_VERSION =
   'buildlore.session-promotion-proof.v1' as const;
-export const SESSION_COMPILE_ALGORITHM_VERSION = 'buildlore.session-planner.v1' as const;
+export const SESSION_COMPILE_ALGORITHM_VERSION = 'buildlore.session-planner.v3' as const;
 
 export type SessionSha256Digest = `sha256:${string}`;
 
 export interface SessionCompileLimits {
+  readonly maxApplyProposals: 8192;
   readonly maxCitationsPerPage: 512;
   readonly maxLinksPerPage: 256;
-  readonly maxMergeCandidates: 512;
+  readonly maxMergeCandidates: 131072;
+  readonly maxRelationCandidatesPerTask: 32;
   readonly maxPageBytes: 524288;
   readonly maxPlanBytes: 33554432;
   readonly maxProposalBytes: 524288;
-  readonly maxProposals: 50;
+  readonly maxProposalsPerBatch: 50;
   readonly maxQuoteCodeUnits: 512;
   readonly maxSourceBytes: 524288;
   readonly maxSources: 4096;
@@ -48,7 +50,7 @@ export interface SessionPlannedSource {
   readonly sanitizedBody: string;
   readonly sanitizedContentDigest: SessionSha256Digest;
   readonly sourceId: string;
-  readonly sourceKind: 'markdown' | 'planning';
+  readonly sourceKind: 'code' | 'markdown' | 'planning' | 'text';
   readonly sourceRef: string;
   readonly title: string;
 }
@@ -269,7 +271,7 @@ export interface SessionCompileApproveResultV1 {
   readonly warnings: readonly Readonly<{ readonly code: string }>[];
 }
 
-export interface SessionCompileApplyResultV1 {
+export interface SessionCompileApplyResultV2 {
   readonly schemaVersion: typeof SESSION_COMPILE_APPLY_RESULT_SCHEMA_VERSION;
   readonly projectId: string;
   readonly planDigest: SessionSha256Digest;
@@ -286,9 +288,12 @@ export interface SessionCompileApplyResultV1 {
   readonly warnings: readonly Readonly<{ readonly code: string }>[];
 }
 
+/** @deprecated Use SessionCompileApplyResultV2 for buildlore.compile-apply-result.v2. */
+export type SessionCompileApplyResultV1 = SessionCompileApplyResultV2;
+
 export interface ProjectSessionCompilerPort {
   plan(request: SessionCompilePlanRequest): Promise<SessionCompilePlanV1>;
-  apply(request: SessionCompileApplyRequest): Promise<SessionCompileApplyResultV1>;
+  apply(request: SessionCompileApplyRequest): Promise<SessionCompileApplyResultV2>;
   candidates(request: SessionCompileCandidatesRequest): Promise<SessionCompileCandidatesResultV1>;
   approve(request: SessionCompileApproveRequest): Promise<SessionCompileApproveResultV1>;
 }

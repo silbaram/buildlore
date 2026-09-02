@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/semantic-index.schema.json",
+  "title": "BuildLore project-scoped flat-file semantic index contracts",
+  "oneOf": [
+    { "$ref": "#/$defs/retrievalChunk" },
+    { "$ref": "#/$defs/manifest" },
+    { "$ref": "#/$defs/checksums" },
+    { "$ref": "#/$defs/active" },
+    { "$ref": "#/$defs/buildLedger" }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "citationLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["citationId", "sourceId"],
+      "properties": {
+        "citationId": { "$ref": "#/$defs/id" },
+        "sourceId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "chunker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion", "identityDigest", "kind", "maximumPlanningUtf8Bytes",
+        "maximumTokens", "preserves", "unicodeBoundary"
+      ],
+      "properties": {
+        "contractVersion": { "const": 1 },
+        "identityDigest": {
+          "const": "sha256:dd3957ce328b6bd0301546bbfda8a99d36f11fb313387ff4aa70ffd78da61315"
+        },
+        "kind": { "const": "markdown-structure-token-aware" },
+        "maximumPlanningUtf8Bytes": { "const": 8192 },
+        "maximumTokens": { "const": 512 },
+        "preserves": {
+          "const": ["heading", "paragraph", "list", "table", "fenced-code"]
+        },
+        "unicodeBoundary": { "const": "unicode-cluster-safe-v1" }
+      }
+    },
+    "retrievalChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "pageId", "pageRevision", "sectionId", "chunkId",
+        "rowOrdinal", "segmentOrdinal", "structureOrdinal", "structureKind", "contentDigest",
+        "utf8Bytes", "maximumTokens", "tokenCount", "tokenTruncated", "chunkerDigest",
+        "citationLocators", "eligibility", "skipReason"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.retrieval-chunk.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "pageId": { "$ref": "#/$defs/id" },
+        "pageRevision": { "$ref": "#/$defs/digest" },
+        "sectionId": { "$ref": "#/$defs/id" },
+        "chunkId": { "type": "string", "pattern": "^chunk-[a-f0-9]{64}$" },
+        "rowOrdinal": { "type": "integer", "minimum": 0, "maximum": 49999 },
+        "segmentOrdinal": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "structureOrdinal": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "structureKind": { "enum": ["fenced-code", "heading", "list", "paragraph", "table"] },
+        "contentDigest": { "$ref": "#/$defs/digest" },
+        "utf8Bytes": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "maximumTokens": { "const": 512 },
+        "tokenCount": { "type": "integer", "minimum": 1, "maximum": 512 },
+        "tokenTruncated": { "const": false },
+        "chunkerDigest": {
+          "const": "sha256:dd3957ce328b6bd0301546bbfda8a99d36f11fb313387ff4aa70ffd78da61315"
+        },
+        "citationLocators": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/citationLocator" }
+        },
+        "eligibility": { "const": "eligible" },
+        "skipReason": { "type": "null" }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basename", "bytes", "sha256"],
+      "properties": {
+        "basename": { "enum": ["chunks.jsonl", "vectors.f32"] },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 },
+        "sha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "checksums": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "components", "checksumsDigest"],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.semantic-index-checksums.v1" },
+        "components": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/component" },
+          "x-buildlore-uniqueBy": "basename"
+        },
+        "checksumsDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "generationId", "corpusDigest", "wikiGenerationDigest",
+        "sanitizerPolicyDigest", "chunker", "embeddingIdentity", "metric", "dimensions",
+        "scalarEncoding", "byteOrder", "rowCount", "vectorBytes", "metadataBytes",
+        "componentChecksums", "checksumsDigest", "manifestDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.semantic-index-manifest.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "generationId": { "type": "string", "pattern": "^generation-[a-f0-9]{64}$" },
+        "corpusDigest": { "$ref": "#/$defs/digest" },
+        "wikiGenerationDigest": { "$ref": "#/$defs/digest" },
+        "sanitizerPolicyDigest": { "$ref": "#/$defs/digest" },
+        "chunker": { "$ref": "#/$defs/chunker" },
+        "embeddingIdentity": { "$ref": "./local-embedding.schema.json#/$defs/embeddingIdentity" },
+        "metric": { "const": "cosine" },
+        "dimensions": { "const": 384 },
+        "scalarEncoding": { "const": "float32-little-endian" },
+        "byteOrder": { "const": "little-endian" },
+        "rowCount": { "type": "integer", "minimum": 1, "maximum": 50000 },
+        "vectorBytes": { "type": "integer", "minimum": 1536, "maximum": 76800000 },
+        "metadataBytes": { "type": "integer", "minimum": 1, "maximum": 134217728 },
+        "componentChecksums": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/component" },
+          "x-buildlore-uniqueBy": "basename"
+        },
+        "checksumsDigest": { "$ref": "#/$defs/digest" },
+        "manifestDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "active": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "projectId", "generationId", "manifestDigest"],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.semantic-index-active.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "generationId": { "type": "string", "pattern": "^generation-[a-f0-9]{64}$" },
+        "manifestDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "buildLedger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "buildId", "requestedMode", "effectiveMode",
+        "inputCorpusDigest", "previousGenerationId", "generationId",
+        "embeddingIdentityDigest", "reusedRows", "createdRows", "deletedRows", "skippedRows",
+        "providerUsed", "egress", "durationMilliseconds", "recoveryState",
+        "resultManifestDigest", "ledgerDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.semantic-index-build-ledger.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "buildId": { "type": "string", "pattern": "^build-[a-f0-9]{64}$" },
+        "requestedMode": { "enum": ["full", "incremental"] },
+        "effectiveMode": { "enum": ["full", "incremental"] },
+        "inputCorpusDigest": { "$ref": "#/$defs/digest" },
+        "previousGenerationId": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^generation-[a-f0-9]{64}$" }
+          ]
+        },
+        "generationId": { "type": "string", "pattern": "^generation-[a-f0-9]{64}$" },
+        "embeddingIdentityDigest": { "$ref": "#/$defs/digest" },
+        "reusedRows": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "createdRows": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "deletedRows": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "skippedRows": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "providerUsed": { "const": "local-in-process" },
+        "egress": { "const": "none" },
+        "durationMilliseconds": { "type": "number", "minimum": 0 },
+        "recoveryState": { "const": "complete" },
+        "resultManifestDigest": { "$ref": "#/$defs/digest" },
+        "ledgerDigest": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}

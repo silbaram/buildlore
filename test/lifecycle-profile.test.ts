@@ -7,11 +7,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   createBuildLoreLifecycleProfile,
+  createBuiltInProfileBinding,
   deriveLifecyclePageId,
   evaluateLifecycleReview,
   isLifecycleTransitionAllowed,
   materializeLifecycleProfile,
   parseLifecycleProfile,
+  parseProfileBinding,
+  profileBindingForLegacyResolution,
+  registerProfileBinding,
   renderLifecycleProfile,
   validateLifecycleFixture,
 } from '../src/profile/index.js';
@@ -186,5 +190,40 @@ describe('BuildLore lifecycle profile contract', () => {
     expect(first).toMatch(/^decisions\/[a-f0-9]{64}$/u);
     expect(repeated).toBe(first);
     expect(sibling).not.toBe(first);
+  });
+
+  it('maps general and development profiles to closed adapter bindings', () => {
+    const general = createBuiltInProfileBinding('general', 'en');
+    const development = createBuiltInProfileBinding('development', 'ko');
+    expect(general).toMatchObject({
+      adapters: [{ adapterId: 'buildlore.generic', adapterVersion: 1 }],
+      profileId: 'general',
+      schemaVersion: 'buildlore.profile-binding.v1',
+      upstreamProfile: 'default',
+    });
+    expect(development.adapters.map((entry) => entry.adapterId)).toEqual([
+      'buildlore.generic',
+      'buildlore.p2a',
+    ]);
+    expect(registerProfileBinding(general).sourceAdapters.list().map((entry) => entry.adapterId))
+      .toEqual(['buildlore.generic']);
+    expect(registerProfileBinding(development).sourceAdapters.resolve({
+      adapterId: 'buildlore.p2a',
+      adapterVersion: 1,
+      kind: 'execution',
+    })).toMatchObject({ kind: 'execution', mediaType: 'application/json' });
+    expect(profileBindingForLegacyResolution({
+      mode: 'custom',
+      outputLanguage: 'ko',
+      workspace: '/opaque',
+    })).toEqual(development);
+    expect(() => parseProfileBinding({
+      ...development,
+      adapters: [...development.adapters].reverse(),
+    })).toThrow();
+    expect(() => parseProfileBinding({
+      ...general,
+      upstreamProfile: 'custom',
+    })).toThrow();
   });
 });

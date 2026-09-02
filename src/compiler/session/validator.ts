@@ -71,6 +71,9 @@ function citationMarkers(body: string, projectId: string): readonly string[] {
     markers.push(id);
     match = pattern.exec(visible);
   }
+  if (visible.replace(pattern, '').includes('[^')) {
+    return fail('SESSION_CITATION_INVALID', projectId);
+  }
   return Object.freeze(markers.sort(compareSessionText));
 }
 
@@ -90,6 +93,35 @@ function wikilinkTargets(body: string, projectId: string): readonly string[] {
     return fail('SESSION_LINK_INVALID', projectId);
   }
   return Object.freeze([...new Set(targets)].sort(compareSessionText));
+}
+
+function normalizedTitle(title: string): string {
+  return title.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase();
+}
+
+function isStructuralBlock(block: string): boolean {
+  const lines = block.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  if (lines.length === 0) return true;
+  if (lines.length === 2 && /^ {0,3}(?:=+|-+)$/u.test(lines[1] ?? '')) return true;
+  if (lines.every((line) =>
+    /^#{1,6}(?:\s+|$)/u.test(line) ||
+    /^(?:\*(?:[ \t]*\*){2,}|-(?:[ \t]*-){2,}|_(?:[ \t]*_){2,})$/u.test(line))) {
+    return true;
+  }
+  return lines.every((line) =>
+    /^(?:[-*+]\s+)?(?:see|related(?:\s+pages?)?)\s+\[\[[^\]\r\n]+\]\][.!]?$/iu.test(line));
+}
+
+function citationsCoverEvidence(body: string): boolean {
+  const marker = /\[\^[a-z0-9][a-z0-9._-]{0,127}\](?!:)/u;
+  return outsideFences(body).split(/\n[ \t]*\n/u).every((block) => {
+    if (isStructuralBlock(block)) return true;
+    const withoutMarkers = block.replace(
+      /\[\^[a-z0-9][a-z0-9._-]{0,127}\](?!:)/gu,
+      '',
+    );
+    return !/[\p{L}\p{N}]/u.test(withoutMarkers) || marker.test(block);
+  });
 }
 
 function connectedSources(
@@ -326,7 +358,7 @@ export async function validateSessionProposalBatch(
   knowledgeRoot: string,
   projectId: string,
 ): Promise<ValidatedSessionBatch> {
-  if (proposals.length === 0 || proposals.length > SESSION_COMPILE_LIMITS.maxProposals) {
+  if (proposals.length === 0 || proposals.length > SESSION_COMPILE_LIMITS.maxApplyProposals) {
     return fail('SESSION_CONTRACT_INVALID', projectId);
   }
   const pages = [...proposals].sort((left, right) =>
@@ -334,7 +366,8 @@ export async function validateSessionProposalBatch(
   if (
     new Set(pages.map((proposal) => proposal.proposalId)).size !== pages.length ||
     new Set(pages.map((proposal) => proposal.pageId)).size !== pages.length ||
-    new Set(pages.map((proposal) => proposal.slug)).size !== pages.length
+    new Set(pages.map((proposal) => proposal.slug)).size !== pages.length ||
+    new Set(pages.map((proposal) => normalizedTitle(proposal.title))).size !== pages.length
   ) return fail('SESSION_CONTRACT_INVALID', projectId);
   const first = pages[0];
   if (first === undefined) return fail('SESSION_CONTRACT_INVALID', projectId);
@@ -387,6 +420,9 @@ export async function validateSessionProposalBatch(
     }
     validateProfileFields(proposal, snapshot.profileMode, projectId);
     await validateGeneratedContent(proposal, snapshot, knowledgeRoot, projectId);
+    if (!citationsCoverEvidence(proposal.body)) {
+      return fail('SESSION_CITATION_INVALID', projectId);
+    }
     validated.push(Object.freeze({
       citationBindings: citationBindings(proposal, snapshot, projectId),
       compilerSources: compilerSourceBindings(proposal, snapshot, projectId),

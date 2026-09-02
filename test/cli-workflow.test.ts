@@ -19,6 +19,7 @@ import {
   type SessionCompileProposalV1,
   type SessionReviewCandidateV1,
 } from '../src/compiler/index.js';
+import { createLlmWikiCompilerBackend } from '../src/compiler/backend.js';
 import {
   callerHarnessCompatibilityDigest,
   proposalDigest,
@@ -27,7 +28,12 @@ import {
   createSessionReviewStore,
 } from '../src/compiler/session/review-store.js';
 import { createProjectSessionCompilerForTest } from '../src/compiler/session/service.js';
-import { runCli, type CliIo, type CliRuntime } from '../src/cli/index.js';
+import {
+  HIERARCHICAL_WIKI_ACTIVATION_RESULT_SCHEMA_VERSION,
+  runCli,
+  type CliIo,
+  type CliRuntime,
+} from '../src/cli/index.js';
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import {
   KNOWLEDGE_PUBLISH_PLAN_SCHEMA_VERSION,
@@ -48,14 +54,20 @@ import {
 } from '../src/projector/index.js';
 import {
   createProjectRetrieval,
+  LOCAL_WIKI_INDEX_REBUILD_SCHEMA_VERSION,
+  LOCAL_WIKI_INDEX_STATUS_SCHEMA_VERSION,
+  LocalWikiRetrievalError,
   RETRIEVAL_STRATEGY,
+  RETRIEVAL_RESULT_V2_SCHEMA_VERSION,
   type EmbeddingCompatibility,
+  type LocalWikiOperatorPort,
   type ProjectContextRequest,
   type ProjectContextResult,
   type ProjectSearchRequest,
   type ProjectSearchResult,
 } from '../src/retrieval/index.js';
 import { writeSecurityPolicy } from './fixtures/security-policy.js';
+import type { WikiExportPort, WikiReadPort } from '../src/wiki/index.js';
 
 const temporaryRoots: string[] = [];
 const PLAN_FINGERPRINT =
@@ -70,7 +82,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 function sessionPlanFrom(output: string): SessionCompilePlanV1 {
   const envelope: unknown = JSON.parse(output);
   const data = isRecord(envelope) ? envelope.data : undefined;
-  if (!isRecord(data) || data.schemaVersion !== 'buildlore.compile-plan.v2' ||
+  if (!isRecord(data) || data.schemaVersion !== 'buildlore.compile-plan.v4' ||
       !Array.isArray(data.sources) || !Array.isArray(data.tasks)) {
     throw new Error('invalid session plan CLI envelope');
   }
@@ -492,7 +504,7 @@ describe('canonical CLI workflow', () => {
       plan: (request) => {
         planRequests.push(request);
         return Promise.resolve({
-          schemaVersion: 'buildlore.compile-plan.v2',
+          schemaVersion: 'buildlore.compile-plan.v4',
           projectId: request.projectId,
           planDigest: digest('1'),
           contractDigest: digest('2'),
@@ -501,15 +513,17 @@ describe('canonical CLI workflow', () => {
           selectionDigest: digest('5'),
           sourceManifestDigest: digest('6'),
           existingKnowledgeDigest: digest('7'),
-          algorithmVersion: 'buildlore.session-planner.v1',
+          algorithmVersion: 'buildlore.session-planner.v3',
           limits: {
             maxCitationsPerPage: 512,
             maxLinksPerPage: 256,
-            maxMergeCandidates: 512,
+            maxMergeCandidates: 131072,
+            maxRelationCandidatesPerTask: 32,
             maxPageBytes: 524288,
             maxPlanBytes: 33554432,
             maxProposalBytes: 524288,
-            maxProposals: 50,
+            maxApplyProposals: 8192,
+            maxProposalsPerBatch: 50,
             maxQuoteCodeUnits: 512,
             maxSourceBytes: 524288,
             maxSources: 4096,
@@ -524,7 +538,7 @@ describe('canonical CLI workflow', () => {
       apply: (request) => {
         applyRequests.push(request);
         return Promise.resolve({
-          schemaVersion: 'buildlore.compile-apply-result.v1',
+          schemaVersion: 'buildlore.compile-apply-result.v2',
           projectId: request.projectId,
           planDigest: digest('1'),
           batchDigest: digest('8'),
@@ -598,7 +612,7 @@ describe('canonical CLI workflow', () => {
 
     expect(JSON.parse(planned.stdout)).toMatchObject({
       command: 'compile.plan',
-      data: { schemaVersion: 'buildlore.compile-plan.v2' },
+      data: { schemaVersion: 'buildlore.compile-plan.v4' },
       ok: true,
     });
     expect(JSON.parse(applied.stdout)).toMatchObject({
@@ -718,6 +732,15 @@ describe('canonical CLI workflow', () => {
       'compile', 'approve', '--project', 'alpha', '--candidate',
       freshCandidate.candidateId, '--json',
     ], { cwd });
+    const historicalFixture: unknown = JSON.parse(await readFile(
+      new URL('./fixtures/hierarchical-corpus-negative.json', import.meta.url),
+      'utf8',
+    ));
+    if (!isRecord(historicalFixture) ||
+        !isRecord(historicalFixture.expectedLegacyApprovalCheck)) {
+      throw new Error('invalid historical approval check expectation');
+    }
+    const historicalExpectation = historicalFixture.expectedLegacyApprovalCheck;
 
     expect(listed.exitCode).toBe(0);
     expect(JSON.parse(listed.stdout)).toMatchObject({
@@ -728,16 +751,38 @@ describe('canonical CLI workflow', () => {
       command: 'compile.approve',
       data: {
         candidateId: freshCandidate.candidateId,
-        outcome: 'approved',
-        providerUsed: false,
+        outcome: historicalExpectation.approvalOutcome,
+        providerUsed: historicalExpectation.providerUsed,
+        sideEffectsPossible: historicalExpectation.sideEffectsPossible,
         warnings: [],
       },
       ok: true,
     });
-    await expect(store.listProofs()).resolves.toMatchObject([{
+    const freshProof = await store.readProof(freshCandidate.candidateId);
+    expect(freshProof).toMatchObject({
       candidateId: freshCandidate.candidateId,
+      candidateDigest: freshCandidate.candidateDigest,
       pageId: freshCandidate.pageId,
-    }]);
+      projectId: 'alpha',
+    });
+    const checkedAfterApproval = await capture([
+      'check', '--project', 'alpha', '--json',
+    ], { cwd });
+    expect(checkedAfterApproval.exitCode).toBe(historicalExpectation.checkExitCode);
+    expect(JSON.parse(checkedAfterApproval.stderr)).toMatchObject({
+      command: 'check',
+      data: {
+        gateCodes: historicalExpectation.gateCodes,
+        passed: false,
+        status: {
+          pendingChangesCount: historicalExpectation.pendingChangesCount,
+          sourceCount: historicalExpectation.sourceCount,
+          stateStatus: historicalExpectation.stateStatus,
+        },
+      },
+      errors: [{ code: historicalExpectation.errorCode }],
+      ok: false,
+    });
 
     const recoveryPlanResult = await capture([
       'compile', 'plan', '--project', 'alpha', '--json',
@@ -822,7 +867,150 @@ describe('canonical CLI workflow', () => {
     ]));
     expect(retrieval.hits.flatMap((hit) => hit.sourceRefs)
       .filter((sourceRef) => sourceRef.startsWith('okf:'))).toEqual([]);
-  });
+  }, 15_000);
+
+  it('applies more than 50 pages through the real CLI and carries every candidate through approval, proof, and retrieval', async () => {
+    const cwd = await createConfiguredRepository();
+    const knowledgeRoot = join(cwd, 'knowledge');
+    const workspace = join(knowledgeRoot, 'projects', 'alpha');
+    await writeSecurityPolicy(knowledgeRoot, 'alpha');
+    const synchronized = await capture(['sync', '--project', 'alpha', '--json'], { cwd });
+    expect(synchronized.exitCode, synchronized.stderr).toBe(0);
+
+    const planned = await capture(['compile', 'plan', '--project', 'alpha', '--json'], { cwd });
+    expect(planned.exitCode, planned.stderr).toBe(0);
+    const plan = sessionPlanFrom(planned.stdout);
+    const proposalFiles = await Promise.all(Array.from({ length: 51 }, async (_, index) => {
+      const suffix = String(index).padStart(3, '0');
+      return writeSessionProposal(cwd, plan, {
+        body: suffix === '050'
+          ? [
+              '# Literal citation fixture',
+              '',
+              '```text',
+              '^[fenced-example]',
+              '```',
+              '',
+              `Bulk E2E evidence token bulk-e2e-token-${suffix} with ^[example].`,
+            ].join('\n')
+          : `Bulk E2E evidence token bulk-e2e-token-${suffix}.`,
+        slug: `bulk-cli-${suffix}`,
+        summary: `Bulk CLI approval proof ${suffix}.`,
+        title: `Bulk CLI page ${suffix}`,
+      });
+    }));
+    const applied = await capture([
+      'compile', 'apply', '--project', 'alpha',
+      ...proposalFiles.flatMap((path) => ['--page', path]),
+      '--json',
+    ], { cwd });
+    expect(applied.exitCode, applied.stderr).toBe(0);
+    expect(JSON.parse(applied.stdout)).toMatchObject({
+      command: 'compile.apply',
+      data: { admittedCount: 51, heldCount: 51, reviewRequired: true },
+      ok: true,
+    });
+
+    const listed = await capture([
+      'compile', 'candidates', '--project', 'alpha', '--json',
+    ], { cwd });
+    expect(listed.exitCode, listed.stderr).toBe(0);
+    const listEnvelope: unknown = JSON.parse(listed.stdout);
+    if (!isRecord(listEnvelope) || !isRecord(listEnvelope.data) ||
+        !Array.isArray(listEnvelope.data.candidates)) {
+      throw new Error('invalid bulk candidate-list envelope fixture');
+    }
+    expect(listEnvelope.data).toMatchObject({
+      legacyPendingCount: 0,
+      managedPendingCount: 51,
+    });
+    const candidates: Array<Readonly<{
+      readonly candidateId: string;
+      readonly pageId: string;
+      readonly slug: string;
+    }>> = [];
+    for (const value of listEnvelope.data.candidates) {
+      if (!isRecord(value) || typeof value.candidateId !== 'string' ||
+          typeof value.pageId !== 'string' || typeof value.slug !== 'string') {
+        throw new Error('invalid bulk candidate summary fixture');
+      }
+      candidates.push(Object.freeze({
+        candidateId: value.candidateId,
+        pageId: value.pageId,
+        slug: value.slug,
+      }));
+    }
+    expect(candidates).toHaveLength(51);
+    const secondChunkCandidate = candidates.find((candidate) => candidate.slug === 'bulk-cli-050');
+    if (secondChunkCandidate === undefined) throw new Error('missing second-chunk candidate');
+
+    for (const candidate of candidates) {
+      const approved = await capture([
+        'compile', 'approve', '--project', 'alpha', '--candidate',
+        candidate.candidateId, '--json',
+      ], { cwd });
+      expect(approved.exitCode, `${candidate.slug}: ${approved.stderr}`).toBe(0);
+    }
+    const store = createSessionReviewStore(workspace, 'alpha');
+    await expect(store.list()).resolves.toEqual([]);
+    const proofs = await store.listProofs();
+    expect(proofs).toHaveLength(51);
+    expect(proofs).toEqual(expect.arrayContaining([expect.objectContaining({
+      candidateId: secondChunkCandidate.candidateId,
+      pageId: secondChunkCandidate.pageId,
+    })]));
+    const secondChunkProof = proofs.find((proof) =>
+      proof.candidateId === secondChunkCandidate.candidateId);
+    const citationBinding = secondChunkProof?.citationBindings[0];
+    if (citationBinding === undefined) throw new Error('missing second-chunk citation proof');
+    const finalPage = await readFile(
+      join(workspace, 'wiki', `${secondChunkCandidate.pageId}.md`),
+      'utf8',
+    );
+    expect(finalPage).toContain('^\\[example]');
+    expect(finalPage).not.toContain('^[example]');
+    expect(finalPage).toContain('```text\n^[fenced-example]\n```');
+
+    const exported: unknown = await createLlmWikiCompilerBackend().exportProject(
+      workspace,
+      'alpha',
+    );
+    if (!isRecord(exported) || !Array.isArray(exported.pages)) {
+      throw new Error('invalid bulk export fixture');
+    }
+    const exportedPage: unknown = exported.pages.find((value: unknown) =>
+      isRecord(value) && value.path === `wiki/${secondChunkCandidate.pageId}.md`);
+    if (!isRecord(exportedPage) || typeof exportedPage.body !== 'string' ||
+        !Array.isArray(exportedPage.citations)) {
+      throw new Error('missing bulk exported page fixture');
+    }
+    expect(exportedPage.body).toContain('^\\[example]');
+    expect(exportedPage.body).not.toContain('^[example]');
+    expect(exportedPage.body).toContain('```text\n^[fenced-example]\n```');
+    expect(exportedPage.citations).toEqual([{
+      end: citationBinding.originalLine,
+      file: citationBinding.compilerSourceId,
+      start: citationBinding.originalLine,
+    }]);
+
+    const searched = await capture([
+      'search', '--project', 'alpha', '--query', 'bulk-e2e-token-050',
+      '--mode', 'lexical', '--json',
+    ], { cwd });
+    expect(searched.exitCode, searched.stderr).toBe(0);
+    const searchEnvelope: unknown = JSON.parse(searched.stdout);
+    expect(searchEnvelope).toMatchObject({
+      data: { excluded: { unverified: 0 } },
+      ok: true,
+    });
+    if (!isRecord(searchEnvelope) || !isRecord(searchEnvelope.data) ||
+        !Array.isArray(searchEnvelope.data.hits)) {
+      throw new Error('invalid bulk search envelope fixture');
+    }
+    expect(searchEnvelope.data.hits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ pageId: secondChunkCandidate.pageId }),
+    ]));
+  }, 180_000);
 
   it('runs the credential-free empty non-Git workflow, proves sync dry-run byte and Git invariance without compiler or provider calls, and completes init through query', async () => {
     const cwd = await createConfiguredRepository();
@@ -1138,6 +1326,251 @@ describe('canonical CLI workflow', () => {
     expect(retrievalCalls).toBe(0);
   });
 
+  it('routes the complete durable hierarchy lifecycle without launching an agent', async () => {
+    const cwd = await createConfiguredRepository();
+    const runId = `run-${'a'.repeat(64)}`;
+    const calls: Readonly<{ readonly args: readonly unknown[]; readonly operation: string }>[] = [];
+    const hierarchyWorkflow = new Proxy({}, {
+      get: (_target, property) => (...args: readonly unknown[]) => {
+        calls.push(Object.freeze({ args, operation: String(property) }));
+        return Promise.resolve(Object.freeze({ operation: String(property) }));
+      },
+    }) as unknown as NonNullable<CliRuntime['hierarchyWorkflow']>;
+    const runtime: CliRuntime = { cwd, hierarchyWorkflow };
+    const commands = [
+      ['compile', 'hierarchy', 'start', '--project', 'alpha', '--purpose', 'purpose.json'],
+      ['compile', 'hierarchy', 'status', '--project', 'alpha', '--run', runId],
+      [
+        'compile', 'hierarchy', 'submit', '--project', 'alpha', '--run', runId,
+        '--input', 'proposal.json', '--expect-exchange', digest('1'),
+      ],
+      [
+        'compile', 'hierarchy', 'child-review', '--project', 'alpha', '--run', runId,
+        '--input', 'child-review.json', '--expect-review', digest('2'),
+      ],
+      ['compile', 'hierarchy', 'review', '--project', 'alpha', '--run', runId],
+      [
+        'compile', 'hierarchy', 'finalize', '--project', 'alpha', '--run', runId,
+        '--input', 'final-review.json', '--expect-review', digest('3'),
+      ],
+      [
+        'compile', 'hierarchy', 'approve', '--project', 'alpha', '--run', runId,
+        '--expect-ledger', digest('4'), '--confirm-approval',
+      ],
+    ] as const;
+
+    for (const args of commands) {
+      const result = await capture([...args, '--json'], runtime);
+      expect(result.exitCode).toBe(0);
+    }
+    expect(calls).toEqual([
+      { args: ['alpha', 'purpose.json'], operation: 'start' },
+      { args: ['alpha', runId], operation: 'status' },
+      { args: ['alpha', runId, 'proposal.json', digest('1')], operation: 'submit' },
+      { args: ['alpha', runId, 'child-review.json', digest('2')], operation: 'childReview' },
+      { args: ['alpha', runId], operation: 'review' },
+      { args: ['alpha', runId, 'final-review.json', digest('3')], operation: 'finalize' },
+      { args: ['alpha', runId, digest('4'), true], operation: 'approve' },
+    ]);
+  });
+
+  it('prefers active hierarchy list and raw page reads over the legacy Wiki surface', async () => {
+    const cwd = await createConfiguredRepository();
+    const pageId = `page-${'a'.repeat(64)}`;
+    const calls: string[] = [];
+    const localWiki = {
+      listPages: (input: Readonly<{ readonly projectId: string }>) => {
+        calls.push(`active-list:${input.projectId}`);
+        return Promise.resolve({ projectId: input.projectId, surface: 'active-list' });
+      },
+      pageCitations: (input: Readonly<{ readonly pageId: string; readonly projectId: string }>) => {
+        calls.push(`active-citations:${input.projectId}:${input.pageId}`);
+        return Promise.resolve({ pageId: input.pageId, surface: 'active-citations' });
+      },
+      readPage: (input: Readonly<{ readonly pageId: string; readonly projectId: string }>) => {
+        calls.push(`active-read:${input.projectId}:${input.pageId}`);
+        return Promise.resolve({ pageId: input.pageId, surface: 'active-read' });
+      },
+    } as unknown as LocalWikiOperatorPort;
+    const wikiRead = {
+      citations: () => Promise.reject(new Error('legacy citations must not run')),
+      list: () => Promise.reject(new Error('legacy list must not run')),
+      read: () => Promise.reject(new Error('legacy read must not run')),
+    } as WikiReadPort;
+    const runtime: CliRuntime = { cwd, localWiki, wikiRead };
+
+    const listed = await capture(['wiki', 'list', '--project', 'alpha', '--json'], runtime);
+    const read = await capture([
+      'wiki', 'read', '--project', 'alpha', '--page', pageId, '--json',
+    ], runtime);
+    const citations = await capture([
+      'wiki', 'citations', '--project', 'alpha', '--page', pageId, '--json',
+    ], runtime);
+
+    for (const result of [listed, read, citations]) expect(result.exitCode).toBe(0);
+    expect(calls).toEqual([
+      'active-list:alpha',
+      `active-read:alpha:${pageId}`,
+      `active-citations:alpha:${pageId}`,
+    ]);
+  });
+
+  it('routes graph search and explicit semantic index operations through the local Wiki operator', async () => {
+    const cwd = await createConfiguredRepository();
+    const calls: unknown[] = [];
+    const localWiki = {
+      indexStatus(projectId: string) {
+        calls.push({ operation: 'status', projectId });
+        return Promise.resolve({
+          schemaVersion: LOCAL_WIKI_INDEX_STATUS_SCHEMA_VERSION,
+          projectId,
+          projection: { projectId, state: 'none' },
+          reasonCode: 'approved-wiki-projection-unavailable',
+          recoveryAction: ['compile', 'activate', '--project', projectId],
+          semanticUsable: false,
+          semanticIndex: { projectId, state: 'none' },
+        });
+      },
+      rebuildIndex(input: Readonly<{ readonly full?: boolean; readonly projectId: string }>) {
+        calls.push({ input, operation: 'rebuild' });
+        return Promise.resolve({
+          schemaVersion: LOCAL_WIKI_INDEX_REBUILD_SCHEMA_VERSION,
+          projectId: input.projectId,
+          requestedMode: input.full === true ? 'full' : 'incremental',
+          result: { outcome: 'activated' },
+        });
+      },
+      search(request: Readonly<{
+        readonly mode?: 'graph' | 'hybrid' | 'lexical' | 'semantic';
+        readonly projectId: string;
+        readonly query: string;
+      }>) {
+        calls.push({ operation: 'search', request });
+        if (request.mode === 'semantic') {
+          return Promise.reject(new LocalWikiRetrievalError('LOCAL_WIKI_SEMANTIC_UNAVAILABLE', {
+            reasonCode: 'semantic-index-unavailable',
+            recoveryAction: ['index', 'rebuild', '--project', request.projectId],
+          }));
+        }
+        return Promise.resolve({
+          schemaVersion: RETRIEVAL_RESULT_V2_SCHEMA_VERSION,
+          projectId: request.projectId,
+          requestedMode: request.mode ?? 'hybrid',
+          effectiveMode: 'lexical-graph',
+          effectiveChannels: ['lexical', 'graph'],
+          fallback: null,
+          fusionPolicy: null,
+          hits: [],
+          identity: {
+            embeddingIdentityDigest: null,
+            indexGenerationId: null,
+            indexManifestDigest: null,
+          },
+          providerUsed: 'none',
+          egress: 'none',
+        });
+      },
+    } as unknown as LocalWikiOperatorPort;
+    const runtime: CliRuntime = {
+      cwd,
+      hierarchyActivation: {
+        activate(input) {
+          calls.push({ input, operation: 'activate' });
+          return Promise.resolve({
+            schemaVersion: HIERARCHICAL_WIKI_ACTIVATION_RESULT_SCHEMA_VERSION,
+            corpusDigest: digest('1'),
+            egress: 'none',
+            generationDigest: digest('2'),
+            materialization: {
+              fileCount: 2,
+              generationDigest: digest('2'),
+              materializationDigest: digest('5'),
+              pageCount: 1,
+              projectId: input.projectId,
+              schemaVersion: 'buildlore.hierarchical-markdown-materialization-status.v1',
+              state: 'ready',
+            },
+            pageCount: 1,
+            projectId: input.projectId,
+            projectionDigest: digest('3'),
+            providerUsed: 'none',
+          });
+        },
+      },
+      localWiki,
+    };
+
+    const activated = await capture([
+      'compile', 'activate', '--project', 'alpha', '--input',
+      '.buildlore/approved-wiki.json', '--confirm-approval', digest('4'), '--json',
+    ], runtime);
+    expect(activated.exitCode).toBe(0);
+    expect(JSON.parse(activated.stdout)).toMatchObject({
+      command: 'compile.activate',
+      data: { egress: 'none', pageCount: 1, providerUsed: 'none' },
+      ok: true,
+    });
+
+    const status = await capture(['index', 'status', '--project', 'alpha', '--json'], runtime);
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      command: 'index.status',
+      data: { projection: { state: 'none' }, semanticIndex: { state: 'none' } },
+      ok: true,
+    });
+    const rebuild = await capture([
+      'index', 'rebuild', '--project', 'alpha', '--full', '--json',
+    ], runtime);
+    expect(rebuild.exitCode).toBe(0);
+    expect(JSON.parse(rebuild.stdout)).toMatchObject({
+      command: 'index.rebuild',
+      data: { requestedMode: 'full', result: { outcome: 'activated' } },
+      ok: true,
+    });
+    const searched = await capture([
+      'search', '--project', 'alpha', '--query', 'related design', '--mode', 'graph', '--json',
+    ], runtime);
+    expect(searched.exitCode).toBe(0);
+    expect(JSON.parse(searched.stdout)).toMatchObject({
+      command: 'search',
+      data: { effectiveChannels: ['lexical', 'graph'], requestedMode: 'graph' },
+      ok: true,
+    });
+    const semantic = await capture([
+      'search', '--project', 'alpha', '--query', 'related design', '--mode', 'semantic', '--json',
+    ], runtime);
+    expect(semantic.exitCode).toBe(4);
+    expect(JSON.parse(semantic.stderr)).toMatchObject({
+      command: 'search',
+      errors: [{
+        code: 'LOCAL_WIKI_SEMANTIC_UNAVAILABLE',
+        reasonCode: 'semantic-index-unavailable',
+        recoveryCommand: ['index', 'rebuild', '--project', 'alpha'],
+      }],
+      ok: false,
+    });
+    expect(calls).toEqual([
+      {
+        input: {
+          confirmationDigest: digest('4'),
+          inputFile: '.buildlore/approved-wiki.json',
+          projectId: 'alpha',
+        },
+        operation: 'activate',
+      },
+      { operation: 'status', projectId: 'alpha' },
+      { input: { full: true, projectId: 'alpha' }, operation: 'rebuild' },
+      {
+        operation: 'search',
+        request: { mode: 'graph', projectId: 'alpha', query: 'related design' },
+      },
+      {
+        operation: 'search',
+        request: { mode: 'semantic', projectId: 'alpha', query: 'related design' },
+      },
+    ]);
+  });
+
   it('binds explicit publish and pin commands and presents canonical outcomes with stable exits', async () => {
     const cwd = await createConfiguredRepository();
     const planInputs: KnowledgePublishPlanInput[] = [];
@@ -1411,5 +1844,227 @@ describe('canonical CLI workflow', () => {
       ok: false,
     });
     expect(pushInputs).toHaveLength(1);
+  });
+
+  it('routes provider-free Wiki read and export commands through project-scoped ports', async () => {
+    const cwd = await createConfiguredRepository();
+    const calls: string[] = [];
+    const wikiRead: WikiReadPort = {
+      citations: (input) => {
+        calls.push(`citations:${input.projectId}:${input.pageRef}`);
+        return Promise.resolve({
+          citations: [],
+          pageRef: 'concepts/local-search',
+          projectId: input.projectId,
+          schemaVersion: 'buildlore.wiki-citations.v1',
+        });
+      },
+      list: (input) => {
+        calls.push(`list:${input.projectId}:${String(input.limit)}`);
+        return Promise.resolve({
+          pages: [],
+          projectId: input.projectId,
+          schemaVersion: 'buildlore.wiki-list.v1',
+          total: 0,
+        });
+      },
+      read: (input) => {
+        calls.push(`read:${input.projectId}:${input.pageRef}`);
+        return Promise.resolve({
+          body: 'Verified page body.',
+          pageRef: 'concepts/local-search',
+          projectId: input.projectId,
+          schemaVersion: 'buildlore.wiki-page.v1',
+          sourceCount: 1,
+          sourceRefs: [`markdown--${'a'.repeat(64)}.md`],
+          summary: 'Verified summary.',
+          title: 'Local Search',
+          verified: true,
+        });
+      },
+    };
+    const wikiExport: WikiExportPort = {
+      export: (input) => {
+        calls.push(`export:${input.projectId}:${input.format}`);
+        return Promise.resolve({
+          digest: `sha256:${'b'.repeat(64)}`,
+          fileCount: 1,
+          format: input.format,
+          pageCount: 1,
+          projectId: input.projectId,
+          schemaVersion: 'buildlore.wiki-export.v1',
+        });
+      },
+    };
+    const runtime: CliRuntime = { cwd, wikiExport, wikiRead };
+
+    const listed = await capture(
+      ['wiki', 'list', '--project', 'alpha', '--limit', '25', '--json'],
+      runtime,
+    );
+    const read = await capture(
+      ['wiki', 'read', '--project', 'alpha', '--page', 'concepts/local-search', '--json'],
+      runtime,
+    );
+    const citations = await capture(
+      ['wiki', 'citations', '--project', 'alpha', '--page', 'concepts/local-search', '--json'],
+      runtime,
+    );
+    const exported = await capture([
+      'export', '--project', 'alpha', '--format', 'json', '--output', 'exports/alpha', '--json',
+    ], runtime);
+
+    for (const result of [listed, read, citations, exported]) expect(result.exitCode).toBe(0);
+    expect(JSON.parse(read.stdout)).toMatchObject({
+      command: 'wiki.read',
+      data: { body: 'Verified page body.', pageRef: 'concepts/local-search' },
+      projectId: 'alpha',
+    });
+    expect(JSON.parse(exported.stdout)).toMatchObject({
+      command: 'export',
+      data: { format: 'json', pageCount: 1 },
+      projectId: 'alpha',
+    });
+    expect(calls).toEqual([
+      'list:alpha:25',
+      'read:alpha:concepts/local-search',
+      'citations:alpha:concepts/local-search',
+      'export:alpha:json',
+    ]);
+  });
+
+  it('routes model-free Wiki curate as a project-scoped read-only operation', async () => {
+    const cwd = await createConfiguredRepository();
+    const calls: string[] = [];
+    const localWiki: LocalWikiOperatorPort = {
+      curate: (input) => {
+        calls.push(`curate:${input.projectId}`);
+        return Promise.resolve({
+          authorityCheckDigest: digest('a'),
+          candidateCount: 0,
+          corpusDigest: digest('b'),
+          egress: 'none',
+          generationDigest: digest('c'),
+          modelUsed: 'none',
+          mutationApplied: false,
+          projectId: input.projectId,
+          projectionDigest: digest('d'),
+          providerUsed: 'none',
+          readOnly: true,
+          resultDigest: digest('e'),
+          sanitizerPolicyDigest: digest('f'),
+          schemaVersion: 'buildlore.model-free-wiki-curate-result.v1',
+          suggestionCount: 0,
+          suggestions: [],
+          truncated: false,
+        });
+      },
+      indexStatus: () => Promise.reject(new Error('index status must not run')),
+      listPages: () => Promise.reject(new Error('list must not run')),
+      pageCitations: () => Promise.reject(new Error('citations must not run')),
+      readPage: () => Promise.reject(new Error('read must not run')),
+      rebuildIndex: () => Promise.reject(new Error('rebuild must not run')),
+      search: () => Promise.reject(new Error('search must not run')),
+    };
+
+    const result = await capture(
+      ['wiki', 'curate', '--project', 'alpha', '--json'],
+      { cwd, localWiki },
+    );
+    const human = await capture(
+      ['wiki', 'curate', '--project', 'alpha'],
+      { cwd, localWiki },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      command: 'wiki.curate',
+      data: {
+        egress: 'none',
+        mutationApplied: false,
+        projectId: 'alpha',
+        providerUsed: 'none',
+        readOnly: true,
+      },
+      projectId: 'alpha',
+    });
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toContain('wiki.curate: ok');
+    expect(human.stdout).toContain('"mutationApplied": false');
+    expect(calls).toEqual(['curate:alpha', 'curate:alpha']);
+
+    const rejected = await capture(
+      ['wiki', 'curate', '--project', 'alpha', '--json'],
+      {
+        cwd,
+        localWiki: Object.freeze({
+          ...localWiki,
+          curate: () => Promise.reject(
+            new LocalWikiRetrievalError('LOCAL_WIKI_PROJECTION_INVALID'),
+          ),
+        }),
+      },
+    );
+    expect(rejected.exitCode).toBe(3);
+    expect(JSON.parse(rejected.stderr)).toMatchObject({
+      command: 'wiki.curate',
+      errors: [{ code: 'LOCAL_WIKI_PROJECTION_INVALID' }],
+      ok: false,
+      projectId: 'alpha',
+    });
+  });
+
+  it('routes path-free model operations without project or knowledge state', async () => {
+    const calls: string[] = [];
+    const runtime: CliRuntime = {
+      cwd: '/private/hub',
+      localModels: {
+        bind: (input) => {
+          calls.push(`bind:${input.profileId}:${input.directory === undefined ? 'default' : 'set'}`);
+          return Promise.resolve({
+            outcome: 'created',
+            profileId: input.profileId,
+            state: 'unavailable',
+          });
+        },
+        inspect: (profileId) => {
+          calls.push(`inspect:${profileId}`);
+          return Promise.resolve({
+            activeIdentity: null,
+            profileId,
+            reasonCode: 'binding-stale',
+            recoveryAction: ['model', 'verify', '--profile', profileId],
+            state: 'unavailable',
+          });
+        },
+        verify: (profileId) => {
+          calls.push(`verify:${profileId}`);
+          return Promise.resolve({
+            activeIdentity: null,
+            profileId,
+            reasonCode: 'artifact-missing',
+            recoveryAction: ['model', 'verify', '--profile', profileId],
+            state: 'unavailable',
+          });
+        },
+      },
+    };
+    const bound = await capture([
+      'model', 'bind', '--profile', 'multilingual-e5-small',
+      '--directory', '/private/user/model', '--json',
+    ], runtime);
+    const inspected = await capture([
+      'model', 'inspect', '--profile', 'multilingual-e5-small', '--json',
+    ], runtime);
+    const verified = await capture([
+      'model', 'verify', '--profile', 'multilingual-e5-small', '--json',
+    ], runtime);
+    expect([bound.exitCode, inspected.exitCode, verified.exitCode]).toEqual([0, 0, 0]);
+    expect(`${bound.stdout}${inspected.stdout}${verified.stdout}`).not.toContain('/private');
+    expect(calls).toEqual([
+      'bind:multilingual-e5-small:set',
+      'inspect:multilingual-e5-small',
+      'verify:multilingual-e5-small',
+    ]);
   });
 });

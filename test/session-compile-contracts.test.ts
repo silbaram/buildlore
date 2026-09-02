@@ -205,7 +205,7 @@ describe('session compile proposal contract', () => {
     await expect(compiler.apply({
       projectId: 'alpha',
       proposalFiles: Array.from(
-        { length: SESSION_COMPILE_LIMITS.maxProposals + 1 },
+        { length: SESSION_COMPILE_LIMITS.maxApplyProposals + 1 },
         (_, index) => `proposal-${String(index)}.json`,
       ),
     })).rejects.toMatchObject({ code: 'SESSION_CONTRACT_INVALID' });
@@ -250,8 +250,12 @@ describe('session compile proposal contract', () => {
 
     expect(schemas.every((schema) => schema.additionalProperties === false)).toBe(true);
     expect((schemas[0]?.properties as Record<string, unknown>).schemaVersion).toEqual({
-      const: 'buildlore.compile-plan.v2',
+      const: 'buildlore.compile-plan.v4',
     });
+    const planLimits = (((schemas[0]?.properties as Record<string, unknown>).limits as
+      Record<string, unknown>).properties as Record<string, Record<string, unknown>>);
+    expect(planLimits.maxApplyProposals?.const).toBe(8192);
+    expect(planLimits.maxProposalsPerBatch?.const).toBe(50);
     expect((schemas[1]?.properties as Record<string, unknown>).schemaVersion).toEqual({
       const: 'buildlore.compile-proposal.v1',
     });
@@ -282,6 +286,11 @@ describe('session compile proposal contract', () => {
     expect(schemas[1]?.allOf).toHaveLength(4);
     expect(((schemas[2]?.properties as Record<string, unknown>).admissionKind as
       Record<string, unknown>).const).toBe('buildlore-review');
+    expect((schemas[2]?.properties as Record<string, unknown>).schemaVersion).toEqual({
+      const: 'buildlore.compile-apply-result.v2',
+    });
+    expect(((schemas[2]?.properties as Record<string, unknown>).candidateRefs as
+      Record<string, unknown>).maxItems).toBe(8192);
     expect(((schemas[2]?.properties as Record<string, unknown>).warnings as
       Record<string, unknown>).maxItems).toBe(32);
     expect((schemas[3]?.properties as Record<string, unknown>).schemaVersion).toEqual({

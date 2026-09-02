@@ -30,6 +30,7 @@ import {
 import { createProjectSessionCompilerForTest } from '../src/compiler/session/service.js';
 import type { SessionCompilePlanSnapshot } from '../src/compiler/session/source-planner.js';
 import { validateSessionProposalBatch } from '../src/compiler/session/validator.js';
+import { SessionCompileError } from '../src/compiler/session/errors.js';
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
@@ -38,6 +39,8 @@ const DIGEST = `sha256:${'a'.repeat(64)}` as const;
 const SOURCE_ID = 'source-248eb69e525940ece2494f96cf814deae1620a9fb4d6b231b3cae35a053cbbe1' as const;
 const TASK_ID = `task-${'c'.repeat(64)}` as const;
 const QUOTE = 'Original public evidence.';
+const ENTROPY_PAGE_SLUG =
+  'q7w6e5r4t3y2u1i0o9p8-asdfghjklzxcvbnm1234567890';
 
 let knowledgeRoot: string;
 let snapshot: SessionCompilePlanSnapshot;
@@ -152,6 +155,53 @@ function proposal(
   return Object.freeze({ ...draft, proposalDigest: proposalDigest(draft) });
 }
 
+function numberedProposal(
+  index: number,
+  boundPlan: SessionCompilePlanV1 = snapshot.plan,
+  overrides: Partial<SessionCompileProposalV1> = {},
+): SessionCompileProposalV1 {
+  const suffix = String(index).padStart(3, '0');
+  return proposal({
+    body: `Evidence for page ${suffix}.[^evidence]`,
+    pageId: `concepts/bulk-page-${suffix}`,
+    proposalId: `proposal-bulk-page-${suffix}`,
+    slug: `bulk-page-${suffix}`,
+    title: `Bulk page ${suffix}`,
+    wikilinks: [],
+    ...overrides,
+  }, boundPlan);
+}
+
+async function writeProposalFiles(
+  proposals: readonly SessionCompileProposalV1[],
+  prefix: string,
+): Promise<readonly string[]> {
+  return Promise.all(proposals.map(async (item, index) => {
+    const path = join(knowledgeRoot, `${prefix}-${String(index).padStart(3, '0')}.json`);
+    await writeFile(path, serializeCanonicalJson(item), 'utf8');
+    return path;
+  }));
+}
+
+function stagedResult(batch: Parameters<SessionCompileAdmission['stage']>[3]) {
+  return Object.freeze({
+    schemaVersion: SESSION_COMPILE_APPLY_RESULT_SCHEMA_VERSION,
+    projectId: 'alpha',
+    planDigest: batch.pages[0]?.proposal.planDigest ?? DIGEST,
+    batchDigest: batch.batchDigest,
+    admissionKind: 'buildlore-review' as const,
+    admittedCount: batch.pages.length,
+    candidateRefs: Object.freeze(batch.pages.map((page) => `candidate/${page.proposal.slug}`)),
+    outcome: 'staged' as const,
+    reviewRequired: true as const,
+    sideEffectsPossible: false as const,
+    heldCount: batch.pages.length,
+    skippedCount: 0 as const,
+    recoveryAction: 'review' as const,
+    warnings: Object.freeze([]),
+  });
+}
+
 async function applyRejectedWithoutAdmission(
   invalidProposal: SessionCompileProposalV1,
   expectedCode: string,
@@ -190,9 +240,11 @@ beforeEach(async () => {
   await writeSecurityPolicy(knowledgeRoot, 'alpha');
   const policy = await readSecurityPolicy(knowledgeRoot, 'alpha');
   snapshot = Object.freeze({
+    candidateInventoryDigest: DIGEST,
     pendingSlugs: Object.freeze(new Set<string>()),
     plan: plan(policy.digest),
     profileMode: 'default',
+    wikiInventoryDigest: DIGEST,
     workspace: join(knowledgeRoot, 'projects', 'alpha'),
   });
 });
@@ -230,7 +282,9 @@ describe('session compile proposal validation', () => {
   });
 
   it('applies a high-entropy generated source identity through review-only SDK admission', async () => {
-    const validProposal = proposal();
+    const validProposal = proposal({
+      body: 'Evidence with literal ^[literal-citation] syntax.[^evidence]\n\nSee [[existing-page]].',
+    });
     const proposalPath = join(knowledgeRoot, 'accepted-high-entropy.json');
     await writeFile(proposalPath, serializeCanonicalJson(validProposal), 'utf8');
     const calls: Array<Readonly<{
@@ -291,6 +345,8 @@ describe('session compile proposal validation', () => {
     ]);
     expect(calls[0]?.rendered).toContain(SOURCE_ID);
     expect(calls[0]?.rendered).toContain('bindingDigest:');
+    expect(calls[0]?.rendered).toContain('^\\[literal-citation]');
+    expect(calls[0]?.rendered).not.toContain('^[literal-citation]');
     expect(result).toMatchObject({
       admissionKind: 'buildlore-review',
       admittedCount: 1,
@@ -411,8 +467,27 @@ describe('session compile proposal validation', () => {
     }
   });
 
+  it('keeps structural page identity out of generic entropy scanning while scanning content fields', async () => {
+    await expect(validateSessionProposalBatch(snapshot, [proposal({
+      body: 'Structural identity evidence.[^evidence]',
+      pageId: `concepts/${ENTROPY_PAGE_SLUG}`,
+      slug: ENTROPY_PAGE_SLUG,
+      wikilinks: [],
+    })], knowledgeRoot, 'alpha')).resolves.toHaveProperty('pages.0.proposal.pageId',
+      `concepts/${ENTROPY_PAGE_SLUG}`);
+
+    for (const value of [
+      proposal({ title: ENTROPY_PAGE_SLUG }),
+      proposal({ summary: ENTROPY_PAGE_SLUG }),
+      proposal({ body: `${ENTROPY_PAGE_SLUG}.[^evidence]`, wikilinks: [] }),
+    ]) {
+      const error = await applyRejectedWithoutAdmission(value, 'SESSION_OUTPUT_UNSAFE');
+      expect(JSON.stringify(error)).not.toContain(ENTROPY_PAGE_SLUG);
+    }
+  });
+
   it('continues scanning citation evidence after excluding its validated generated source identity', async () => {
-    const unsafeQuote = ['sk-', 'Q7w6E5r4T3y2U1i0O9p8', 'AsDfGhJk'].join('');
+    const unsafeQuote = ENTROPY_PAGE_SLUG;
     const unsafePlan = plan(snapshot.plan.policyDigest, unsafeQuote);
     const unsafeSnapshot: SessionCompilePlanSnapshot = Object.freeze({
       ...snapshot,
@@ -454,6 +529,335 @@ describe('session compile proposal validation', () => {
       'alpha',
     )).rejects.toMatchObject({ code: 'SESSION_CITATION_INVALID' });
     await expect(directoryDigest(snapshot.workspace)).resolves.toBe(before);
+  });
+
+  it('rejects normalized duplicate titles and uncited evidence blocks before admission', async () => {
+    const duplicateTitle = proposal({
+      body: 'Other evidence.[^evidence]',
+      pageId: 'concepts/other-page',
+      proposalId: 'proposal-other-page',
+      slug: 'other-page',
+      title: '  new   PAGE  ',
+      wikilinks: [],
+    });
+    await expect(validateSessionProposalBatch(
+      snapshot,
+      [proposal(), duplicateTitle],
+      knowledgeRoot,
+      'alpha',
+    )).rejects.toMatchObject({ code: 'SESSION_CONTRACT_INVALID' });
+
+    await expect(validateSessionProposalBatch(snapshot, [proposal({
+      body: 'Cited evidence.[^evidence]\n\nAn uncited evidence block.',
+      wikilinks: [],
+    })], knowledgeRoot, 'alpha')).rejects.toMatchObject({ code: 'SESSION_CITATION_INVALID' });
+
+    await expect(validateSessionProposalBatch(snapshot, [proposal({
+      body: '- An uncited evidence item.',
+      citations: [],
+      wikilinks: [],
+    })], knowledgeRoot, 'alpha')).rejects.toMatchObject({ code: 'SESSION_CITATION_INVALID' });
+    for (const horizontalRule of ['---', '- - -', '* * *', '_ _ _']) {
+      await expect(validateSessionProposalBatch(snapshot, [proposal({
+        body: `# Structural heading\n\n${horizontalRule}`,
+        citations: [],
+        wikilinks: [],
+      })], knowledgeRoot, 'alpha')).resolves.toHaveProperty('pages.0');
+    }
+    await expect(validateSessionProposalBatch(snapshot, [proposal({
+      body: '- A cited evidence item.[^evidence]',
+      wikilinks: [],
+    })], knowledgeRoot, 'alpha')).resolves.toHaveProperty('pages.0');
+    await expect(validateSessionProposalBatch(snapshot, [proposal({
+      body: '# Malformed [^Evidence] marker',
+      citations: [],
+      wikilinks: [],
+    })], knowledgeRoot, 'alpha')).rejects.toMatchObject({ code: 'SESSION_CITATION_INVALID' });
+
+    const composed = proposal({
+      body: 'Composed title evidence.[^evidence]',
+      pageId: 'concepts/composed-title',
+      proposalId: 'proposal-composed-title',
+      slug: 'composed-title',
+      title: 'Café',
+      wikilinks: [],
+    });
+    const decomposed = proposal({
+      body: 'Decomposed title evidence.[^evidence]',
+      pageId: 'concepts/decomposed-title',
+      proposalId: 'proposal-decomposed-title',
+      slug: 'decomposed-title',
+      title: 'Cafe\u0301',
+      wikilinks: [],
+    });
+    await expect(validateSessionProposalBatch(
+      snapshot,
+      [composed, decomposed],
+      knowledgeRoot,
+      'alpha',
+    )).rejects.toMatchObject({ code: 'SESSION_CONTRACT_INVALID' });
+  });
+
+  it('validates a 51-page request globally, then stages deterministic 50+1 chunks while allowing only its expected candidate delta', async () => {
+    const { planDigest: _defaultPlanDigest, ...customPlanBase } = snapshot.plan;
+    expect(_defaultPlanDigest).toBe(snapshot.plan.planDigest);
+    const customPlan = finalizeSessionCompilePlan({
+      ...customPlanBase,
+      profileDigest: `sha256:${'e'.repeat(64)}`,
+      tasks: snapshot.plan.tasks.map((task) => Object.freeze({
+        ...task,
+        requestedPageKinds: ['decision'] as const,
+      })),
+    });
+    const customSnapshot: SessionCompilePlanSnapshot = Object.freeze({
+      ...snapshot,
+      plan: customPlan,
+      profileMode: 'custom',
+    });
+    const proposals = Array.from({ length: 51 }, (_, index) => numberedProposal(
+      index,
+      customPlan,
+      {
+        kind: 'decision',
+        pageId: `decisions/bulk-page-${String(index).padStart(3, '0')}`,
+        profileFields: { status: 'active' },
+      },
+    ));
+    const proposalFiles = await writeProposalFiles(proposals, 'bulk-custom');
+    const expectedFirstChunkSlugs = new Set(proposals.slice(0, 50).map((item) => item.slug));
+    const { planDigest: _customPlanDigest, ...evolvedPlanBase } = customPlan;
+    expect(_customPlanDigest).toBe(customPlan.planDigest);
+    const evolvedSnapshot: SessionCompilePlanSnapshot = Object.freeze({
+      ...customSnapshot,
+      candidateInventoryDigest: `sha256:${'f'.repeat(64)}`,
+      pendingSlugs: Object.freeze(expectedFirstChunkSlugs),
+      plan: finalizeSessionCompilePlan({
+        ...evolvedPlanBase,
+        existingKnowledgeDigest: `sha256:${'f'.repeat(64)}`,
+      }),
+    });
+    const { planDigest: _evolvedPlanDigest, ...finalPlanBase } = evolvedSnapshot.plan;
+    expect(_evolvedPlanDigest).toBe(evolvedSnapshot.plan.planDigest);
+    const finalSnapshot: SessionCompilePlanSnapshot = Object.freeze({
+      ...evolvedSnapshot,
+      candidateInventoryDigest: `sha256:${'b'.repeat(64)}`,
+      pendingSlugs: Object.freeze(new Set(proposals.map((item) => item.slug))),
+      plan: finalizeSessionCompilePlan({
+        ...finalPlanBase,
+        existingKnowledgeDigest: `sha256:${'b'.repeat(64)}`,
+      }),
+    });
+    const batchSizes: number[] = [];
+    const batchDigests: string[] = [];
+    let plannerCalls = 0;
+    const compiler = createProjectSessionCompilerForTest({
+      admission: {
+        async stage(_workspace, _projectId, profileMode, batch, beforeActual) {
+          expect(profileMode).toBe('custom');
+          batchSizes.push(batch.pages.length);
+          batchDigests.push(batch.batchDigest);
+          await beforeActual?.();
+          return stagedResult(batch);
+        },
+      },
+      hubRoot: knowledgeRoot,
+      knowledgeRoot,
+      planner: {
+        create: () => {
+          plannerCalls += 1;
+          return Promise.resolve(plannerCalls < 3
+            ? customSnapshot
+            : plannerCalls < 5
+              ? evolvedSnapshot
+              : finalSnapshot);
+        },
+      },
+    });
+
+    const result = await compiler.apply({ projectId: 'alpha', proposalFiles });
+
+    expect(batchSizes).toEqual([50, 1]);
+    expect(new Set(batchDigests)).toEqual(new Set([result.batchDigest]));
+    expect(result).toMatchObject({ admittedCount: 51, heldCount: 51, sideEffectsPossible: false });
+    expect(result.candidateRefs).toHaveLength(51);
+  });
+
+  it('globally rejects a late duplicate title before the first chunk can mutate state', async () => {
+    const proposals = Array.from({ length: 51 }, (_, index) => numberedProposal(index));
+    proposals[50] = numberedProposal(50, snapshot.plan, { title: ' bulk  PAGE 000 ' });
+    const proposalFiles = await writeProposalFiles(proposals, 'bulk-invalid');
+    const stage = vi.fn<SessionCompileAdmission['stage']>();
+    const compiler = createProjectSessionCompilerForTest({
+      admission: { stage },
+      hubRoot: knowledgeRoot,
+      knowledgeRoot,
+      planner: { create: () => Promise.resolve(snapshot) },
+    });
+
+    await expect(compiler.apply({ projectId: 'alpha', proposalFiles }))
+      .rejects.toMatchObject({ code: 'SESSION_CONTRACT_INVALID', sideEffectsPossible: false });
+    expect(stage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'duplicate proposal identity',
+      override: (first: SessionCompileProposalV1) => ({ proposalId: first.proposalId }),
+      code: 'SESSION_CONTRACT_INVALID',
+    },
+    {
+      name: 'duplicate page identity',
+      override: (first: SessionCompileProposalV1) => ({ pageId: first.pageId }),
+      code: 'SESSION_CONTRACT_INVALID',
+    },
+    {
+      name: 'duplicate slug',
+      override: (first: SessionCompileProposalV1) => ({ slug: first.slug }),
+      code: 'SESSION_CONTRACT_INVALID',
+    },
+    {
+      name: 'duplicate normalized title',
+      override: () => ({ title: '  BULK   page 000  ' }),
+      code: 'SESSION_CONTRACT_INVALID',
+    },
+    {
+      name: 'invalid citation',
+      override: () => ({ body: 'Invalid citation evidence.[^missing]' }),
+      code: 'SESSION_CITATION_INVALID',
+    },
+    {
+      name: 'uncited evidence block',
+      override: () => ({ body: 'Uncited evidence.', citations: [] }),
+      code: 'SESSION_CITATION_INVALID',
+    },
+    {
+      name: 'unsafe output',
+      override: () => ({
+        body: `Unsafe ${['sk-', 'A1b2C3d4E5f6G7h8J9k0', 'LmNoPqRs'].join('')}.[^evidence]`,
+      }),
+      code: 'SESSION_OUTPUT_UNSAFE',
+    },
+  ])('rejects a late $name before any admission call', async ({ name, override, code }) => {
+    const proposals = Array.from({ length: 51 }, (_, index) => numberedProposal(index));
+    const first = proposals[0];
+    if (first === undefined) throw new Error('missing first bulk proposal fixture');
+    proposals[50] = numberedProposal(50, snapshot.plan, override(first));
+    const proposalFiles = await writeProposalFiles(
+      proposals,
+      `bulk-late-invalid-${name.replaceAll(' ', '-')}`,
+    );
+    const stage = vi.fn<SessionCompileAdmission['stage']>();
+    const compiler = createProjectSessionCompilerForTest({
+      admission: { stage },
+      hubRoot: knowledgeRoot,
+      knowledgeRoot,
+      planner: { create: () => Promise.resolve(snapshot) },
+    });
+
+    await expect(compiler.apply({ projectId: 'alpha', proposalFiles }))
+      .rejects.toMatchObject({ code, sideEffectsPossible: false });
+    expect(stage).not.toHaveBeenCalled();
+  });
+
+  it('partitions 184 proposals deterministically and returns the same global result for reversed input', async () => {
+    const proposals = Array.from({ length: 184 }, (_, index) => numberedProposal(index));
+    const proposalFiles = await writeProposalFiles(proposals, 'bulk-184');
+    const batchSizes: number[] = [];
+    const compiler = createProjectSessionCompilerForTest({
+      admission: {
+        async stage(_workspace, _projectId, _profileMode, batch, beforeActual) {
+          batchSizes.push(batch.pages.length);
+          await beforeActual?.();
+          return stagedResult(batch);
+        },
+      },
+      hubRoot: knowledgeRoot,
+      knowledgeRoot,
+      planner: { create: () => Promise.resolve(snapshot) },
+    });
+
+    const forward = await compiler.apply({ projectId: 'alpha', proposalFiles });
+    const reversed = await compiler.apply({
+      projectId: 'alpha',
+      proposalFiles: [...proposalFiles].reverse(),
+    });
+
+    expect(batchSizes).toEqual([50, 50, 50, 34, 50, 50, 50, 34]);
+    expect(forward).toEqual(reversed);
+    expect(forward).toMatchObject({ admittedCount: 184, heldCount: 184 });
+    expect(forward.candidateRefs).toHaveLength(184);
+  });
+
+  it('reports accumulated candidate refs when a later chunk fails', async () => {
+    const proposals = Array.from({ length: 51 }, (_, index) => numberedProposal(index));
+    const proposalFiles = await writeProposalFiles(proposals, 'bulk-partial');
+    let stageCalls = 0;
+    const compiler = createProjectSessionCompilerForTest({
+      admission: {
+        async stage(_workspace, _projectId, _profileMode, batch, beforeActual) {
+          stageCalls += 1;
+          await beforeActual?.();
+          if (stageCalls === 2) {
+            throw new SessionCompileError('SESSION_ADMISSION_FAILED', 'alpha', {
+              candidateRefs: ['candidate/partial-last-page'],
+              sideEffectsPossible: true,
+            });
+          }
+          return stagedResult(batch);
+        },
+      },
+      hubRoot: knowledgeRoot,
+      knowledgeRoot,
+      planner: { create: () => Promise.resolve(snapshot) },
+    });
+
+    const error = await compiler.apply({ projectId: 'alpha', proposalFiles })
+      .catch((reason: unknown) => reason);
+    expect(error).toMatchObject({
+      code: 'SESSION_ADMISSION_FAILED',
+      recoveryAction: 'status',
+      sideEffectsPossible: true,
+    });
+    expect((error as SessionCompileError).candidateRefs).toHaveLength(51);
+  });
+
+  it('fails closed with accumulated refs when candidate inventory drifts between chunks', async () => {
+    const proposals = Array.from({ length: 51 }, (_, index) => numberedProposal(index));
+    const proposalFiles = await writeProposalFiles(proposals, 'bulk-candidate-drift');
+    const driftedSnapshot: SessionCompilePlanSnapshot = Object.freeze({
+      ...snapshot,
+      candidateInventoryDigest: `sha256:${'f'.repeat(64)}`,
+    });
+    let plannerCalls = 0;
+    let stageCalls = 0;
+    const compiler = createProjectSessionCompilerForTest({
+      admission: {
+        async stage(_workspace, _projectId, _profileMode, batch, beforeActual) {
+          stageCalls += 1;
+          await beforeActual?.();
+          return stagedResult(batch);
+        },
+      },
+      hubRoot: knowledgeRoot,
+      knowledgeRoot,
+      planner: {
+        create: () => {
+          plannerCalls += 1;
+          return Promise.resolve(plannerCalls < 3 ? snapshot : driftedSnapshot);
+        },
+      },
+    });
+
+    const error = await compiler.apply({ projectId: 'alpha', proposalFiles })
+      .catch((reason: unknown) => reason);
+    expect(error).toMatchObject({
+      code: 'SESSION_ADMISSION_FAILED',
+      recoveryAction: 'status',
+      sideEffectsPossible: true,
+    });
+    expect((error as SessionCompileError).candidateRefs).toContain('candidate/bulk-page-000');
+    expect((error as SessionCompileError).candidateRefs).toHaveLength(50);
+    expect(stageCalls).toBe(2);
   });
 
   it('rejects invented citations, unresolved links, and unsafe generated output', async () => {
@@ -635,9 +1039,13 @@ describe('session compile proposal validation', () => {
       Object.freeze({ ...snapshot, plan: finalizeSessionCompilePlan({
         ...planBase, sourceManifestDigest: changedDigest,
       }) }),
-      Object.freeze({ ...snapshot, plan: finalizeSessionCompilePlan({
-        ...planBase, existingKnowledgeDigest: changedDigest,
-      }) }),
+      Object.freeze({
+        ...snapshot,
+        plan: finalizeSessionCompilePlan({
+          ...planBase, existingKnowledgeDigest: changedDigest,
+        }),
+        wikiInventoryDigest: changedDigest,
+      }),
       Object.freeze({ ...snapshot, plan: finalizeSessionCompilePlan({
         ...planBase, selectionDigest: changedDigest,
       }) }),

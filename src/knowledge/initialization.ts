@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { isNodeError, KnowledgeError, type KnowledgeErrorCode } from './errors.js';
 import {
   cloneKnowledge,
+  ensureLocalKnowledgeRepository,
   getSubmoduleStatus,
   initializeGitSuperproject,
   initKnowledge,
@@ -26,7 +27,7 @@ export type ModeAInitializationStage =
 
 export interface ModeAInitializationInput {
   readonly branch?: string;
-  readonly repository: string;
+  readonly repository?: string;
 }
 
 export interface ModeAInitializationResult {
@@ -211,10 +212,12 @@ export async function initializeModeAWorkspace(
   repositoryRoot: string,
   input: ModeAInitializationInput,
 ): Promise<ModeAInitializationResult> {
-  const repository = validateRepositoryLocator(input.repository);
   const branch = input.branch === undefined
     ? undefined
     : validateKnowledgeBranch(input.branch);
+  const requestedRepository = input.repository === undefined
+    ? undefined
+    : validateRepositoryLocator(input.repository);
   const root = await canonicalWorkspaceRoot(repositoryRoot);
   const completedStages: ModeAInitializationStage[] = [];
   let gitRepository: 'created' | 'existing';
@@ -248,6 +251,10 @@ export async function initializeModeAWorkspace(
     gitRepository = 'existing';
   }
   completedStages.push('git-ready');
+
+  const repository = requestedRepository === undefined
+    ? await ensureLocalKnowledgeRepository(root, branch ?? 'main')
+    : requestedRepository;
 
   let knowledge: SubmoduleStatus;
   try {

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { lstat, realpath, rm, unlink } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, realpath, rename, rm, unlink } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 import { isNodeError, KnowledgeError } from './errors.js';
@@ -149,6 +149,89 @@ export async function resolveGitCommonDirectory(repositoryRoot: string): Promise
       recoveryCommand: ['knowledge', 'status'],
     });
   }
+}
+
+async function validateLocalKnowledgeRepository(
+  repository: string,
+  branch: string,
+): Promise<void> {
+  const status = await pathStatus(repository);
+  if (
+    status === null || !status.isDirectory() || status.isSymbolicLink() ||
+    await realpath(repository) !== repository
+  ) {
+    throw new KnowledgeError('SUBMODULE_MISMATCH', 'Local knowledge repository is unsafe.');
+  }
+  const [bare, head, symbolic] = await Promise.all([
+    runGit(repository, ['rev-parse', '--is-bare-repository']),
+    runGit(repository, ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`]),
+    runGit(repository, ['symbolic-ref', 'HEAD']),
+  ]);
+  if (
+    bare.stdout.trim() !== 'true' || !OBJECT_ID_PATTERN.test(head.stdout.trim()) ||
+    symbolic.stdout.trim() !== `refs/heads/${branch}`
+  ) {
+    throw new KnowledgeError('SUBMODULE_MISMATCH', 'Local knowledge repository is invalid.');
+  }
+}
+
+/** Creates a private, Git-backed knowledge origin for serverless quickstart. */
+export async function ensureLocalKnowledgeRepository(
+  repositoryRoot: string,
+  branch: string = 'main',
+): Promise<string> {
+  const validatedBranch = validateKnowledgeBranch(branch);
+  const commonGitDirectory = await resolveGitCommonDirectory(repositoryRoot);
+  const owner = join(commonGitDirectory, 'buildlore');
+  try {
+    await mkdir(owner, { mode: 0o700 });
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== 'EEXIST') {
+      throw new KnowledgeError('GIT_ACCESS_DENIED', 'Local knowledge storage could not be prepared.');
+    }
+  }
+  const ownerStatus = await pathStatus(owner);
+  if (
+    ownerStatus === null || !ownerStatus.isDirectory() || ownerStatus.isSymbolicLink() ||
+    await realpath(owner) !== owner || !isContained(commonGitDirectory, owner)
+  ) {
+    throw new KnowledgeError('SUBMODULE_MISMATCH', 'Local knowledge storage is unsafe.');
+  }
+  const repository = join(owner, 'knowledge.git');
+  if ((await pathStatus(repository)) !== null) {
+    await validateLocalKnowledgeRepository(repository, validatedBranch);
+    return validateRepositoryLocator(`./${relative(repositoryRoot, repository)}`);
+  }
+
+  const container = await mkdtemp(join(owner, '.knowledge-init-'));
+  let operationError: Error | undefined;
+  try {
+    const seed = join(container, 'seed');
+    const candidate = join(container, 'knowledge.git');
+    await runGit(container, ['init', `--initial-branch=${validatedBranch}`, '--', seed]);
+    await runGit(seed, [
+      '-c', 'user.name=BuildLore',
+      '-c', 'user.email=buildlore@local.invalid',
+      'commit', '--allow-empty', '-m', 'Initialize BuildLore knowledge',
+    ]);
+    await runGit(container, ['clone', '--bare', '--', seed, candidate]);
+    await validateLocalKnowledgeRepository(candidate, validatedBranch);
+    await rename(candidate, repository);
+  } catch (error) {
+    operationError = error instanceof KnowledgeError
+      ? error
+      : new KnowledgeError(
+          'GIT_ACCESS_DENIED',
+          'Local knowledge repository initialization failed.',
+        );
+  }
+  const cleaned = await removeOwnedDirectory(container, owner).catch(() => false);
+  if (!cleaned) {
+    throw new KnowledgeError('GIT_ACCESS_DENIED', 'Local knowledge repository cleanup failed.');
+  }
+  if (operationError !== undefined) throw operationError;
+  await validateLocalKnowledgeRepository(repository, validatedBranch);
+  return validateRepositoryLocator(`./${relative(repositoryRoot, repository)}`);
 }
 
 async function assertCloneTargetsAbsent(

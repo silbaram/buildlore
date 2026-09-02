@@ -27,13 +27,15 @@ import {
 } from './types.js';
 
 export const SESSION_COMPILE_LIMITS: SessionCompileLimits = Object.freeze({
+  maxApplyProposals: 8192,
   maxCitationsPerPage: 512,
   maxLinksPerPage: 256,
-  maxMergeCandidates: 512,
+  maxMergeCandidates: 131072,
+  maxRelationCandidatesPerTask: 32,
   maxPageBytes: 524288,
   maxPlanBytes: 33554432,
   maxProposalBytes: 524288,
-  maxProposals: 50,
+  maxProposalsPerBatch: 50,
   maxQuoteCodeUnits: 512,
   maxSourceBytes: 524288,
   maxSources: 4096,

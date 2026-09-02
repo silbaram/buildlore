@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { writeJsonAtomic } from '../knowledge/atomic-file.js';
+import { serializeCanonicalJson, writeJsonAtomic } from '../knowledge/atomic-file.js';
 import { PROJECT_SCHEMA_VERSION } from '../knowledge/types.js';
 import { resolveProjectWorkspace } from '../knowledge/paths.js';
 import { createProfileProjectDescriptor } from '../knowledge/validation.js';
@@ -16,6 +16,10 @@ import { ProfileOperationError } from './errors.js';
 import { readConfinedText, readEntityInventory } from './io.js';
 import { materializeLifecycleProfile, sha256 } from './materializer.js';
 import { createLifecycleProfileSdkValidator } from './sdk-validator.js';
+import {
+  createBuiltInProfileBinding,
+  parseProfileBinding,
+} from './bindings.js';
 import {
   BUILDLORE_PROFILE_VERSION,
   PROFILE_APPLY_SCHEMA_VERSION,
@@ -34,6 +38,7 @@ interface ProfileSnapshot {
   readonly materialized: MaterializedProfile;
   readonly plan: ProfileChangePlan;
   readonly prepared: PreparedSource;
+  readonly profileBindingBytes: string | null;
   readonly profileBytes: string | null;
   readonly sanitizerPolicyDigest: `sha256:${string}`;
   readonly sourceBytes: string;
@@ -76,6 +81,7 @@ function fingerprint(snapshot: ProfileSnapshot): string {
     snapshot.descriptorHash,
     snapshot.profileBytes === null ? 'absent' : sha256(snapshot.profileBytes),
     snapshot.configBytes === null ? 'absent' : sha256(snapshot.configBytes),
+    snapshot.profileBindingBytes === null ? 'absent' : sha256(snapshot.profileBindingBytes),
     snapshot.inventoryDigest,
     snapshot.sanitizerPolicyDigest,
   ].join('\n');
@@ -149,7 +155,31 @@ async function snapshotFor(knowledgeRoot: string, projectId: string): Promise<Pr
     projectId,
     { optional: true },
   );
+  const profileBindingBytes = await readConfinedText(
+    workspace,
+    join(workspace, 'profile-binding.json'),
+    projectId,
+    { maximumBytes: 16 * 1024, optional: true },
+  );
+  let canonicalProfileBinding: string | null = null;
+  if (profileBindingBytes !== null) {
+    try {
+      canonicalProfileBinding = serializeCanonicalJson(
+        parseProfileBinding(JSON.parse(profileBindingBytes) as unknown),
+      );
+    } catch {
+      throw new ProfileOperationError('PROFILE_BINDING_INVALID', { projectId });
+    }
+    if (canonicalProfileBinding !== profileBindingBytes) {
+      throw new ProfileOperationError('PROFILE_BINDING_INVALID', { projectId });
+    }
+  }
   const inventory = await readEntityInventory(workspace, projectId);
+  const targetProfileBinding = serializeCanonicalJson(
+    createBuiltInProfileBinding('development', profile.outputLanguage),
+  );
+  const profileBindingMatchesTarget = canonicalProfileBinding === null ||
+    canonicalProfileBinding === targetProfileBinding;
 
   const reasons: string[] = [];
   let migrationRequired = false;
@@ -171,13 +201,15 @@ async function snapshotFor(knowledgeRoot: string, projectId: string): Promise<Pr
       migrationRequired = true;
       reasons.push('materialized-drift');
     } else if (record.descriptor.profileHash === materialized.sourceHash &&
-        record.descriptor.outputLanguage === profile.outputLanguage) {
+        record.descriptor.outputLanguage === profile.outputLanguage &&
+        profileBindingMatchesTarget) {
       unchanged = true;
       reasons.push('already-applied');
     } else {
       reasons.push('language-update');
     }
   }
+  if (!profileBindingMatchesTarget) reasons.push('profile-binding-update');
   const plan: ProfileChangePlan = Object.freeze({
     affectedEntityTypes: Object.freeze(['decisions', 'failures', 'verifications'] as const),
     affectedPageCounts: inventory.counts,
@@ -209,6 +241,7 @@ async function snapshotFor(knowledgeRoot: string, projectId: string): Promise<Pr
     materialized,
     plan,
     prepared: preparedResult.prepared,
+    profileBindingBytes,
     profileBytes,
     sanitizerPolicyDigest: inspected.policyDigest,
     sourceBytes,
@@ -297,6 +330,13 @@ export function createProjectLifecycleProfile(options: {
               join(workspace, '.llmwiki', 'profile.json'),
               parseJson(fresh.materialized.profileJson, plan.projectId),
             );
+          }
+          const profileBinding = createBuiltInProfileBinding(
+            'development',
+            plan.outputLanguage,
+          );
+          if (fresh.profileBindingBytes !== serializeCanonicalJson(profileBinding)) {
+            await writeJsonAtomic(join(workspace, 'profile-binding.json'), profileBinding);
           }
           await writeJsonAtomic(join(workspace, 'project.json'), descriptor);
         } catch (error) {

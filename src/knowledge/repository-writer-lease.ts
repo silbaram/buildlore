@@ -11,7 +11,12 @@ const MAX_LEASE_BYTES = 1024;
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/u;
 const PHASE_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
 
-export type RepositoryWriterOperation = 'commit' | 'parent-pin' | 'push';
+export type RepositoryWriterOperation =
+  | 'commit'
+  | 'hierarchical-activation'
+  | 'parent-pin'
+  | 'push'
+  | 'semantic-index-activation';
 
 export interface RepositoryWriterLease {
   readonly repositoryIdentityDigest: string;
@@ -95,8 +100,10 @@ function parseLease(value: Buffer): LeaseRecord {
     keys[1] !== 'phase' ||
     keys[2] !== 'token' ||
     (decoded.operation !== 'commit' &&
+      decoded.operation !== 'hierarchical-activation' &&
       decoded.operation !== 'parent-pin' &&
-      decoded.operation !== 'push') ||
+      decoded.operation !== 'push' &&
+      decoded.operation !== 'semantic-index-activation') ||
     typeof decoded.phase !== 'string' ||
     !PHASE_PATTERN.test(decoded.phase) ||
     typeof decoded.token !== 'string' ||
@@ -238,7 +245,9 @@ export class RepositoryWriterLeaseManager implements RepositoryWriterLeasePort {
     operation: RepositoryWriterOperation,
     action: (lease: RepositoryWriterLease) => Promise<T> | T,
   ): Promise<T> {
-    if (operation !== 'commit' && operation !== 'parent-pin' && operation !== 'push') {
+    if (operation !== 'commit' && operation !== 'hierarchical-activation' &&
+        operation !== 'parent-pin' && operation !== 'push' &&
+        operation !== 'semantic-index-activation') {
       throw new RepositoryWriterError(
         'REPOSITORY_ACQUIRE_FAILED',
         'Repository writer operation is invalid.',

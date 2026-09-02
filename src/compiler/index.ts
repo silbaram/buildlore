@@ -7,6 +7,7 @@ export {
   type CompilerRecoveryAction,
 } from './errors.js';
 export { normalizeCompilerStatus } from './normalizers.js';
+export * from './hierarchy/index.js';
 export {
   EMBEDDING_MARKER_FILENAME,
   EMBEDDING_MARKER_SCHEMA_VERSION,
@@ -44,6 +45,7 @@ export type {
   CompilerRequest,
   CompilerResultData,
   CompilerWarning,
+  CompilerWikiBackend,
   ContextRequest,
   ContextSummary,
   DataEgressClass,

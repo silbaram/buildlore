@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://buildlore.local/schemas/compile-plan.schema.json",
-  "title": "BuildLore Session Compile Plan v2",
+  "title": "BuildLore Session Compile Plan v4",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -22,7 +22,7 @@
     "allowedLinkTargets"
   ],
   "properties": {
-    "schemaVersion": { "const": "buildlore.compile-plan.v2" },
+    "schemaVersion": { "const": "buildlore.compile-plan.v4" },
     "projectId": { "$ref": "#/$defs/projectId" },
     "contractDigest": { "$ref": "#/$defs/digest" },
     "planDigest": { "$ref": "#/$defs/digest" },
@@ -31,31 +31,35 @@
     "selectionDigest": { "$ref": "#/$defs/digest" },
     "sourceManifestDigest": { "$ref": "#/$defs/digest" },
     "existingKnowledgeDigest": { "$ref": "#/$defs/digest" },
-    "algorithmVersion": { "const": "buildlore.session-planner.v1" },
+    "algorithmVersion": { "const": "buildlore.session-planner.v3" },
     "limits": {
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "maxApplyProposals",
         "maxCitationsPerPage",
         "maxLinksPerPage",
         "maxMergeCandidates",
+        "maxRelationCandidatesPerTask",
         "maxPageBytes",
         "maxPlanBytes",
         "maxProposalBytes",
-        "maxProposals",
+        "maxProposalsPerBatch",
         "maxQuoteCodeUnits",
         "maxSourceBytes",
         "maxSources",
         "maxTasks"
       ],
       "properties": {
+        "maxApplyProposals": { "const": 8192 },
         "maxCitationsPerPage": { "const": 512 },
         "maxLinksPerPage": { "const": 256 },
-        "maxMergeCandidates": { "const": 512 },
+        "maxMergeCandidates": { "const": 131072 },
+        "maxRelationCandidatesPerTask": { "const": 32 },
         "maxPageBytes": { "const": 524288 },
         "maxPlanBytes": { "const": 33554432 },
         "maxProposalBytes": { "const": 524288 },
-        "maxProposals": { "const": 50 },
+        "maxProposalsPerBatch": { "const": 50 },
         "maxQuoteCodeUnits": { "const": 512 },
         "maxSourceBytes": { "const": 524288 },
         "maxSources": { "const": 4096 },
@@ -77,7 +81,7 @@
     },
     "mergeCandidates": {
       "type": "array",
-      "maxItems": 512,
+      "maxItems": 131072,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/merge" }
     },
@@ -157,14 +161,14 @@
         "compilerSourceContentDigest": { "$ref": "#/$defs/digest" },
         "compilerSourceId": {
           "type": "string",
-          "pattern": "^(markdown|planning)--[a-f0-9]{64}\\.md$"
+          "pattern": "^(code|markdown|planning|text)--[a-f0-9]{64}\\.md$"
         },
         "originalContentDigest": { "$ref": "#/$defs/digest" },
         "revision": { "$ref": "#/$defs/digest" },
         "sanitizedBody": { "type": "string", "minLength": 1, "maxLength": 524288 },
         "sanitizedContentDigest": { "$ref": "#/$defs/digest" },
         "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" },
-        "sourceKind": { "enum": ["markdown", "planning"] },
+        "sourceKind": { "enum": ["code", "markdown", "planning", "text"] },
         "sourceRef": { "type": "string", "minLength": 1, "maxLength": 512 },
         "title": { "type": "string", "minLength": 1, "maxLength": 500 }
       }

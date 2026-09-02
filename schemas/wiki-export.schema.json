@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/wiki-export.schema.json",
+  "title": "BuildLore Wiki JSON export v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "pages", "projectId", "schemaVersion"],
+  "properties": {
+    "format": { "const": "json" },
+    "pages": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["body", "citations", "pageRef", "sourceRefs", "summary", "title"],
+        "x-buildlore-canonicalOrderBy": "pageRef",
+        "properties": {
+          "body": {
+            "type": "string",
+            "maxLength": 1048576,
+            "pattern": "^(?![\\s\\S]*\\r)(?![\\s\\S]*\\u0000)[\\s\\S]*$",
+            "x-buildlore-normalization": "NFC"
+          },
+          "citations": {
+            "type": "array",
+            "maxItems": 512,
+            "x-buildlore-canonicalOrderBy": "citationId",
+            "x-buildlore-uniqueBy": "citationId",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["citationId", "pageRef", "projectId", "range", "sourceRef", "sourceRevision"],
+              "properties": {
+                "citationId": { "type": "string", "pattern": "^citation-[a-f0-9]{64}$" },
+                "pageRef": { "$ref": "#/$defs/pageRef" },
+                "projectId": { "$ref": "#/$defs/projectId" },
+                "range": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["endColumn", "endLine", "startColumn", "startLine"],
+                  "x-buildlore-orderedRange": true,
+                  "properties": {
+                    "endColumn": { "type": "integer", "minimum": 1 },
+                    "endLine": { "type": "integer", "minimum": 1 },
+                    "startColumn": { "type": "integer", "minimum": 1 },
+                    "startLine": { "type": "integer", "minimum": 1 }
+                  }
+                },
+                "sourceRef": { "$ref": "#/$defs/sourceRef" },
+                "sourceRevision": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+              }
+            }
+          },
+          "pageRef": { "$ref": "#/$defs/pageRef" },
+          "sourceRefs": {
+            "type": "array",
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/sourceRef" },
+            "x-buildlore-canonicalOrder": "lexical"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "pattern": "^(?![\\s\\S]*\\r)(?![\\s\\S]*\\u0000)[\\s\\S]+$",
+            "x-buildlore-normalization": "NFC"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?![\\s\\S]*\\r)(?![\\s\\S]*\\u0000)[\\s\\S]+$",
+            "x-buildlore-normalization": "NFC"
+          }
+        }
+      }
+    },
+    "projectId": { "$ref": "#/$defs/projectId" },
+    "schemaVersion": { "const": "buildlore.wiki-export.v1" }
+  },
+  "$defs": {
+    "pageRef": {
+      "type": "string",
+      "maxLength": 320,
+      "pattern": "^(concepts|decisions|failures|queries|verifications)/[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "projectId": {
+      "allOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        { "not": { "enum": ["knowledge", "manifest", "projects", "shared"] } }
+      ]
+    },
+    "sourceRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*%)(?!.*//)(?!.*\\/$)(?!(?:[^/]+/){64})(?!\\.(?:/|$))(?!.*\\/\\.(?:/|$))(?!\\.\\.(?:/|$))(?!.*\\/\\.\\.(?:/|$))(?!\\.git(?:/|$))(?!.*\\/\\.git(?:/|$))(?!\\.buildlore(?:/|$))(?!.*\\/\\.buildlore(?:/|$))(?!\\.llmwiki(?:/|$))(?!.*\\/\\.llmwiki(?:/|$))(?!(?:knowledge|projects|sources|wiki|export|exports)(?:/|$))(?!.*\\p{Cf})(?!.*(?:^|[/_.-])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh][-_]?[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt][Ss]?|[Tt][Oo][Kk][Ee][Nn][Ss]?|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn])(?:$|[/_.-]))[^\\u0000-\\u001f\\u007f-\\u009f\\uD800-\\uDFFF]+$",
+      "x-buildlore-maxSegments": 64,
+      "x-buildlore-normalization": "NFC"
+    }
+  },
+  "x-buildlore-canonicalOrderBy": "pages.pageRef",
+  "x-buildlore-uniqueBy": "pages.pageRef"
+}

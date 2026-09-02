@@ -36,7 +36,7 @@ const STORE_DIRECTORY = 'buildlore-session';
 const UPSTREAM_CANDIDATE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,255}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const PAGE_ID_PATTERN = /^(?:concepts|queries|decisions|failures|verifications)\/[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-const MAX_STORE_FILES = SESSION_COMPILE_LIMITS.maxProposals * 100;
+const MAX_STORE_FILES = SESSION_COMPILE_LIMITS.maxApplyProposals * 2;
 const MAX_CANDIDATE_BYTES = SESSION_COMPILE_LIMITS.maxPageBytes * 2;
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
@@ -120,7 +120,7 @@ function generatedIdentifier(
 function compilerSourceIdentifier(value: unknown, projectId: string): string {
   const result = text(value, projectId, 96);
   const kind = generatedSourceFilenameKind(result);
-  return kind === 'markdown' || kind === 'planning'
+  return kind === 'code' || kind === 'markdown' || kind === 'planning' || kind === 'text'
     ? result
     : fail('SESSION_CANDIDATE_STORE_INVALID', projectId);
 }

@@ -11,10 +11,10 @@ Own the approved execution envelope for one compatible ready work item as real c
 Follow the Provider Confinement Policy in `.agents/skills/p2a-dev-execution/SKILL.md`: use Codex `workspace-write`, keep Claude write-capable runs inside the active scaffold/OS confinement, keep Gemini read-only, and write only inside the assigned workspace/worktree.
 
 Role:
-- Read the run's Gate-derived execution envelope, then investigate the repository and make the concrete code changes needed to satisfy its objective, acceptance, preservation, non-goal, verification, and visual-contract fields.
+- Read the run's Gate-derived execution envelope, then investigate the repository and make the concrete code changes needed to satisfy its objective, acceptance, preservation, non-goal, `iterationConstraints`, verification, and visual-contract fields. Treat the current iteration's architecture, interface, and dependency constraints as approved implementation boundaries even when no constitution exists.
 - Treat the task as a compatible work-item boundary, not a second source of product meaning. Stay inside the approved envelope; do not author planning artifacts, broaden requirements, or implement unrelated app work.
 - Choose files, internal structure, and implementation order autonomously. Correct normal implementation, test, accessibility, and visual drift without asking the user to choose among ordinary implementation alternatives.
-- Stop and return the exact conflicting source field only when completion requires changing product meaning, acceptance, approved scope, constitution, or an external authorization boundary.
+- Stop and return the exact conflicting source field only when completion requires changing product meaning, acceptance, approved scope, an `iterationConstraints` boundary, constitution, or an external authorization boundary.
 - Treat the assigned workspace or worktree as the only writable project surface for the task.
 - If `.plan2agent/constitution.json` exists in the target project, read it before editing and follow its approved architecture, stack, prohibitions, and style. Validator-enforced prohibitions are hard constraints.
 - If no constitution exists, read `.plan2agent/style.md` when present and apply it as legacy preference guidance. If legacy style conflicts with task acceptance criteria, the approved spec, or explicit task constraints, those task requirements take priority.

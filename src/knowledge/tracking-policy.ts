@@ -39,6 +39,7 @@ export const KNOWLEDGE_GITIGNORE = `# BuildLore Mode A safe defaults
 **/.llmwiki/**/*.journal
 **/.llmwiki/**/*.tmp
 **/.llmwiki/**/*.bak
+**/.buildlore/indexes/semantic/**
 **/dist/exports/**
 **/*.pem
 **/*.key
@@ -50,6 +51,10 @@ projects/.buildlore-workspace-*/
 `;
 
 const entries: readonly TrackingEntry[] = [
+  entry('always-ignore-buildlore-semantic-index',
+    'projects/*/.buildlore/indexes/semantic/**', 'buildlore', 'always-ignore',
+    'machine-local', 'regenerable', 'local-state', 'unsafe', 'safe-to-regenerate',
+    'Project-scoped flat-file semantic index is a checksummed regenerable derived view.'),
   entry('always-ignore-backup', '**/*.bak', 'shared', 'always-ignore',
     'machine-local', 'ephemeral', 'local-state', 'unsafe', 'must-not-publish',
     'Atomic recovery backup; never a durable contract.'),
@@ -122,6 +127,14 @@ const entries: readonly TrackingEntry[] = [
     'projects/*/.llmwiki/buildlore-embedding-identity.json', 'buildlore', 'always-track',
     'portable', 'derived', 'none', 'low', 'from-tracked-state',
     'Safe compatibility lineage; never substitutes for the cache itself.'),
+  entry('always-track-hierarchical-wiki-authority',
+    'projects/*/.llmwiki/buildlore-hierarchy/approved-authority.json', 'buildlore',
+    'always-track', 'portable', 'authoritative', 'none', 'low', 'not-regenerable',
+    'Replayable approved Wiki, provenance, quality and lineage authority.'),
+  entry('always-track-hierarchical-markdown-manifest',
+    'projects/*/wiki/buildlore-hierarchy/manifest.json', 'buildlore',
+    'always-track', 'portable', 'derived', 'none', 'low', 'from-tracked-state',
+    'Deterministic Markdown generation inventory bound to approved Wiki authority.'),
   entry('always-track-eval-thresholds', 'projects/*/.llmwiki/eval/thresholds.yaml',
     'llm-wiki-compiler@1.1.0', 'always-track', 'portable', 'authoritative', 'none',
     'low', 'not-regenerable', 'Applied evaluation thresholds.'),

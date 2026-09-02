@@ -13,6 +13,7 @@ import {
   type SessionPlanTask,
   type SessionRequestedPageKind,
 } from './types.js';
+import type { SourceRangeMappingV1 } from '../../projector/source-contracts.js';
 
 interface SectionDraft {
   readonly endLine: number;
@@ -28,6 +29,7 @@ const MAX_HEADING_TOKENS = 256;
 const MAX_HEADING_TOKEN_CODE_POINTS = 256;
 
 export function createSessionCitationAnchors(input: {
+  readonly originMappings?: readonly SourceRangeMappingV1[];
   readonly originalBody: string;
   readonly sanitizedBody: string;
   readonly sourceId: string;
@@ -36,16 +38,21 @@ export function createSessionCitationAnchors(input: {
   const originalLines = input.originalBody.replace(/\r\n?/gu, '\n').split('\n');
   const sanitizedLines = input.sanitizedBody.split('\n');
   const anchors: SessionCitationAnchor[] = [];
-  const maximum = Math.min(originalLines.length, sanitizedLines.length);
-  for (let index = 0; index < maximum; index += 1) {
+  for (let index = 0; index < sanitizedLines.length; index += 1) {
     const quote = sanitizedLines[index];
+    const canonicalLine = index + 1;
+    const mapping = input.originMappings?.find((candidate) =>
+      canonicalLine >= candidate.canonical.startLine &&
+      canonicalLine <= candidate.canonical.endLine);
+    const originalLine = mapping === undefined
+      ? canonicalLine
+      : mapping.origin.startLine + canonicalLine - mapping.canonical.startLine;
     if (
       quote === undefined ||
       quote.trim().length === 0 ||
       quote.length > SESSION_COMPILE_LIMITS.maxQuoteCodeUnits ||
-      originalLines[index] !== quote
+      originalLines[originalLine - 1] !== quote
     ) continue;
-    const originalLine = index + 1;
     const quoteDigest = sessionSha256(quote);
     anchors.push(Object.freeze({
       anchorId: 'anchor-' + digestSessionValue({
@@ -138,28 +145,59 @@ function mergeCandidates(
   drafts: readonly SectionDraft[],
   projectId: string,
 ): readonly SessionMergeCandidate[] {
-  const candidates: SessionMergeCandidate[] = [];
-  for (let leftIndex = 0; leftIndex < drafts.length; leftIndex += 1) {
-    const left = drafts[leftIndex];
-    if (left === undefined) continue;
-    for (let rightIndex = leftIndex + 1; rightIndex < drafts.length; rightIndex += 1) {
-      const right = drafts[rightIndex];
+  const orderedDrafts = [...drafts].sort((left, right) =>
+    compareSessionText(left.taskId, right.taskId));
+  const draftByTaskId = new Map(orderedDrafts.map((draft) => [draft.taskId, draft]));
+  const mutableTaskIdsByToken = new Map<string, string[]>();
+  for (const draft of orderedDrafts) {
+    for (const token of draft.tokens) {
+      const taskIds = mutableTaskIdsByToken.get(token) ?? [];
+      taskIds.push(draft.taskId);
+      mutableTaskIdsByToken.set(token, taskIds);
+    }
+  }
+  const tokenBuckets = new Map([...mutableTaskIdsByToken].map(([token, taskIds]) => {
+    taskIds.sort(compareSessionText);
+    return [token, Object.freeze({
+      positions: new Map(taskIds.map((taskId, index) => [taskId, index])),
+      taskIds: Object.freeze(taskIds),
+    })] as const;
+  }));
+
+  const boundedPairs = new Map<string, SessionMergeCandidate>();
+  const halfWindow = Math.max(1,
+    Math.floor(SESSION_COMPILE_LIMITS.maxRelationCandidatesPerTask / 2));
+  for (const left of orderedDrafts) {
+    const neighborTaskIds = new Set<string>();
+    for (const token of left.tokens) {
+      const bucket = tokenBuckets.get(token);
+      if (bucket === undefined) continue;
+      const { taskIds } = bucket;
+      const ownIndex = bucket.positions.get(left.taskId) ?? -1;
+      if (ownIndex < 0 || taskIds.length < 2) continue;
+      const radius = Math.min(halfWindow, taskIds.length - 1);
+      for (let distance = 1; distance <= radius; distance += 1) {
+        const after = taskIds[(ownIndex + distance) % taskIds.length];
+        const before = taskIds[(ownIndex - distance + taskIds.length) % taskIds.length];
+        if (after !== undefined) neighborTaskIds.add(after);
+        if (before !== undefined) neighborTaskIds.add(before);
+      }
+    }
+    const ranked = [...neighborTaskIds].flatMap((rightTaskId): readonly SessionMergeCandidate[] => {
+      const right = draftByTaskId.get(rightTaskId);
       if (right === undefined || left.sourceId === right.sourceId ||
-          left.tokens.length === 0 || right.tokens.length === 0) continue;
+          left.tokens.length === 0 || right.tokens.length === 0) return [];
       const rightTokens = new Set(right.tokens);
       const sharedTokens = Object.freeze(left.tokens.filter((token) => rightTokens.has(token)));
       const union = new Set([...left.tokens, ...right.tokens]).size;
       const scoreBasisPoints = union === 0 ? 0 : Math.floor(sharedTokens.length * 10_000 / union);
       if (left.headingKey !== right.headingKey &&
-          (sharedTokens.length < 2 || scoreBasisPoints < 5_000)) continue;
+          (sharedTokens.length < 2 || scoreBasisPoints < 5_000)) return [];
       const memberSourceIds = [left.sourceId, right.sourceId].sort(compareSessionText);
       const memberTaskIds = [left.taskId, right.taskId].sort(compareSessionText);
       const orderingKey = String(10_000 - scoreBasisPoints).padStart(5, '0') + ':' +
         memberTaskIds.join(':');
-      if (candidates.length >= SESSION_COMPILE_LIMITS.maxMergeCandidates) {
-        throw new SessionCompileError('SESSION_PLAN_DENIED', projectId);
-      }
-      candidates.push(Object.freeze({
+      return [Object.freeze({
         candidateId: 'merge-' + digestSessionValue({
           algorithmVersion: SESSION_COMPILE_ALGORITHM_VERSION,
           memberTaskIds,
@@ -170,11 +208,30 @@ function mergeCandidates(
         memberSourceIds: Object.freeze(memberSourceIds),
         memberTaskIds: Object.freeze(memberTaskIds),
         orderingKey,
-      }));
-    }
+      })];
+    }).sort((left, right) => compareSessionText(left.orderingKey, right.orderingKey))
+      .slice(0, SESSION_COMPILE_LIMITS.maxRelationCandidatesPerTask);
+    for (const candidate of ranked) boundedPairs.set(candidate.candidateId, candidate);
   }
-  return Object.freeze(candidates
-    .sort((left, right) => compareSessionText(left.orderingKey, right.orderingKey)));
+
+  const degreeByTaskId = new Map<string, number>();
+  const selected: SessionMergeCandidate[] = [];
+  for (const candidate of [...boundedPairs.values()].sort((left, right) =>
+    compareSessionText(left.orderingKey, right.orderingKey))) {
+    const [leftTaskId, rightTaskId] = candidate.memberTaskIds;
+    if (leftTaskId === undefined || rightTaskId === undefined) continue;
+    if ((degreeByTaskId.get(leftTaskId) ?? 0) >=
+        SESSION_COMPILE_LIMITS.maxRelationCandidatesPerTask ||
+        (degreeByTaskId.get(rightTaskId) ?? 0) >=
+        SESSION_COMPILE_LIMITS.maxRelationCandidatesPerTask) continue;
+    if (selected.length >= SESSION_COMPILE_LIMITS.maxMergeCandidates) {
+      throw new SessionCompileError('SESSION_PLAN_DENIED', projectId);
+    }
+    selected.push(candidate);
+    degreeByTaskId.set(leftTaskId, (degreeByTaskId.get(leftTaskId) ?? 0) + 1);
+    degreeByTaskId.set(rightTaskId, (degreeByTaskId.get(rightTaskId) ?? 0) + 1);
+  }
+  return Object.freeze(selected);
 }
 
 export function createSessionTasksAndMerges(

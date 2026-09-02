@@ -41,14 +41,16 @@ The packet supplies canonical references; it does not grant approval, write, fin
 
 1. Inspect the approved envelope and repository evidence. For adaptive preparation, use the preparation context and select Direct, Planned, or Orchestrated without requesting a new product approval.
 2. Confirm the ready work item, inspect retry evidence when applicable, and preserve one run identity through start or resume.
-3. Apply the resolved provider confinement plus the approved constitution or legacy style fallback.
+3. Apply the resolved provider confinement plus any approved constitution; otherwise treat repository conventions or legacy style as advisory guidance.
 4. Implement the envelope objective inside the assigned workspace. Correct ordinary implementation, test, and UI drift autonomously.
-5. Execute configured or explicit verification. Planned runs also verify every checkpoint in order.
+5. Execute only configured or explicit verification. Planned runs also verify every checkpoint in order and may retry a failed checkpoint in the same run after correction.
 6. Apply only the conditional visual, acceptance, or monitor path selected by policy and the approved contract.
 7. Finish through `p2a execute finish`, preserving changed-file attribution and structured failure evidence.
-8. At feature iteration closeout, present product review, P2A retrospective, and close as separate choices. Product review is read-only: inspect the diff, code, tests, and current final verification evidence without rerunning product commands solely because review was selected; remediation edits return through normal verification. The retrospective reports bounded detected signals, or asks once about user-observed P2A friction when none were detected; after explicit approval, write only `Observed issue`, `User impact`, `Suggested improvement`, and concise evidence to the returned report path. Proposal writes always require separate approval and skipping retrospective never blocks close. After the final maintenance task finishes, present product review, the same minimal P2A retrospective, or finish maintenance once; use the report path printed by `p2a execute finish` and do not create a new maintenance close state.
+8. At feature iteration closeout, present product review, P2A retrospective, and close as separate choices, recommending close when evidence is current and no signal is open. Product review is read-only: inspect the diff, code, tests, and current required verification evidence without rerunning product commands solely because review was selected. A clean review reports no material issue and asks once to close instead of repeating the menu; remediation edits return through normal verification. The retrospective reports bounded detected signals, or asks once about user-observed P2A friction when none were detected; after explicit approval, write only `Observed issue`, `User impact`, `Suggested improvement`, and concise evidence to the returned report path. Proposal writes always require separate approval and skipping retrospective never blocks close. After the final maintenance task finishes, present product review, the same minimal P2A retrospective, or finish maintenance once; use the report path printed by `p2a execute finish` and do not create a new maintenance close state.
 
 Return to Gate B instead of implementing only when satisfying the objective requires changing product meaning, acceptance, approved scope, constitution, or an external authority boundary.
+
+In user-facing updates, describe the approved outcome, current work, recovery, and verification in product language. Keep Gate labels, run ids, hashes, artifact paths, and verification-profile ids internal unless the user asks for diagnostic detail. Ordinary retryable implementation failures should be corrected and rechecked without asking the user to operate the lifecycle.
 
 ## Lifecycle ownership
 
@@ -62,4 +64,4 @@ Read this section only when running two or more independent ready tasks. Freeze 
 
 ## Completion contract
 
-Do not claim completion until real commands verify the required outcome and the lifecycle command records the result. Report implemented changes, exact changed files, command outcomes, and the recommended task state. Preserve failed evidence rather than rewriting it into a success.
+Do not claim completion until real commands verify the required outcome and the lifecycle command records the result. Report implemented changes, exact changed files, command outcomes, and the recommended task state. Preserve every failed attempt append-only; for the same check at the current revision, the latest decisive attempt controls completion.

@@ -1,0 +1,2125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/hierarchical-corpus.schema.json",
+  "title": "BuildLore Hierarchical Corpus Contracts v1",
+  "x-buildlore-stringLengthUnit": "unicode-scalar-values",
+  "x-buildlore-digestSerialization": {
+    "hashAlgorithm": "sha-256",
+    "inputEncoding": "utf-8",
+    "jsonObjectMemberOrder": "schema-properties-order",
+    "arrayElementOrder": "input-order-unless-field-canonical-order-is-declared",
+    "indentSpaces": 2,
+    "lineEnding": "lf",
+    "terminalLf": true,
+    "stringEscaping": {
+      "standard": "rfc-8259",
+      "quote": "backslash-quote",
+      "reverseSolidus": "double-reverse-solidus",
+      "shortControlEscapes": ["U+0008=\\b", "U+0009=\\t", "U+000A=\\n", "U+000C=\\f", "U+000D=\\r"],
+      "otherC0Controls": "lowercase-u00xx"
+    },
+    "nonAscii": "literal-unescaped-utf-8",
+    "solidus": "literal-unescaped",
+    "allOtherCharacters": "literal-unescaped",
+    "safeIntegerRepresentation": "base-10-no-leading-zero-no-decimal-no-exponent-negative-zero-as-zero"
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/compilationPurpose" },
+    { "$ref": "#/$defs/textUnit" },
+    { "$ref": "#/$defs/documentInterpretation" },
+    { "$ref": "#/$defs/corpusSnapshot" },
+    { "$ref": "#/$defs/hierarchicalCompilationPolicy" },
+    { "$ref": "#/$defs/sparseRelationGraph" },
+    { "$ref": "#/$defs/compilePartitionCursor" },
+    { "$ref": "#/$defs/compileContinuation" },
+    { "$ref": "#/$defs/compilePartition" },
+    { "$ref": "#/$defs/planningDispositionInventory" },
+    { "$ref": "#/$defs/documentInterpretationRule" },
+    { "$ref": "#/$defs/pageBlueprint" },
+    { "$ref": "#/$defs/wikiOutline" },
+    { "$ref": "#/$defs/wikiOutlineDiff" },
+    { "$ref": "#/$defs/wikiOutlineReview" },
+    { "$ref": "#/$defs/evidencePack" },
+    { "$ref": "#/$defs/currentSessionGenerationRequest" },
+    { "$ref": "#/$defs/hierarchicalWikiProposal" },
+    { "$ref": "#/$defs/wikiLinkReconciliation" },
+    { "$ref": "#/$defs/externalGenerationAuthorization" },
+    { "$ref": "#/$defs/semanticQualityPolicy" },
+    { "$ref": "#/$defs/pageQualityReport" },
+    { "$ref": "#/$defs/corpusQualityReport" },
+    { "$ref": "#/$defs/wikiContentDiff" },
+    { "$ref": "#/$defs/integratedWikiReviewSurface" },
+    { "$ref": "#/$defs/integratedWikiCandidateReview" },
+    { "$ref": "#/$defs/compileIntegrityReport" },
+    { "$ref": "#/$defs/compileRunLedger" },
+    { "$ref": "#/$defs/pageOwnershipGraph" },
+    { "$ref": "#/$defs/authoritativeWikiState" },
+    { "$ref": "#/$defs/humanActivationApproval" },
+    { "$ref": "#/$defs/authoritativeWikiCheck" },
+    { "$ref": "#/$defs/legacyWikiMigration" },
+    { "$ref": "#/$defs/legacyWikiMigrationReview" }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "not": { "enum": ["knowledge", "manifest", "projects", "shared"] }
+    },
+    "portableIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+    },
+    "sourceId": {
+      "type": "string",
+      "pattern": "^source-[a-f0-9]{64}$"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^task-[a-f0-9]{64}$"
+    },
+    "unitId": {
+      "type": "string",
+      "pattern": "^unit-[a-f0-9]{64}$"
+    },
+    "relationId": {
+      "type": "string",
+      "pattern": "^relation-[a-f0-9]{64}$"
+    },
+    "pageId": {
+      "type": "string",
+      "pattern": "^page-[a-f0-9]{64}$"
+    },
+    "citationId": {
+      "type": "string",
+      "pattern": "^citation-[a-f0-9]{64}$"
+    },
+    "claimId": {
+      "type": "string",
+      "pattern": "^claim-[a-f0-9]{64}$"
+    },
+    "sourceRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?![\\s\\S]*\\\\)(?![\\s\\S]*%)(?![\\s\\S]*\\p{Cf})(?![\\s\\S]*[\\u0000-\\u001F\\u007F-\\u009F])(?!.*(?:^|/)(?:\\.\\.?|\\.git|\\.buildlore|\\.llmwiki)(?:/|$))(?!^(?:knowledge|projects|sources|wiki|export|exports)(?:/|$))(?!.*(?:^|[/_.-])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh][-_]?[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt][Ss]?|[Tt][Oo][Kk][Ee][Nn][Ss]?|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn])(?:$|[/_.-]))[^/\\\\%\\u0000-\\u001F\\u007F-\\u009F]+(?:/[^/\\\\%\\u0000-\\u001F\\u007F-\\u009F]+){0,63}$",
+      "x-buildlore-normalization": "NFC",
+      "x-buildlore-maxSegments": 64
+    },
+    "purposeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?![\\s\\S]*[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F])(?![\\s\\S]*\\p{Cf})[\\s\\S]+$",
+      "x-buildlore-normalization": "NFC"
+    },
+    "purposeTextList": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/purposeText" }
+    },
+    "compilationPurpose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "audience",
+        "goals",
+        "keyQuestions",
+        "scopeHints",
+        "excludedTopics",
+        "outputLanguage",
+        "requestedPageRoles",
+        "purposeDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.compilation-purpose.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "audience": {
+          "allOf": [
+            { "$ref": "#/$defs/purposeTextList" },
+            { "minItems": 1 }
+          ]
+        },
+        "goals": {
+          "allOf": [
+            { "$ref": "#/$defs/purposeTextList" },
+            { "minItems": 1 }
+          ]
+        },
+        "keyQuestions": {
+          "allOf": [
+            { "$ref": "#/$defs/purposeTextList" },
+            { "minItems": 1 }
+          ]
+        },
+        "scopeHints": { "$ref": "#/$defs/purposeTextList" },
+        "excludedTopics": { "$ref": "#/$defs/purposeTextList" },
+        "outputLanguage": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 35,
+          "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+        },
+        "requestedPageRoles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" }
+        },
+        "purposeDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["purposeDigest"],
+      "x-buildlore-maxUtf8Bytes": 262144
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endColumn", "endLine", "startColumn", "startLine"],
+      "properties": {
+        "endColumn": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "endLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "startColumn": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "startLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      },
+      "x-buildlore-orderedRange": true,
+      "x-buildlore-columnUnit": "unicode-scalar-inclusive"
+    },
+    "textUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "sourceId",
+        "sourceRevision",
+        "sourceRef",
+        "kind",
+        "ordinal",
+        "range",
+        "contentDigest",
+        "topicLabel",
+        "unitId"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.text-unit.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "sourceId": { "$ref": "#/$defs/sourceId" },
+        "sourceRevision": { "$ref": "#/$defs/digest" },
+        "sourceRef": { "$ref": "#/$defs/sourceRef" },
+        "kind": {
+          "enum": ["document", "fenced-code", "heading", "list", "paragraph", "table"]
+        },
+        "ordinal": { "type": "integer", "minimum": 0, "maximum": 8191 },
+        "range": { "$ref": "#/$defs/range" },
+        "contentDigest": { "$ref": "#/$defs/digest" },
+        "topicLabel": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000,
+              "pattern": "^(?![\\s\\S]*[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F])(?![\\s\\S]*\\p{Cf})[\\s\\S]+$",
+              "x-buildlore-normalization": "NFC"
+            },
+            { "type": "null" }
+          ],
+          "x-buildlore-contentDigestWhenPresent": true
+        },
+        "unitId": { "type": "string", "pattern": "^unit-[a-f0-9]{64}$" }
+      },
+      "x-buildlore-digestExcludes": ["unitId"]
+    },
+    "documentRelation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sourceId"],
+      "properties": {
+        "kind": { "enum": ["related", "superseded-by", "supersedes"] },
+        "sourceId": { "$ref": "#/$defs/sourceId" }
+      }
+    },
+    "documentInterpretation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "sourceId",
+        "sourceRevision",
+        "role",
+        "lifecycle",
+        "authority",
+        "synthesisEligibility",
+        "basis",
+        "confidenceBasisPoints",
+        "reasonCodes",
+        "relations",
+        "interpretationDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.document-interpretation.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "sourceId": { "$ref": "#/$defs/sourceId" },
+        "sourceRevision": { "$ref": "#/$defs/digest" },
+        "role": { "$ref": "#/$defs/portableIdentifier" },
+        "lifecycle": {
+          "enum": ["current", "deprecated", "draft", "superseded", "unknown"]
+        },
+        "authority": { "enum": ["canonical", "historical", "supporting", "unknown"] },
+        "synthesisEligibility": { "enum": ["eligible", "excluded", "review"] },
+        "basis": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "confidenceBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "reasonCodes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "relations": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/documentRelation" },
+          "x-buildlore-canonicalOrderBy": "kind,sourceId"
+        },
+        "interpretationDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["interpretationDigest"]
+    },
+    "snapshotSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "sourceRevision", "sourceRef", "sanitizedContentDigest"],
+      "properties": {
+        "sourceId": { "$ref": "#/$defs/sourceId" },
+        "sourceRevision": { "$ref": "#/$defs/digest" },
+        "sourceRef": { "$ref": "#/$defs/sourceRef" },
+        "sanitizedContentDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "corpusSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "purposeDigest",
+        "interpretationRulesDigest",
+        "profileDigest",
+        "compilerContractDigest",
+        "sanitizerPolicyDigest",
+        "sourceManifestDigest",
+        "policyDigest",
+        "sources",
+        "textUnits",
+        "corpusDigest",
+        "snapshotDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.corpus-snapshot.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "purposeDigest": { "$ref": "#/$defs/digest" },
+        "interpretationRulesDigest": { "$ref": "#/$defs/digest" },
+        "profileDigest": { "$ref": "#/$defs/digest" },
+        "compilerContractDigest": { "$ref": "#/$defs/digest" },
+        "sanitizerPolicyDigest": { "$ref": "#/$defs/digest" },
+        "sourceManifestDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "items": { "$ref": "#/$defs/snapshotSource" },
+          "x-buildlore-canonicalOrderBy": "sourceId",
+          "x-buildlore-uniqueBy": "sourceId"
+        },
+        "textUnits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8192,
+          "items": { "$ref": "#/$defs/textUnit" },
+          "x-buildlore-canonicalOrderBy": "sourceId,ordinal",
+          "x-buildlore-uniqueBy": "unitId"
+        },
+        "corpusDigest": { "$ref": "#/$defs/digest" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-corpusDigestFields": ["sources", "textUnits"],
+      "x-buildlore-digestExcludes": ["snapshotDigest"],
+      "x-buildlore-maxUtf8Bytes": 33554432
+    },
+    "hierarchyPlanningTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId", "unitId", "sourceId", "ordinal", "kind", "contentDigest"],
+      "properties": {
+        "taskId": { "$ref": "#/$defs/taskId" },
+        "unitId": { "type": "string", "pattern": "^unit-[a-f0-9]{64}$" },
+        "sourceId": { "$ref": "#/$defs/sourceId" },
+        "ordinal": { "type": "integer", "minimum": 0, "maximum": 8191 },
+        "kind": {
+          "enum": ["document", "fenced-code", "heading", "list", "paragraph", "table"]
+        },
+        "contentDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["taskId"]
+    },
+    "sparseRelationCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relationId",
+        "leftTaskId",
+        "rightTaskId",
+        "ownerTaskId",
+        "basis",
+        "sharedKeyDigest"
+      ],
+      "properties": {
+        "relationId": { "$ref": "#/$defs/relationId" },
+        "leftTaskId": { "$ref": "#/$defs/taskId" },
+        "rightTaskId": { "$ref": "#/$defs/taskId" },
+        "ownerTaskId": { "$ref": "#/$defs/taskId" },
+        "basis": { "const": "matching-content-digest" },
+        "sharedKeyDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-canonicalPair": ["leftTaskId", "rightTaskId"],
+      "x-buildlore-digestExcludes": ["relationId"]
+    },
+    "sparseRelationGraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "policyDigest",
+        "tasks",
+        "relations",
+        "taskSetDigest",
+        "relationSetDigest",
+        "graphDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.sparse-relation-graph.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8192,
+          "items": { "$ref": "#/$defs/hierarchyPlanningTask" },
+          "x-buildlore-canonicalOrderBy": "sourceId,ordinal,unitId",
+          "x-buildlore-uniqueBy": "taskId"
+        },
+        "relations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sparseRelationCandidate" },
+          "x-buildlore-maxPerTask": 32,
+          "x-buildlore-maxClusterMembers": 256,
+          "x-buildlore-canonicalOrderBy": "ownerTaskOrder,leftTaskId,rightTaskId",
+          "x-buildlore-uniqueBy": "relationId"
+        },
+        "taskSetDigest": { "$ref": "#/$defs/digest" },
+        "relationSetDigest": { "$ref": "#/$defs/digest" },
+        "graphDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["graphDigest"],
+      "x-buildlore-maxUtf8Bytes": 33554432
+    },
+    "compilePartitionCursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "graphDigest",
+        "policyDigest",
+        "partitionSize",
+        "taskOffset",
+        "cursorDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.compile-partition-cursor.v2" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "graphDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "partitionSize": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "taskOffset": { "type": "integer", "minimum": 0, "maximum": 8191 },
+        "cursorDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["cursorDigest"]
+    },
+    "compileContinuation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "graphDigest",
+        "policyDigest",
+        "partitionSize",
+        "nextTaskOffset",
+        "nextCursor",
+        "acceptedPartitionDigests",
+        "complete",
+        "continuationDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.compile-continuation.v2" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "graphDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "partitionSize": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "nextTaskOffset": { "type": "integer", "minimum": 0, "maximum": 8192 },
+        "nextCursor": {
+          "oneOf": [
+            { "$ref": "#/$defs/compilePartitionCursor" },
+            { "type": "null" }
+          ]
+        },
+        "acceptedPartitionDigests": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": { "$ref": "#/$defs/digest" }
+        },
+        "complete": { "type": "boolean" },
+        "continuationDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["continuationDigest"]
+    },
+    "taskDisposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId", "disposition"],
+      "properties": {
+        "taskId": { "$ref": "#/$defs/taskId" },
+        "disposition": { "const": "planned" }
+      }
+    },
+    "relationDisposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relationId", "disposition"],
+      "properties": {
+        "relationId": { "$ref": "#/$defs/relationId" },
+        "disposition": { "const": "candidate" }
+      }
+    },
+    "compilePartition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "graphDigest",
+        "policyDigest",
+        "taskOffset",
+        "taskDispositions",
+        "relationDispositions",
+        "complete",
+        "nextCursor",
+        "partitionDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.compile-partition.v2" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "graphDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "taskOffset": { "type": "integer", "minimum": 0, "maximum": 8191 },
+        "taskDispositions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/taskDisposition" },
+          "x-buildlore-uniqueBy": "taskId"
+        },
+        "relationDispositions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relationDisposition" },
+          "x-buildlore-uniqueBy": "relationId"
+        },
+        "complete": { "type": "boolean" },
+        "nextCursor": {
+          "oneOf": [
+            { "$ref": "#/$defs/compilePartitionCursor" },
+            { "type": "null" }
+          ]
+        },
+        "partitionDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["partitionDigest"]
+    },
+    "planningDispositionInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "graphDigest",
+        "policyDigest",
+        "taskCount",
+        "relationCount",
+        "taskDispositionDigest",
+        "relationDispositionDigest",
+        "dispositionDigest",
+        "complete",
+        "inventoryDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.planning-disposition-inventory.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "graphDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "taskCount": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "relationCount": { "type": "integer", "minimum": 0 },
+        "taskDispositionDigest": { "$ref": "#/$defs/digest" },
+        "relationDispositionDigest": { "$ref": "#/$defs/digest" },
+        "dispositionDigest": { "$ref": "#/$defs/digest" },
+        "complete": { "const": true },
+        "inventoryDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["inventoryDigest"]
+    },
+    "documentMeaningFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "role": { "$ref": "#/$defs/portableIdentifier" },
+        "lifecycle": {
+          "enum": ["current", "deprecated", "draft", "superseded", "unknown"]
+        },
+        "authority": { "enum": ["canonical", "historical", "supporting", "unknown"] },
+        "synthesisEligibility": { "enum": ["eligible", "excluded", "review"] },
+        "relations": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/documentRelation" },
+          "x-buildlore-canonicalOrderBy": "kind,sourceId"
+        }
+      }
+    },
+    "documentInterpretationRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "ruleId",
+        "priority",
+        "sourceRefPrefix",
+        "sourceRefSuffix",
+        "meaning",
+        "ruleDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.document-interpretation-rule.v1" },
+        "ruleId": { "$ref": "#/$defs/portableIdentifier" },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "sourceRefPrefix": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 512 },
+            { "type": "null" }
+          ]
+        },
+        "sourceRefSuffix": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 512 },
+            { "type": "null" }
+          ]
+        },
+        "meaning": { "$ref": "#/$defs/documentMeaningFields" },
+        "ruleDigest": { "$ref": "#/$defs/digest" }
+      },
+      "anyOf": [
+        { "required": ["sourceRefPrefix"], "properties": { "sourceRefPrefix": { "type": "string" } } },
+        { "required": ["sourceRefSuffix"], "properties": { "sourceRefSuffix": { "type": "string" } } }
+      ],
+      "x-buildlore-digestExcludes": ["ruleDigest"]
+    },
+    "blueprintEvidenceScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshotDigest",
+        "taskSetDigest",
+        "relationSetDigest",
+        "allowedUnitKinds",
+        "sourceIds"
+      ],
+      "properties": {
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "taskSetDigest": { "$ref": "#/$defs/digest" },
+        "relationSetDigest": { "$ref": "#/$defs/digest" },
+        "allowedUnitKinds": {
+          "type": "array",
+          "const": ["document", "fenced-code", "heading", "list", "paragraph", "table"]
+        },
+        "sourceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourceId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        }
+      }
+    },
+    "pageBlueprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "stableKey",
+        "role",
+        "title",
+        "parentPageId",
+        "childPageIds",
+        "relatedPageIds",
+        "keyQuestions",
+        "requiredSections",
+        "evidenceScope",
+        "minimumDistinctSources",
+        "generationOrder",
+        "blueprintDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.page-blueprint.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "stableKey": { "$ref": "#/$defs/portableIdentifier" },
+        "role": { "$ref": "#/$defs/portableIdentifier" },
+        "title": { "$ref": "#/$defs/purposeText" },
+        "parentPageId": {
+          "oneOf": [{ "$ref": "#/$defs/pageId" }, { "type": "null" }]
+        },
+        "childPageIds": {
+          "type": "array",
+          "maxItems": 96,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "relatedPageIds": {
+          "type": "array",
+          "maxItems": 96,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "keyQuestions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/purposeText" }
+        },
+        "requiredSections": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "evidenceScope": { "$ref": "#/$defs/blueprintEvidenceScope" },
+        "minimumDistinctSources": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "generationOrder": { "type": "integer", "minimum": 0, "maximum": 96 },
+        "blueprintDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["blueprintDigest"]
+    },
+    "wikiOutline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "graphDigest",
+        "interpretationSetDigest",
+        "purposeDigest",
+        "policyDigest",
+        "activationState",
+        "rootPageId",
+        "blueprints",
+        "outlineDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.wiki-outline.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "graphDigest": { "$ref": "#/$defs/digest" },
+        "interpretationSetDigest": { "$ref": "#/$defs/digest" },
+        "purposeDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "activationState": { "const": "candidate" },
+        "rootPageId": { "$ref": "#/$defs/pageId" },
+        "blueprints": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 97,
+          "items": { "$ref": "#/$defs/pageBlueprint" },
+          "x-buildlore-canonicalOrderBy": "generationOrder",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "outlineDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["outlineDigest"],
+      "x-buildlore-maxUtf8Bytes": 33554432
+    },
+    "wikiOutlineDiff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "beforeOutlineDigest",
+        "afterOutlineDigest",
+        "addedPageIds",
+        "removedPageIds",
+        "changedPageIds",
+        "identical",
+        "diffDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.wiki-outline-diff.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "beforeOutlineDigest": { "$ref": "#/$defs/digest" },
+        "afterOutlineDigest": { "$ref": "#/$defs/digest" },
+        "addedPageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" }, "x-buildlore-canonicalOrder": "ascending"
+        },
+        "removedPageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" }, "x-buildlore-canonicalOrder": "ascending"
+        },
+        "changedPageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" }, "x-buildlore-canonicalOrder": "ascending"
+        },
+        "identical": { "type": "boolean" },
+        "diffDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["diffDigest"]
+    },
+    "wikiOutlineReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "outlineDigest",
+        "snapshotDigest",
+        "decision",
+        "reasonCodes",
+        "activationAuthorized",
+        "reviewDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.wiki-outline-review.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "outlineDigest": { "$ref": "#/$defs/digest" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "decision": { "enum": ["approved", "rejected"] },
+        "reasonCodes": {
+          "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "activationAuthorized": { "const": false },
+        "reviewDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["reviewDigest"]
+    },
+    "evidenceCitationAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "citationId", "sourceId", "sourceRevision", "sourceRef", "range", "quoteDigest"
+      ],
+      "properties": {
+        "citationId": { "$ref": "#/$defs/citationId" },
+        "sourceId": { "$ref": "#/$defs/sourceId" },
+        "sourceRevision": { "$ref": "#/$defs/digest" },
+        "sourceRef": { "$ref": "#/$defs/sourceRef" },
+        "range": { "$ref": "#/$defs/range" },
+        "quoteDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "evidenceUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unitId", "sourceId", "kind", "range", "content", "contentDigest", "citation"
+      ],
+      "properties": {
+        "unitId": { "type": "string", "pattern": "^unit-[a-f0-9]{64}$" },
+        "sourceId": { "$ref": "#/$defs/sourceId" },
+        "kind": {
+          "enum": ["document", "fenced-code", "heading", "list", "paragraph", "table"]
+        },
+        "range": { "$ref": "#/$defs/range" },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144,
+          "x-buildlore-normalization": "NFC"
+        },
+        "contentDigest": { "$ref": "#/$defs/digest" },
+        "citation": { "$ref": "#/$defs/evidenceCitationAnchor" }
+      }
+    },
+    "evidenceConflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conflictId", "kind", "unitIds", "status"],
+      "properties": {
+        "conflictId": { "type": "string", "pattern": "^conflict-[a-f0-9]{64}$" },
+        "kind": { "$ref": "#/$defs/portableIdentifier" },
+        "unitIds": {
+          "type": "array", "minItems": 2, "maxItems": 64, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^unit-[a-f0-9]{64}$" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "status": { "const": "unresolved" }
+      }
+    },
+    "evidenceGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gapId", "keyQuestion", "reasonCode"],
+      "properties": {
+        "gapId": { "type": "string", "pattern": "^gap-[a-f0-9]{64}$" },
+        "keyQuestion": { "$ref": "#/$defs/purposeText" },
+        "reasonCode": { "$ref": "#/$defs/portableIdentifier" }
+      }
+    },
+    "evidencePack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "pageId", "blueprintDigest", "snapshotDigest",
+        "sanitizerPolicyDigest", "units", "conflicts", "gaps", "evidenceBytes", "packDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.evidence-pack.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "blueprintDigest": { "$ref": "#/$defs/digest" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "sanitizerPolicyDigest": { "$ref": "#/$defs/digest" },
+        "units": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/evidenceUnit" },
+          "x-buildlore-canonicalOrderBy": "snapshot-unit-order",
+          "x-buildlore-uniqueBy": "unitId"
+        },
+        "conflicts": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/evidenceConflict" },
+          "x-buildlore-canonicalOrderBy": "conflictId"
+        },
+        "gaps": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/evidenceGap" },
+          "x-buildlore-canonicalOrderBy": "gapId"
+        },
+        "evidenceBytes": { "type": "integer", "minimum": 1, "maximum": 262144 },
+        "packDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["packDigest"],
+      "x-buildlore-maxUtf8Bytes": 262144
+    },
+    "approvedChildSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageId", "proposalDigest", "reviewDigest", "summary", "citationIds",
+        "synthesisApproved"
+      ],
+      "properties": {
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "reviewDigest": { "$ref": "#/$defs/digest" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "citationIds": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/citationId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "synthesisApproved": { "const": true }
+      }
+    },
+    "currentSessionGenerationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "pageId", "blueprintDigest", "evidencePackDigest",
+        "generationOrder", "instructionCodes", "requiredSections", "requiredLinkPageIds",
+        "approvedChildSummaries", "executionMode", "egress", "providerUsed",
+        "processSpawned", "requestDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.current-session-generation-request.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "blueprintDigest": { "$ref": "#/$defs/digest" },
+        "evidencePackDigest": { "$ref": "#/$defs/digest" },
+        "generationOrder": { "type": "integer", "minimum": 0, "maximum": 96 },
+        "instructionCodes": {
+          "type": "array",
+          "const": [
+            "cite-substantive-claims", "preserve-evidence-bytes", "render-citation-markers",
+            "render-wikilinks", "submit-candidate-only", "use-required-sections",
+            "use-required-wikilinks"
+          ]
+        },
+        "requiredSections": {
+          "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "requiredLinkPageIds": {
+          "type": "array", "maxItems": 96, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "approvedChildSummaries": {
+          "type": "array", "maxItems": 96, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/approvedChildSummary" },
+          "x-buildlore-canonicalOrderBy": "pageId"
+        },
+        "executionMode": { "const": "current-session" },
+        "egress": { "const": "none" },
+        "providerUsed": { "type": "null" },
+        "processSpawned": { "const": false },
+        "requestDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["requestDigest"]
+    },
+    "hierarchicalProposalSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sectionId", "body"],
+      "properties": {
+        "sectionId": { "$ref": "#/$defs/portableIdentifier" },
+        "body": { "type": "string", "minLength": 1, "maxLength": 524288 }
+      }
+    },
+    "hierarchicalProposalClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claimId", "text", "evidenceUnitIds", "citationIds"],
+      "properties": {
+        "claimId": { "$ref": "#/$defs/claimId" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "evidenceUnitIds": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^unit-[a-f0-9]{64}$" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "citationIds": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/citationId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        }
+      },
+      "x-buildlore-digestExcludes": ["claimId"]
+    },
+    "hierarchicalWikiProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "pageId", "blueprintDigest", "evidencePackDigest",
+        "requestDigest", "title", "summary", "sections", "claims", "wikilinks",
+        "citationIds", "lifecycle", "proposalDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-wiki-proposal.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "blueprintDigest": { "$ref": "#/$defs/digest" },
+        "evidencePackDigest": { "$ref": "#/$defs/digest" },
+        "requestDigest": { "$ref": "#/$defs/digest" },
+        "title": { "$ref": "#/$defs/purposeText" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "sections": {
+          "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/hierarchicalProposalSection" },
+          "x-buildlore-uniqueBy": "sectionId"
+        },
+        "claims": {
+          "type": "array", "minItems": 1, "maxItems": 512, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/hierarchicalProposalClaim" },
+          "x-buildlore-canonicalOrderBy": "claimId"
+        },
+        "wikilinks": {
+          "type": "array", "maxItems": 96, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "citationIds": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/citationId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "lifecycle": { "const": "candidate" },
+        "proposalDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["proposalDigest"],
+      "x-buildlore-maxUtf8Bytes": 524288
+    },
+    "wikiLinkReconciliationEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pageId", "requiredLinkPageIds"],
+      "properties": {
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "requiredLinkPageIds": {
+          "type": "array", "maxItems": 96, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        }
+      }
+    },
+    "wikiLinkReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "outlineDigest", "entries", "complete",
+        "reconciliationDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.wiki-link-reconciliation.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "outlineDigest": { "$ref": "#/$defs/digest" },
+        "entries": {
+          "type": "array", "minItems": 2, "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/wikiLinkReconciliationEntry" },
+          "x-buildlore-canonicalOrderBy": "pageId"
+        },
+        "complete": { "const": true },
+        "reconciliationDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["reconciliationDigest"]
+    },
+    "externalGenerationAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "destinationId", "providerIdentity",
+        "sanitizedPayloadScopeDigest", "decision", "egress", "adapterIncluded",
+        "authorizationDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.external-generation-authorization.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "destinationId": { "$ref": "#/$defs/portableIdentifier" },
+        "providerIdentity": { "$ref": "#/$defs/portableIdentifier" },
+        "sanitizedPayloadScopeDigest": { "$ref": "#/$defs/digest" },
+        "decision": { "const": "approved" },
+        "egress": { "const": "sanitized-evidence-only" },
+        "adapterIncluded": { "const": false },
+        "authorizationDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["authorizationDigest"]
+    },
+    "semanticQualityThresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimumSectionCoverageBasisPoints",
+        "minimumClaimGroundingBasisPoints",
+        "minimumClaimEvidenceSupportBasisPoints",
+        "minimumQuestionCoverageBasisPoints",
+        "maximumRepeatedLineBasisPoints",
+        "maximumNearDuplicateBasisPoints",
+        "maximumOrphanBasisPoints",
+        "maximumUncategorizedPages",
+        "maximumUnresolvedConflicts",
+        "minimumSubstantiveUtf8Bytes",
+        "minimumUniqueTokens"
+      ],
+      "properties": {
+        "minimumSectionCoverageBasisPoints": { "const": 10000 },
+        "minimumClaimGroundingBasisPoints": { "const": 10000 },
+        "minimumClaimEvidenceSupportBasisPoints": { "const": 10000 },
+        "minimumQuestionCoverageBasisPoints": { "const": 10000 },
+        "maximumRepeatedLineBasisPoints": { "const": 5000 },
+        "maximumNearDuplicateBasisPoints": { "const": 8500 },
+        "maximumOrphanBasisPoints": { "const": 500 },
+        "maximumUncategorizedPages": { "const": 0 },
+        "maximumUnresolvedConflicts": { "const": 0 },
+        "minimumSubstantiveUtf8Bytes": { "const": 80 },
+        "minimumUniqueTokens": { "const": 8 }
+      }
+    },
+    "semanticQualityPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "thresholds", "policyDigest"],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.semantic-quality-policy.v1" },
+        "thresholds": { "$ref": "#/$defs/semanticQualityThresholds" },
+        "policyDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["policyDigest"]
+    },
+    "pageQualityReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "pageId", "blueprintDigest", "proposalDigest",
+        "evidencePackDigest", "policyDigest", "sectionCoverageBasisPoints",
+        "claimGroundingBasisPoints", "claimEvidenceSupportBasisPoints",
+        "titleGrounded", "summaryGrounded", "repeatedLineBasisPoints",
+        "questionCoverageBasisPoints", "unansweredKeyQuestionCount",
+        "maximumNearDuplicateBasisPoints", "requiredDistinctSources",
+        "observedDistinctSources", "unresolvedConflictCount", "unresolvedGapCount",
+        "missingRequiredLinkCount", "substantiveUtf8Bytes", "uniqueTokenCount",
+        "nearDuplicatePageIds", "reasonCodes", "hardQualityPassed", "eligibleForApproval",
+        "llmJudgeUsed", "embeddingSimilarityUsed", "canonicalMutationAuthorized",
+        "reportDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.page-quality-report.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "blueprintDigest": { "$ref": "#/$defs/digest" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "evidencePackDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "sectionCoverageBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "claimGroundingBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "claimEvidenceSupportBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "titleGrounded": { "type": "boolean" },
+        "summaryGrounded": { "type": "boolean" },
+        "questionCoverageBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "unansweredKeyQuestionCount": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "repeatedLineBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "maximumNearDuplicateBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "requiredDistinctSources": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "observedDistinctSources": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "unresolvedConflictCount": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "unresolvedGapCount": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "missingRequiredLinkCount": { "type": "integer", "minimum": 0, "maximum": 96 },
+        "substantiveUtf8Bytes": { "type": "integer", "minimum": 0, "maximum": 524288 },
+        "uniqueTokenCount": { "type": "integer", "minimum": 0 },
+        "nearDuplicatePageIds": {
+          "type": "array", "maxItems": 96, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "reasonCodes": {
+          "type": "array", "maxItems": 16, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "hardQualityPassed": { "type": "boolean" },
+        "eligibleForApproval": { "type": "boolean" },
+        "llmJudgeUsed": { "const": false },
+        "embeddingSimilarityUsed": { "const": false },
+        "canonicalMutationAuthorized": { "const": false },
+        "reportDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["reportDigest"]
+    },
+    "corpusQualityReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "outlineDigest", "reconciliationDigest",
+        "policyDigest", "candidateCount", "expectedCandidateCount", "pageReportDigests",
+        "reachablePageCount", "orphanPageIds", "intentionalOrphanPageIds",
+        "orphanBasisPoints", "uncategorizedPageCount", "reasonCodes", "hardQualityPassed",
+        "eligibleForApproval", "deterministicChecksOnly", "llmJudgeCanOverride",
+        "embeddingSimilarityCanOverride", "canonicalMutationAuthorized", "reportDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.corpus-quality-report.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "outlineDigest": { "$ref": "#/$defs/digest" },
+        "reconciliationDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "candidateCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "expectedCandidateCount": { "type": "integer", "minimum": 2, "maximum": 97 },
+        "pageReportDigests": {
+          "type": "array", "maxItems": 97, "items": { "$ref": "#/$defs/digest" }
+        },
+        "reachablePageCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "orphanPageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "intentionalOrphanPageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "orphanBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "uncategorizedPageCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "reasonCodes": {
+          "type": "array", "maxItems": 8, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "hardQualityPassed": { "type": "boolean" },
+        "eligibleForApproval": { "type": "boolean" },
+        "deterministicChecksOnly": { "const": true },
+        "llmJudgeCanOverride": { "const": false },
+        "embeddingSimilarityCanOverride": { "const": false },
+        "canonicalMutationAuthorized": { "const": false },
+        "reportDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["reportDigest"]
+    },
+    "currentSessionGenerationReceiptContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "pageId", "purposeDigest", "exchangeDigest",
+        "requestDigest", "blueprintDigest", "evidencePackDigest", "snapshotDigest",
+        "proposalDigest", "sanitizerPolicyDigest", "sanitizerRulesVersion",
+        "sanitizerInputDigest", "generationActor", "proposalOutputSanitized", "egress",
+        "providerUsed", "processSpawned", "receiptDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.current-session-generation-receipt.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "purposeDigest": { "$ref": "#/$defs/digest" },
+        "exchangeDigest": { "$ref": "#/$defs/digest" },
+        "requestDigest": { "$ref": "#/$defs/digest" },
+        "blueprintDigest": { "$ref": "#/$defs/digest" },
+        "evidencePackDigest": { "$ref": "#/$defs/digest" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "sanitizerPolicyDigest": { "$ref": "#/$defs/digest" },
+        "sanitizerRulesVersion": { "const": "buildlore.sanitizer-rules.v5" },
+        "sanitizerInputDigest": { "$ref": "#/$defs/digest" },
+        "generationActor": { "const": "current-agent-session" },
+        "proposalOutputSanitized": { "const": true },
+        "egress": { "const": "none" },
+        "providerUsed": { "type": "null" },
+        "processSpawned": { "const": false },
+        "receiptDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["receiptDigest"]
+    },
+    "wikiSectionContentDiff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sectionId", "changeKind", "beforeBodyDigest", "afterBodyDigest"],
+      "properties": {
+        "sectionId": { "$ref": "#/$defs/portableIdentifier" },
+        "changeKind": { "enum": ["added", "modified", "removed", "unchanged"] },
+        "beforeBodyDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "afterBodyDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        }
+      }
+    },
+    "wikiContentDiff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "pageId", "baseProposalDigest",
+        "candidateProposalDigest", "changeKind", "titleChanged", "summaryChanged",
+        "sections", "addedCitationIds", "removedCitationIds", "addedWikilinkPageIds",
+        "removedWikilinkPageIds", "diffDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.wiki-content-diff.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "baseProposalDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "candidateProposalDigest": { "$ref": "#/$defs/digest" },
+        "changeKind": { "enum": ["added", "modified", "unchanged"] },
+        "titleChanged": { "type": "boolean" },
+        "summaryChanged": { "type": "boolean" },
+        "sections": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/wikiSectionContentDiff" },
+          "x-buildlore-canonicalOrderBy": "sectionId",
+          "x-buildlore-uniqueBy": "sectionId"
+        },
+        "addedCitationIds": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/citationId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "removedCitationIds": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/citationId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "addedWikilinkPageIds": {
+          "type": "array", "maxItems": 96, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "removedWikilinkPageIds": {
+          "type": "array", "maxItems": 96, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "diffDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["diffDigest"]
+    },
+    "removedBaselineWikiPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pageId", "baselineProposalDigest", "baselineProposal", "removalDigest"],
+      "properties": {
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "baselineProposalDigest": { "$ref": "#/$defs/digest" },
+        "baselineProposal": { "$ref": "#/$defs/hierarchicalWikiProposal" },
+        "removalDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["removalDigest"]
+    },
+    "integratedWikiReviewCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expectedTaskCount", "observedTaskDispositionCount",
+        "taskDispositionCoverageBasisPoints", "expectedRelationCount",
+        "observedRelationDispositionCount", "relationDispositionCoverageBasisPoints",
+        "expectedCandidateCount", "observedCandidateCount", "candidateCoverageBasisPoints",
+        "expectedGenerationReceiptCount", "observedGenerationReceiptCount",
+        "generationReceiptCoverageBasisPoints", "expectedPageQualityReportCount",
+        "observedPageQualityReportCount", "pageQualityReportCoverageBasisPoints",
+        "reconciliationComplete", "reachablePageCount", "orphanPageCount",
+        "intentionalOrphanPageCount", "uncategorizedPageCount", "complete", "coverageDigest"
+      ],
+      "properties": {
+        "expectedTaskCount": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "observedTaskDispositionCount": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "taskDispositionCoverageBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "expectedRelationCount": { "type": "integer", "minimum": 0 },
+        "observedRelationDispositionCount": { "type": "integer", "minimum": 0 },
+        "relationDispositionCoverageBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "expectedCandidateCount": { "type": "integer", "minimum": 2, "maximum": 97 },
+        "observedCandidateCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "candidateCoverageBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "expectedGenerationReceiptCount": { "type": "integer", "minimum": 2, "maximum": 97 },
+        "observedGenerationReceiptCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "generationReceiptCoverageBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "expectedPageQualityReportCount": { "type": "integer", "minimum": 2, "maximum": 97 },
+        "observedPageQualityReportCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "pageQualityReportCoverageBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "reconciliationComplete": { "type": "boolean" },
+        "reachablePageCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "orphanPageCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "intentionalOrphanPageCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "uncategorizedPageCount": { "type": "integer", "minimum": 0, "maximum": 97 },
+        "complete": { "type": "boolean" },
+        "coverageDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["coverageDigest"]
+    },
+    "integratedWikiReviewCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageId", "blueprint", "proposal", "baselineProposal", "generationReceipt",
+        "contentDiff", "citationAnchors", "observedSourceIds", "unresolvedConflictIds",
+        "unresolvedGapIds", "pageQualityReport", "candidateDigest"
+      ],
+      "properties": {
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "blueprint": { "$ref": "#/$defs/pageBlueprint" },
+        "proposal": { "$ref": "#/$defs/hierarchicalWikiProposal" },
+        "baselineProposal": {
+          "oneOf": [{ "$ref": "#/$defs/hierarchicalWikiProposal" }, { "type": "null" }]
+        },
+        "generationReceipt": { "$ref": "#/$defs/currentSessionGenerationReceiptContract" },
+        "contentDiff": { "$ref": "#/$defs/wikiContentDiff" },
+        "citationAnchors": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/evidenceCitationAnchor" },
+          "x-buildlore-canonicalOrderBy": "citationId",
+          "x-buildlore-uniqueBy": "citationId"
+        },
+        "observedSourceIds": {
+          "type": "array", "minItems": 1, "maxItems": 4096, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourceId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "unresolvedConflictIds": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^conflict-[a-f0-9]{64}$" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "unresolvedGapIds": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^gap-[a-f0-9]{64}$" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "pageQualityReport": { "$ref": "#/$defs/pageQualityReport" },
+        "candidateDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["candidateDigest"]
+    },
+    "integratedWikiReviewSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "snapshotDigest", "graphDigest", "outlineDigest",
+        "purposeDigest", "compilationPolicyDigest", "planningInventoryDigest",
+        "reconciliationDigest", "semanticQualityPolicyDigest", "baselineGenerationDigest",
+        "runCoverage", "candidates", "removedBaselinePages", "corpusQualityReport",
+        "hardQualityPassed", "eligibleForHumanAcceptance", "canonicalMutationAuthorized",
+        "reasonCodes", "surfaceDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.integrated-wiki-review-surface.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "graphDigest": { "$ref": "#/$defs/digest" },
+        "outlineDigest": { "$ref": "#/$defs/digest" },
+        "purposeDigest": { "$ref": "#/$defs/digest" },
+        "compilationPolicyDigest": { "$ref": "#/$defs/digest" },
+        "planningInventoryDigest": { "$ref": "#/$defs/digest" },
+        "reconciliationDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "semanticQualityPolicyDigest": { "$ref": "#/$defs/digest" },
+        "baselineGenerationDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "runCoverage": { "$ref": "#/$defs/integratedWikiReviewCoverage" },
+        "candidates": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/integratedWikiReviewCandidate" },
+          "x-buildlore-canonicalOrderBy": "pageId",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "removedBaselinePages": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/removedBaselineWikiPage" },
+          "x-buildlore-canonicalOrderBy": "pageId",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "corpusQualityReport": { "$ref": "#/$defs/corpusQualityReport" },
+        "hardQualityPassed": { "type": "boolean" },
+        "eligibleForHumanAcceptance": { "type": "boolean" },
+        "canonicalMutationAuthorized": { "const": false },
+        "reasonCodes": {
+          "type": "array", "maxItems": 32, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "surfaceDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["surfaceDigest"],
+      "x-buildlore-maxUtf8Bytes": 33554432
+    },
+    "integratedWikiCandidateReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "reviewSurfaceDigest", "pageId", "proposalDigest",
+        "generationReceiptDigest", "contentDiffDigest", "pageQualityReportDigest",
+        "corpusQualityReportDigest", "planningInventoryDigest", "decision", "reasonCodes",
+        "canonicalMutationAuthorized", "reviewDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.integrated-wiki-candidate-review.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "reviewSurfaceDigest": { "$ref": "#/$defs/digest" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "generationReceiptDigest": { "$ref": "#/$defs/digest" },
+        "contentDiffDigest": { "$ref": "#/$defs/digest" },
+        "pageQualityReportDigest": { "$ref": "#/$defs/digest" },
+        "corpusQualityReportDigest": { "$ref": "#/$defs/digest" },
+        "planningInventoryDigest": { "$ref": "#/$defs/digest" },
+        "decision": { "enum": ["accepted", "rejected"] },
+        "reasonCodes": {
+          "type": "array", "maxItems": 32, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "canonicalMutationAuthorized": { "const": false },
+        "reviewDigest": { "$ref": "#/$defs/digest" }
+      },
+      "allOf": [{
+        "if": { "properties": { "decision": { "const": "rejected" } } },
+        "then": { "properties": { "reasonCodes": { "minItems": 1 } } }
+      }],
+      "x-buildlore-digestExcludes": ["reviewDigest"]
+    },
+    "childSynthesisReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pageId", "proposalDigest", "reviewDigest", "decision"],
+      "properties": {
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "reviewDigest": { "$ref": "#/$defs/digest" },
+        "decision": { "const": "accepted" }
+      },
+      "x-buildlore-digestExcludes": ["reviewDigest"]
+    },
+    "compileCandidateDisposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageId", "proposalDigest", "evidencePackDigest", "pageQualityReportDigest",
+        "generationReceiptDigest", "integratedReviewDigest", "childSynthesisReviewDigest",
+        "receiptSetDigest", "reviewSurfaceDigest", "integratedReviewSetDigest",
+        "childSynthesisReviewSetDigest", "decision"
+      ],
+      "properties": {
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "evidencePackDigest": { "$ref": "#/$defs/digest" },
+        "pageQualityReportDigest": { "$ref": "#/$defs/digest" },
+        "generationReceiptDigest": { "$ref": "#/$defs/digest" },
+        "integratedReviewDigest": { "$ref": "#/$defs/digest" },
+        "childSynthesisReviewDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "receiptSetDigest": { "$ref": "#/$defs/digest" },
+        "reviewSurfaceDigest": { "$ref": "#/$defs/digest" },
+        "integratedReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "childSynthesisReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "decision": { "enum": ["accepted", "rejected"] }
+      }
+    },
+    "compileRelationDisposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relationId", "reviewDigest", "decision"],
+      "properties": {
+        "relationId": { "type": "string", "pattern": "^relation-[a-f0-9]{64}$" },
+        "reviewDigest": { "$ref": "#/$defs/digest" },
+        "decision": { "enum": ["accepted", "rejected"] }
+      }
+    },
+    "compileTaskDisposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskId", "unitId", "sourceId", "outcome", "targetPageIds",
+        "proposalDigests", "evidenceUnitIds", "reasonCode", "dispositionDigest"
+      ],
+      "properties": {
+        "taskId": { "type": "string", "pattern": "^task-[a-f0-9]{64}$" },
+        "unitId": { "$ref": "#/$defs/unitId" },
+        "sourceId": { "$ref": "#/$defs/sourceId" },
+        "outcome": { "enum": ["emitted", "merged", "skipped"] },
+        "targetPageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "proposalDigests": {
+          "type": "array", "maxItems": 97,
+          "items": { "$ref": "#/$defs/digest" }
+        },
+        "evidenceUnitIds": {
+          "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/unitId" }
+        },
+        "reasonCode": {
+          "oneOf": [
+            { "const": "not-selected-for-synthesis" },
+            { "type": "null" }
+          ]
+        },
+        "dispositionDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["dispositionDigest"]
+    },
+    "compileIntegrityReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "snapshotDigest", "graphDigest", "outlineDigest",
+        "planningInventoryDigest", "partitionSetDigest", "proposalSetDigest",
+        "evidencePackSetDigest", "pageQualityReportSetDigest",
+        "corpusQualityReportDigest", "reconciliationDigest",
+        "receiptSetDigest", "reviewSurfaceDigest", "integratedReviewSetDigest",
+        "childSynthesisReviewSetDigest", "relationReviewSetDigest", "passed", "reportDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.compile-integrity-report.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "graphDigest": { "$ref": "#/$defs/digest" },
+        "outlineDigest": { "$ref": "#/$defs/digest" },
+        "planningInventoryDigest": { "$ref": "#/$defs/digest" },
+        "partitionSetDigest": { "$ref": "#/$defs/digest" },
+        "proposalSetDigest": { "$ref": "#/$defs/digest" },
+        "evidencePackSetDigest": { "$ref": "#/$defs/digest" },
+        "pageQualityReportSetDigest": { "$ref": "#/$defs/digest" },
+        "corpusQualityReportDigest": { "$ref": "#/$defs/digest" },
+        "reconciliationDigest": { "$ref": "#/$defs/digest" },
+        "receiptSetDigest": { "$ref": "#/$defs/digest" },
+        "reviewSurfaceDigest": { "$ref": "#/$defs/digest" },
+        "integratedReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "childSynthesisReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "relationReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "passed": { "const": true },
+        "reportDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["reportDigest"]
+    },
+    "compileRunLedger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "snapshotDigest", "graphDigest", "outlineDigest",
+        "planningInventoryDigest", "taskCount", "relationCount", "partitionDigests",
+        "taskDispositions", "relationDispositions", "candidateDispositions",
+        "corpusQualityReportDigest", "integrityReportDigest", "receiptSetDigest",
+        "reviewSurfaceDigest", "integratedReviewSetDigest",
+        "childSynthesisReviewSetDigest", "integrityPassed",
+        "semanticQualityPassed", "taskDispositionCoverageBasisPoints",
+        "relationDispositionCoverageBasisPoints", "candidateDispositionCoverageBasisPoints",
+        "status", "eligibleForApproval", "ledgerDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.compile-run-ledger.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "graphDigest": { "$ref": "#/$defs/digest" },
+        "outlineDigest": { "$ref": "#/$defs/digest" },
+        "planningInventoryDigest": { "$ref": "#/$defs/digest" },
+        "taskCount": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "relationCount": { "type": "integer", "minimum": 0 },
+        "partitionDigests": {
+          "type": "array", "minItems": 1, "maxItems": 8192,
+          "items": { "$ref": "#/$defs/digest" }
+        },
+        "taskDispositions": {
+          "type": "array", "minItems": 1, "maxItems": 8192, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/compileTaskDisposition" },
+          "x-buildlore-canonicalOrderBy": "taskId",
+          "x-buildlore-uniqueBy": "taskId"
+        },
+        "relationDispositions": {
+          "type": "array", "maxItems": 131072, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/compileRelationDisposition" },
+          "x-buildlore-canonicalOrderBy": "relationId",
+          "x-buildlore-uniqueBy": "relationId"
+        },
+        "candidateDispositions": {
+          "type": "array", "minItems": 2, "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/compileCandidateDisposition" },
+          "x-buildlore-canonicalOrderBy": "pageId",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "corpusQualityReportDigest": { "$ref": "#/$defs/digest" },
+        "integrityReportDigest": { "$ref": "#/$defs/digest" },
+        "receiptSetDigest": { "$ref": "#/$defs/digest" },
+        "reviewSurfaceDigest": { "$ref": "#/$defs/digest" },
+        "integratedReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "childSynthesisReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "integrityPassed": { "const": true },
+        "semanticQualityPassed": { "const": true },
+        "taskDispositionCoverageBasisPoints": { "const": 10000 },
+        "relationDispositionCoverageBasisPoints": { "const": 10000 },
+        "candidateDispositionCoverageBasisPoints": { "const": 10000 },
+        "status": { "const": "finalized" },
+        "eligibleForApproval": { "type": "boolean" },
+        "ledgerDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["ledgerDigest"]
+    },
+    "ownedSourceRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "sourceRevision"],
+      "properties": {
+        "sourceId": { "$ref": "#/$defs/sourceId" },
+        "sourceRevision": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "pageOwnershipEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageId", "proposalDigest", "parentPageId", "childPageIds", "ancestorPageIds",
+        "taskIds", "textUnitIds", "sectionIds", "sourceRevisions", "ownershipDigest"
+      ],
+      "properties": {
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "parentPageId": {
+          "oneOf": [{ "$ref": "#/$defs/pageId" }, { "type": "null" }]
+        },
+        "childPageIds": {
+          "type": "array", "maxItems": 96, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "ancestorPageIds": {
+          "type": "array", "maxItems": 96, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "taskIds": {
+          "type": "array", "minItems": 1, "maxItems": 8192, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^task-[a-f0-9]{64}$" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "textUnitIds": {
+          "type": "array", "minItems": 1, "maxItems": 8192, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/unitId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "sectionIds": {
+          "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "sourceRevisions": {
+          "type": "array", "minItems": 1, "maxItems": 4096, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ownedSourceRevision" },
+          "x-buildlore-canonicalOrderBy": "sourceId",
+          "x-buildlore-uniqueBy": "sourceId"
+        },
+        "ownershipDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["ownershipDigest"]
+    },
+    "pageOwnershipGraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "snapshotDigest", "outlineDigest", "ledgerDigest",
+        "receiptSetDigest", "reviewSurfaceDigest", "integratedReviewSetDigest",
+        "childSynthesisReviewSetDigest", "purposeDigest",
+        "interpretationRulesDigest", "profileDigest", "compilerContractDigest",
+        "sanitizerPolicyDigest", "sourceManifestDigest", "policyDigest",
+        "corpusSourceSetDigest", "pages", "graphDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.page-ownership-graph.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "outlineDigest": { "$ref": "#/$defs/digest" },
+        "ledgerDigest": { "$ref": "#/$defs/digest" },
+        "receiptSetDigest": { "$ref": "#/$defs/digest" },
+        "reviewSurfaceDigest": { "$ref": "#/$defs/digest" },
+        "integratedReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "childSynthesisReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "purposeDigest": { "$ref": "#/$defs/digest" },
+        "interpretationRulesDigest": { "$ref": "#/$defs/digest" },
+        "profileDigest": { "$ref": "#/$defs/digest" },
+        "compilerContractDigest": { "$ref": "#/$defs/digest" },
+        "sanitizerPolicyDigest": { "$ref": "#/$defs/digest" },
+        "sourceManifestDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "corpusSourceSetDigest": { "$ref": "#/$defs/digest" },
+        "pages": {
+          "type": "array", "minItems": 2, "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageOwnershipEntry" },
+          "x-buildlore-canonicalOrderBy": "pageId",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "graphDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["graphDigest"]
+    },
+    "authoritativePageIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pageId", "proposalDigest", "ownershipDigest", "status"],
+      "properties": {
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "ownershipDigest": { "$ref": "#/$defs/digest" },
+        "status": { "const": "active" }
+      }
+    },
+    "authoritativeWikiState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "snapshotDigest", "ledgerDigest",
+        "ownershipGraphDigest", "receiptSetDigest", "reviewSurfaceDigest",
+        "integratedReviewSetDigest", "childSynthesisReviewSetDigest",
+        "humanActivationApprovalDigest", "previousGenerationDigest", "activePages",
+        "status", "generationDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.authoritative-wiki-state.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "ledgerDigest": { "$ref": "#/$defs/digest" },
+        "ownershipGraphDigest": { "$ref": "#/$defs/digest" },
+        "receiptSetDigest": { "$ref": "#/$defs/digest" },
+        "reviewSurfaceDigest": { "$ref": "#/$defs/digest" },
+        "integratedReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "childSynthesisReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "humanActivationApprovalDigest": { "$ref": "#/$defs/digest" },
+        "previousGenerationDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "activePages": {
+          "type": "array", "minItems": 2, "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/authoritativePageIdentity" },
+          "x-buildlore-canonicalOrderBy": "pageId",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "status": { "const": "active" },
+        "generationDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["generationDigest"]
+    },
+    "humanActivationApproval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "snapshotDigest", "ledgerDigest",
+        "ownershipGraphDigest", "receiptSetDigest", "reviewSurfaceDigest",
+        "integratedReviewSetDigest", "childSynthesisReviewSetDigest",
+        "previousGenerationDigest", "previousActivePageIds", "decision",
+        "explicitConfirmation", "approvalDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.human-activation-approval.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" },
+        "ledgerDigest": { "$ref": "#/$defs/digest" },
+        "ownershipGraphDigest": { "$ref": "#/$defs/digest" },
+        "receiptSetDigest": { "$ref": "#/$defs/digest" },
+        "reviewSurfaceDigest": { "$ref": "#/$defs/digest" },
+        "integratedReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "childSynthesisReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "previousGenerationDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "previousActivePageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "decision": { "const": "approved" },
+        "explicitConfirmation": { "const": true },
+        "approvalDigest": { "$ref": "#/$defs/digest" }
+      },
+      "allOf": [{
+        "if": { "properties": { "previousGenerationDigest": { "type": "null" } } },
+        "then": { "properties": { "previousActivePageIds": { "maxItems": 0 } } },
+        "else": { "properties": { "previousActivePageIds": { "minItems": 1 } } }
+      }],
+      "x-buildlore-digestExcludes": ["approvalDigest"]
+    },
+    "authoritativeWikiCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "generationDigest", "humanActivationApprovalDigest",
+        "receiptSetDigest", "reviewSurfaceDigest", "integratedReviewSetDigest",
+        "childSynthesisReviewSetDigest", "liveSnapshotDigest", "status",
+        "changedSourceIds", "directlyStalePageIds", "stalePageIds",
+        "configurationDriftReasonCodes", "retrievalStalePageIds", "unaffectedPageIds",
+        "checkDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.authoritative-wiki-check.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "generationDigest": { "$ref": "#/$defs/digest" },
+        "humanActivationApprovalDigest": { "$ref": "#/$defs/digest" },
+        "receiptSetDigest": { "$ref": "#/$defs/digest" },
+        "reviewSurfaceDigest": { "$ref": "#/$defs/digest" },
+        "integratedReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "childSynthesisReviewSetDigest": { "$ref": "#/$defs/digest" },
+        "liveSnapshotDigest": { "$ref": "#/$defs/digest" },
+        "status": { "enum": ["clean", "stale"] },
+        "changedSourceIds": {
+          "type": "array", "maxItems": 4096, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourceId" }, "x-buildlore-canonicalOrder": "ascending"
+        },
+        "configurationDriftReasonCodes": {
+          "type": "array", "maxItems": 8, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "directlyStalePageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" }, "x-buildlore-canonicalOrder": "ascending"
+        },
+        "stalePageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" }, "x-buildlore-canonicalOrder": "ascending"
+        },
+        "retrievalStalePageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" }, "x-buildlore-canonicalOrder": "ascending"
+        },
+        "unaffectedPageIds": {
+          "type": "array", "maxItems": 97, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pageId" }, "x-buildlore-canonicalOrder": "ascending"
+        },
+        "checkDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["checkDigest"]
+    },
+    "legacyWikiMigrationEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "legacyPageId", "legacyPageDigest", "status", "replacementPageId",
+        "replacementReviewRequired", "automaticDeletionAllowed", "automaticOverwriteAllowed",
+        "automaticActivationAllowed"
+      ],
+      "properties": {
+        "legacyPageId": { "$ref": "#/$defs/pageId" },
+        "legacyPageDigest": { "$ref": "#/$defs/digest" },
+        "status": { "const": "quarantined-needs-regeneration" },
+        "replacementPageId": {
+          "oneOf": [{ "$ref": "#/$defs/pageId" }, { "type": "null" }]
+        },
+        "replacementReviewRequired": { "const": true },
+        "automaticDeletionAllowed": { "const": false },
+        "automaticOverwriteAllowed": { "const": false },
+        "automaticActivationAllowed": { "const": false }
+      }
+    },
+    "legacyWikiMigration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "entries", "legacyEmbeddingMarkerAction",
+        "rollbackGenerationDigest", "explicitActivationRequired", "migrationDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.legacy-wiki-migration.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "entries": {
+          "type": "array", "minItems": 1, "maxItems": 8192, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/legacyWikiMigrationEntry" },
+          "x-buildlore-canonicalOrderBy": "legacyPageId",
+          "x-buildlore-uniqueBy": "legacyPageId"
+        },
+        "legacyEmbeddingMarkerAction": { "enum": ["absent", "retain-quarantined"] },
+        "rollbackGenerationDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "explicitActivationRequired": { "const": true },
+        "migrationDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["migrationDigest"]
+    },
+    "legacyWikiMigrationReviewEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "legacyPageId", "legacyPageDigest", "replacementPageId", "decision"
+      ],
+      "properties": {
+        "legacyPageId": { "$ref": "#/$defs/pageId" },
+        "legacyPageDigest": { "$ref": "#/$defs/digest" },
+        "replacementPageId": {
+          "oneOf": [{ "$ref": "#/$defs/pageId" }, { "type": "null" }]
+        },
+        "decision": { "enum": ["accepted", "deferred"] }
+      }
+    },
+    "legacyWikiMigrationReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "migrationDigest", "replacementLedgerDigest",
+        "entries", "decision", "reviewDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.legacy-wiki-migration-review.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "migrationDigest": { "$ref": "#/$defs/digest" },
+        "replacementLedgerDigest": { "$ref": "#/$defs/digest" },
+        "entries": {
+          "type": "array", "minItems": 1, "maxItems": 8192, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/legacyWikiMigrationReviewEntry" },
+          "x-buildlore-canonicalOrderBy": "legacyPageId",
+          "x-buildlore-uniqueBy": "legacyPageId"
+        },
+        "decision": { "const": "approved" },
+        "reviewDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["reviewDigest"]
+    },
+    "hierarchicalCompilationLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxClusterMembers",
+        "maxEvidenceBytes",
+        "maxEvidenceUnits",
+        "maxPartitionTasks",
+        "maxPlanBytes",
+        "maxRelationCandidatesPerTask",
+        "maxSourceBytes",
+        "maxSources",
+        "maxTasks"
+      ],
+      "properties": {
+        "maxClusterMembers": { "const": 256 },
+        "maxEvidenceBytes": { "const": 262144 },
+        "maxEvidenceUnits": { "const": 64 },
+        "maxPartitionTasks": { "const": 256 },
+        "maxPlanBytes": { "const": 33554432 },
+        "maxRelationCandidatesPerTask": { "const": 32 },
+        "maxSourceBytes": { "const": 524288 },
+        "maxSources": { "const": 4096 },
+        "maxTasks": { "const": 8192 }
+      }
+    },
+    "hierarchicalCompilationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "limits", "policyDigest"],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-compilation-policy.v1" },
+        "limits": { "$ref": "#/$defs/hierarchicalCompilationLimits" },
+        "policyDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["policyDigest"]
+    }
+  }
+}

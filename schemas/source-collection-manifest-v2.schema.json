@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/source-collection-manifest-v2.schema.json",
+  "title": "BuildLore Source Collection Manifest v2",
+  "description": "Portable, project-owned source declarations resolved through registered adapters.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["projectId", "schemaVersion", "sourceRepository", "sources"],
+  "properties": {
+    "projectId": { "$ref": "#/$defs/projectId" },
+    "schemaVersion": { "const": "buildlore.sources.v2" },
+    "sourceRepository": { "$ref": "#/$defs/sourceRepository" },
+    "sources": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/declaration" },
+      "x-buildlore-canonicalOrderBy": "id",
+      "x-buildlore-uniqueBy": "id"
+    }
+  },
+  "$defs": {
+    "projectId": {
+      "allOf": [
+        { "$ref": "#/$defs/safeId" },
+        { "not": { "enum": ["knowledge", "manifest", "projects", "shared"] } }
+      ]
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "adapterId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+    },
+    "sourceRepository": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "anyOf": [
+        {
+          "description": "Credential-free HTTPS or SSH URL without query or fragment",
+          "pattern": "^(?:https|ssh)://(?![^/]*@)[^\\s?#]+$"
+        },
+        {
+          "description": "SSH SCP-style locator",
+          "pattern": "^(?![A-Za-z]:)(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:[^\\s@?#]+$"
+        },
+        {
+          "description": "Trimmed relative repository locator",
+          "pattern": "^(?!-)(?!/)(?!\\\\)(?![A-Za-z]:)(?!.*://)(?!.*::)(?!.*[?@#])(?=\\S(?:.*\\S)?$)[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+        }
+      ]
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*%)(?!.*//)(?!.*\\/$)(?!(?:[^/]+/){64})(?!\\.(?:/|$))(?!.*\\/\\.(?:/|$))(?!\\.\\.(?:/|$))(?!.*\\/\\.\\.(?:/|$))(?!\\.git(?:/|$))(?!.*\\/\\.git(?:/|$))(?!\\.buildlore(?:/|$))(?!.*\\/\\.buildlore(?:/|$))(?!\\.llmwiki(?:/|$))(?!.*\\/\\.llmwiki(?:/|$))(?!(?:knowledge|projects|sources|wiki|export|exports)(?:/|$))(?!.*\\p{Cf})(?!.*(?:^|[/_.-])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh][-_]?[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt][Ss]?|[Tt][Oo][Kk][Ee][Nn][Ss]?|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn])(?:$|[/_.-]))[^\\u0000-\\u001f\\u007f-\\u009f\\uD800-\\uDFFF]+$",
+      "x-buildlore-maxSegments": 64,
+      "x-buildlore-normalization": "NFC"
+    },
+    "declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapterId", "adapterVersion", "id", "kind", "path", "pathType"],
+      "properties": {
+        "adapterId": { "$ref": "#/$defs/adapterId" },
+        "adapterVersion": { "const": 1 },
+        "id": { "$ref": "#/$defs/safeId" },
+        "kind": { "enum": ["code", "markdown", "planning", "text"] },
+        "metadata": { "$ref": "source-metadata.schema.json" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "pathType": { "enum": ["directory", "file"] },
+        "recursive": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "pathType": { "const": "file" } } },
+          "then": { "not": { "required": ["recursive"] } }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "adapterId": { "const": "buildlore.generic" },
+                "kind": { "enum": ["code", "markdown", "text"] },
+                "metadata": {
+                  "allOf": [
+                    { "$ref": "source-metadata.schema.json" },
+                    {
+                      "properties": {
+                        "namespace": { "const": "buildlore.generic" },
+                        "schemaVersion": { "const": "buildlore.generic-metadata.v1" }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "adapterId": { "const": "buildlore.p2a" },
+                "kind": { "const": "planning" },
+                "metadata": {
+                  "allOf": [
+                    { "$ref": "source-metadata.schema.json" },
+                    {
+                      "properties": {
+                        "namespace": { "const": "buildlore.p2a" },
+                        "schemaVersion": { "const": "buildlore.p2a-metadata.v1" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "x-buildlore-requiresProfileAdapter": true
+    }
+  }
+}

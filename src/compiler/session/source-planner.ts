@@ -9,7 +9,7 @@ import { resolveProjectWorkspace } from '../../knowledge/paths.js';
 import { decodeUtf8Strict } from '../../knowledge/strict-json.js';
 import type { ProjectRecord } from '../../knowledge/types.js';
 import { showProject } from '../../knowledge/workspace.js';
-import { createProfileBindingPreflight } from '../../profile/preflight.js';
+import { resolveRegisteredProfileBinding } from '../../profile/preflight.js';
 import {
   createSourceCollectionAdapter,
   type CollectionCandidate,
@@ -26,6 +26,7 @@ import {
   parseSourceDocument,
   renderSourceDocument,
 } from '../../projector/source-document.js';
+import { isCollectableProjectSourceKind } from '../../projector/project-source-writer.js';
 import { consumePreparedSource } from '../../sanitizer/approval.js';
 import {
   createProjectSecurityService,
@@ -60,9 +61,11 @@ import {
 const FIXED_COLLECTION_TIMESTAMP = '1970-01-01T00:00:00.000Z';
 
 export interface SessionCompilePlanSnapshot {
+  readonly candidateInventoryDigest: SessionSha256Digest;
   readonly pendingSlugs: ReadonlySet<string>;
   readonly plan: SessionCompilePlanV1;
   readonly profileMode: 'custom' | 'default';
+  readonly wikiInventoryDigest: SessionSha256Digest;
   readonly workspace: string;
 }
 
@@ -100,7 +103,7 @@ function denied(
 async function sanitizeCandidateText(
   candidate: CollectionCandidate,
   body: string,
-  sourceKind: Extract<SecuritySourceKind, 'markdown' | 'planning'>,
+  sourceKind: Extract<SecuritySourceKind, 'code' | 'markdown' | 'planning' | 'text'>,
   security: ReturnType<typeof createProjectSecurityService>,
   policy: LoadedSecurityPolicy,
   projectId: string,
@@ -199,7 +202,11 @@ async function assertStoredSource(
   try {
     expected = createSourceDocument({
       body: approvedBody,
+      ...(candidate.descriptor === undefined ? {} : { descriptor: candidate.descriptor }),
       ingestedAt: document.ingestedAt,
+      ...(candidate.originMappings === undefined
+        ? {}
+        : { originMappings: candidate.originMappings }),
       producer: candidate.producer,
       projectId,
       source: candidate.sourceUri,
@@ -249,7 +256,7 @@ async function buildPlannedSources(input: {
   }
   const result: SessionPlannedSource[] = [];
   for (const candidate of input.candidates) {
-    if (candidate.sourceKind !== 'markdown' && candidate.sourceKind !== 'planning') {
+    if (!isCollectableProjectSourceKind(candidate.sourceKind)) {
       return denied(input.projectId);
     }
     const file = input.files.get(candidate.sourceRef);
@@ -287,6 +294,9 @@ async function buildPlannedSources(input: {
     result.push(Object.freeze({
       citationAnchors: createSessionCitationAnchors({
         originalBody,
+        ...(candidate.originMappings === undefined
+          ? {}
+          : { originMappings: candidate.originMappings }),
         sanitizedBody: storedSource.body,
         sourceId: id,
         sourceRef: candidate.sourceRef,
@@ -309,15 +319,20 @@ async function buildPlannedSources(input: {
   return Object.freeze(result);
 }
 
-function projectProfileDigest(record: ProjectRecord): SessionSha256Digest {
+function projectProfileDigest(
+  record: ProjectRecord,
+  profileBindingDigest: SessionSha256Digest,
+): SessionSha256Digest {
   return digestSessionValue(record.descriptor.schemaVersion === 'buildlore.project.v1'
     ? {
+        profileBindingDigest,
         mode: 'default',
         outputLanguage: 'en',
         profileHash: null,
         profileVersion: record.descriptor.profileVersion,
       }
     : {
+        profileBindingDigest,
         mode: 'custom',
         outputLanguage: record.descriptor.outputLanguage,
         profileHash: record.descriptor.profileHash,
@@ -329,7 +344,6 @@ function projectProfileDigest(record: ProjectRecord): SessionSha256Digest {
 export function createSessionCompilePlanner(
   options: CreateSessionCompilePlannerOptions,
 ): SessionCompilePlanner {
-  const profilePreflight = createProfileBindingPreflight(options.knowledgeRoot);
   return {
     async create(projectId): Promise<SessionCompilePlanSnapshot> {
       try {
@@ -337,7 +351,7 @@ export function createSessionCompilePlanner(
         const workspace = await resolveProjectWorkspace(options.knowledgeRoot, projectId, {
           mustExist: true,
         });
-        const profile = await profilePreflight.resolve(projectId);
+        const profile = await resolveRegisteredProfileBinding(options.knowledgeRoot, projectId);
         if (resolve(options.knowledgeRoot, record.workspacePath) !== workspace ||
             profile.workspace !== workspace) {
           return denied(projectId);
@@ -359,11 +373,12 @@ export function createSessionCompilePlanner(
         });
         const collection = await createSourceCollectionAdapter().collect({
           checkout: binding.checkout,
+          ingestedAt: FIXED_COLLECTION_TIMESTAMP,
           inventory,
           loadedManifest,
-          markdownIngestedAt: FIXED_COLLECTION_TIMESTAMP,
+          sourceAdapterRegistry: profile.sourceAdapters,
         });
-        if (collection.compatibilityWarnings.length > 0) return denied(projectId);
+        if (collection.notices.length > 0) return denied(projectId);
         options.onPhase?.('sources-collected');
         const policy = await readSecurityPolicy(options.knowledgeRoot, projectId);
         if (policy.workspace !== workspace) return denied(projectId);
@@ -394,14 +409,27 @@ export function createSessionCompilePlanner(
         options.onPhase?.('egress-authorized');
         const knowledge = await readSessionKnowledgeInventory(workspace, projectId);
         options.onPhase?.('inventory-read');
-        const planned = createSessionTasksAndMerges(sources, profile.mode, projectId);
+        const freshProfile = await resolveRegisteredProfileBinding(
+          options.knowledgeRoot,
+          projectId,
+        );
+        if (freshProfile.workspace !== profile.workspace ||
+            freshProfile.bindingDigest !== profile.bindingDigest) {
+          return denied(projectId);
+        }
+        const planned = createSessionTasksAndMerges(
+          sources,
+          profile.binding.upstreamProfile,
+          projectId,
+        );
         return Object.freeze({
+          candidateInventoryDigest: knowledge.candidateInventoryDigest,
           pendingSlugs: knowledge.pendingSlugs,
           plan: finalizeSessionCompilePlan({
             schemaVersion: SESSION_COMPILE_PLAN_SCHEMA_VERSION,
             projectId,
             contractDigest: SESSION_COMPILE_CONTRACT_DIGEST,
-            profileDigest: projectProfileDigest(record),
+            profileDigest: projectProfileDigest(record, profile.bindingDigest),
             policyDigest: policy.digest,
             selectionDigest: sourceSelectionDigest(inventory, binding.bindingDigest),
             sourceManifestDigest: loadedManifest.manifestDigest,
@@ -413,7 +441,8 @@ export function createSessionCompilePlanner(
             mergeCandidates: planned.mergeCandidates,
             allowedLinkTargets: knowledge.allowedLinkTargets,
           }),
-          profileMode: profile.mode,
+          profileMode: profile.binding.upstreamProfile,
+          wikiInventoryDigest: knowledge.wikiDigest,
           workspace,
         });
       } catch (error) {

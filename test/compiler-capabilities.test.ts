@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -14,6 +15,12 @@ import {
 } from '../src/compiler/index.js';
 import { createLlmWikiCompilerBackend } from '../src/compiler/backend.js';
 import { addProject } from '../src/knowledge/index.js';
+import {
+  createSourceDocument,
+  parseSourceDescriptor,
+  renderSourceDocument,
+  SOURCE_DESCRIPTOR_SCHEMA_VERSION,
+} from '../src/projector/index.js';
 import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const temporaryRoots: string[] = [];
@@ -31,6 +38,10 @@ const STATUS_RESULT = {
   stalePages: [],
   stateStatus: 'missing',
 };
+
+function sha256(value: string): `sha256:${string}` {
+  return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
+}
 
 async function createFixture(backend: CompilerBackend, allowEgress = true) {
   const knowledgeRoot = await mkdtemp(join(process.cwd(), '.test-tmp-compiler-capabilities-'));
@@ -388,6 +399,71 @@ describe('compiler capability contract', () => {
     });
     expect(exportJson).toHaveBeenCalledOnce();
     expect(exportJson).toHaveBeenCalledWith({ projectId: 'alpha' });
+  });
+
+  it('maps provider-free Wiki reads and OKF export only through package-root SDK methods', async () => {
+    const exportOkf = vi.fn(() => Promise.resolve({ writtenPaths: [] }));
+    const getPage = vi.fn(() => Promise.resolve({ slug: 'alpha' }));
+    const listPages = vi.fn(() => Promise.resolve({ pages: [] }));
+    const backend = createLlmWikiCompilerBackend(
+      () => ({ exportOkf, getPage, listPages }) as unknown as ReturnType<
+        NonNullable<Parameters<typeof createLlmWikiCompilerBackend>[0]>
+      >,
+    );
+
+    await expect(backend.getProjectPage('/safe/project', {
+      pageDirectory: 'concepts',
+      slug: 'alpha',
+    })).resolves.toEqual({ slug: 'alpha' });
+    await expect(backend.listProjectPages('/safe/project', {
+      includeBody: true,
+      limit: 50,
+    })).resolves.toEqual({ pages: [] });
+    await expect(backend.exportProjectOkf('/safe/project', '/safe/export'))
+      .resolves.toEqual({ writtenPaths: [] });
+    expect(getPage).toHaveBeenCalledWith({ pageDirectory: 'concepts', slug: 'alpha' });
+    expect(listPages).toHaveBeenCalledWith({
+      includeArchived: false,
+      includeBody: true,
+      includeOrphaned: false,
+      limit: 50,
+    });
+    expect(exportOkf).toHaveBeenCalledWith({ out: '/safe/export' });
+  });
+
+  it('filters citation-shaped fenced examples at the compiler adapter boundary', async () => {
+    const body = [
+      'Bound claim.^[sources/example.md:2]',
+      '',
+      '```text',
+      '^[fenced-example]',
+      '```',
+      '',
+      'Literal ^\\[example].',
+    ].join('\n');
+    const exportJson = vi.fn(() => Promise.resolve({
+      projectId: 'alpha',
+      pages: [{
+        body,
+        citations: [
+          { file: 'sources/example.md', start: 2, end: 2 },
+          { file: 'fenced-example' },
+        ],
+      }],
+    }));
+    const backend = createLlmWikiCompilerBackend(
+      () => ({ exportJson }) as unknown as ReturnType<
+        NonNullable<Parameters<typeof createLlmWikiCompilerBackend>[0]>
+      >,
+    );
+
+    await expect(backend.exportProject('/safe/project', 'alpha')).resolves.toEqual({
+      projectId: 'alpha',
+      pages: [{
+        body,
+        citations: [{ file: 'sources/example.md', start: 2, end: 2 }],
+      }],
+    });
   });
 
   it('normalizes held review candidate refs without exposing bodies or treating unknown review reasons as success', async () => {
@@ -1009,6 +1085,67 @@ describe('compiler capability contract', () => {
       .catch((reason: unknown) => reason);
     expect(egressError).toMatchObject({ code: 'COMPILER_EGRESS_DENIED' });
     expect(JSON.stringify(egressError)).not.toContain('CREDENTIAL-SENTINEL');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('denies provider egress when registered descriptor metadata contains a secret', async () => {
+    const run = vi.fn(() => Promise.resolve({
+      candidates: [],
+      compiled: 0,
+      concepts: [],
+      deleted: 0,
+      errors: [],
+      pages: [],
+      skipped: 0,
+    }));
+    const { compiler, knowledgeRoot } = await createFixture({ run });
+    const secret = ['sk-proj-', 'A1b2C3d4E5f6G7h8', 'J9k0LmNoPqRsTuVw'].join('');
+    const sourceUri = 'buildlore+source:/https%3A%2F%2Fexample.test%2Falpha.git/alpha/markdown/docs/docs%2Fguide.md';
+    const revision = sha256('clean original bytes');
+    const descriptor = parseSourceDescriptor({
+      adapterId: 'buildlore.generic',
+      adapterVersion: 1,
+      contentHash: revision,
+      declarationId: 'docs',
+      kind: 'markdown',
+      mediaType: 'text/markdown',
+      metadata: {
+        namespace: 'buildlore.generic',
+        schemaVersion: 'buildlore.generic-metadata.v1',
+        values: { credential: `OPENAI_API_KEY=${secret}` },
+      },
+      projectId: 'alpha',
+      schemaVersion: SOURCE_DESCRIPTOR_SCHEMA_VERSION,
+      sourceRef: 'docs/guide.md',
+      sourceRevision: revision,
+      sourceUri,
+    });
+    const document = createSourceDocument({
+      body: '# Clean guide\n\nNo secret appears in the body.',
+      descriptor,
+      ingestedAt: '2026-08-30T00:00:00.000Z',
+      originMappings: [{
+        canonical: { endColumn: 31, endLine: 3, startColumn: 1, startLine: 1 },
+        origin: { endColumn: 31, endLine: 3, startColumn: 1, startLine: 1 },
+      }],
+      producer: 'buildlore',
+      projectId: 'alpha',
+      source: sourceUri,
+      sourceKind: 'markdown',
+      sourceRevision: revision,
+      sourceType: 'file',
+      title: 'Clean guide',
+    });
+    const target = `markdown--${sha256(sourceUri).slice('sha256:'.length)}.md`;
+    await writeFile(
+      join(knowledgeRoot, 'projects', 'alpha', 'sources', target),
+      renderSourceDocument(document),
+    );
+
+    const failure = await compiler.execute({ capability: 'compile', projectId: 'alpha' })
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'COMPILER_EGRESS_DENIED' });
+    expect(JSON.stringify(failure)).not.toContain(secret);
     expect(run).not.toHaveBeenCalled();
   });
 

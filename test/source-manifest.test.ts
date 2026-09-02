@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import {
+  link,
   mkdir,
   mkdtemp,
   readFile,
@@ -22,10 +23,13 @@ import {
   MAX_SOURCE_DECLARATIONS,
   MAX_SOURCE_MANIFEST_BYTES,
   MAX_SOURCE_PATH_LENGTH,
+  parseSourceCollectionManifestV2,
   parseSourceCollectionManifest,
+  readSelectedSourceBytes,
   readSourceCollectionManifest,
   selectDeclaredSourceFiles,
   SOURCE_COLLECTION_MANIFEST_SCHEMA_VERSION,
+  SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
   type SourceCollectionManifestV1,
 } from '../src/projector/source-manifest.js';
 
@@ -266,6 +270,11 @@ describe('project-owned source collection manifest', () => {
       'docs/%2e%2e/escape.md',
       'docs//file.md',
       'docs/.git/config',
+      '.llmwiki/profile.json',
+      'projects/beta/wiki/page.md',
+      'sources/generated.md',
+      'wiki/generated.md',
+      'exports/wiki.md',
       'docs/access-token/value.md',
       `docs/${'a'.repeat(MAX_SOURCE_PATH_LENGTH)}.md`,
     ]) {
@@ -289,6 +298,71 @@ describe('project-owned source collection manifest', () => {
         id: `docs-${index}`,
       })),
     ))).not.toThrow();
+  });
+
+  it('[SHW-V-03] rejects every protected root and segment for v1/v2 files and directories', () => {
+    const protectedPaths = [
+      '.git/config',
+      'docs/.git/config',
+      '.buildlore/sources.json',
+      'docs/.buildlore/cache.md',
+      '.llmwiki/index.json',
+      'docs/.llmwiki/index.md',
+      'knowledge',
+      'knowledge/projects/alpha.md',
+      'projects/alpha/wiki.md',
+      'sources/generated.md',
+      'wiki/generated.md',
+      'export/wiki.json',
+      'exports/wiki.json',
+    ] as const;
+
+    for (const pathType of ['file', 'directory'] as const) {
+      for (const path of protectedPaths) {
+        expect(() => parseSourceCollectionManifest(manifest([{
+          documentKind: 'markdown',
+          id: 'blocked',
+          path,
+          pathType,
+          ...(pathType === 'directory' ? { recursive: true } : {}),
+        }]))).toThrowError(expect.objectContaining({
+          code: 'SOURCE_MANIFEST_INVALID',
+          field: 'path',
+        }));
+        expect(() => parseSourceCollectionManifestV2({
+          projectId: 'alpha',
+          schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+          sourceRepository,
+          sources: [{
+            adapterId: 'buildlore.generic',
+            adapterVersion: 1,
+            id: 'blocked',
+            kind: 'markdown',
+            path,
+            pathType,
+            ...(pathType === 'directory' ? { recursive: true } : {}),
+          }],
+        })).toThrowError(expect.objectContaining({
+          code: 'SOURCE_MANIFEST_INVALID',
+          field: 'path',
+        }));
+      }
+    }
+
+    expect(() => parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository,
+      sources: [{
+        adapterId: 'buildlore.p2a',
+        adapterVersion: 1,
+        id: 'planning',
+        kind: 'planning',
+        path: '.plan2agent/artifacts',
+        pathType: 'directory',
+        recursive: true,
+      }],
+    })).not.toThrow();
   });
 
   it('rejects declared file-kind and path-type mismatches', async () => {
@@ -458,6 +532,82 @@ describe('project-owned source collection manifest', () => {
     }
   });
 
+  it('[SHW-V-04] revalidates protected directory children and forged selected source refs', async () => {
+    const fixture = await createFixture();
+    await mkdir(join(fixture.sourceRoot, 'docs/.llmwiki'), { recursive: true });
+    await writeFile(join(fixture.sourceRoot, 'docs/.llmwiki/generated.md'), '# Generated\n');
+    let loaded = await load(fixture, manifest([{
+      documentKind: 'markdown',
+      id: 'docs',
+      path: 'docs',
+      pathType: 'directory',
+      recursive: true,
+    }]));
+
+    await expect(selectDeclaredSourceFiles(fixture.checkout, loaded)).rejects.toMatchObject({
+      code: 'SOURCE_SELECTION_PATH_UNSAFE',
+    });
+
+    await rm(join(fixture.sourceRoot, 'docs/.llmwiki'), { recursive: true });
+    await writeFile(join(fixture.sourceRoot, 'docs/guide.md'), '# Guide\n');
+    loaded = await readSourceCollectionManifest(fixture.checkout, 'alpha');
+    const inventory = await selectDeclaredSourceFiles(fixture.checkout, loaded);
+    const selected = inventory.files[0];
+    if (selected === undefined) throw new Error('selected source fixture is missing');
+    for (const sourceRef of [
+      '.buildlore/sources.json',
+      'knowledge/projects/alpha/source.md',
+      'docs/.git/config.md',
+    ]) {
+      await expect(readSelectedSourceBytes(fixture.checkout, {
+        ...selected,
+        sourceRef,
+      })).rejects.toMatchObject({ code: 'SOURCE_SELECTION_PATH_UNSAFE' });
+    }
+  });
+
+  it('rejects hard-linked selected files before reading their bytes', async () => {
+    if (process.platform === 'win32') return;
+    const fixture = await createFixture();
+    const outside = join(fixture.root, 'outside.md');
+    await mkdir(join(fixture.sourceRoot, 'docs'));
+    await writeFile(outside, '# Outside\n');
+    await link(outside, join(fixture.sourceRoot, 'docs/linked.md'));
+    const loaded = await load(fixture, manifest([{
+      documentKind: 'markdown',
+      id: 'docs',
+      path: 'docs/linked.md',
+      pathType: 'file',
+    }]));
+
+    await expect(selectDeclaredSourceFiles(fixture.checkout, loaded)).rejects.toMatchObject({
+      code: 'SOURCE_SELECTION_PATH_UNSAFE',
+    });
+  });
+
+  it('does not trust a caller-forged hard-link identity at the adapter read boundary', async () => {
+    if (process.platform === 'win32') return;
+    const fixture = await createFixture();
+    const selectedPath = join(fixture.sourceRoot, 'selected.md');
+    const linkedPath = join(fixture.root, 'linked.md');
+    await writeFile(selectedPath, '# Selected\n');
+    const loaded = await load(fixture, manifest([{
+      documentKind: 'markdown',
+      id: 'selected',
+      path: 'selected.md',
+      pathType: 'file',
+    }]));
+    const inventory = await selectDeclaredSourceFiles(fixture.checkout, loaded);
+    const selected = inventory.files[0];
+    if (selected === undefined) throw new Error('selected source fixture is missing');
+    await link(selectedPath, linkedPath);
+
+    await expect(readSelectedSourceBytes(fixture.checkout, {
+      ...selected,
+      identity: { ...selected.identity, linkCount: '2' },
+    })).rejects.toMatchObject({ code: 'SOURCE_SELECTION_CHANGED' });
+  });
+
   it('enforces file-count, file-byte, aggregate-byte, and depth limits', async () => {
     const fixture = await createFixture();
     await mkdir(join(fixture.sourceRoot, 'docs/nested'), { recursive: true });
@@ -512,6 +662,28 @@ describe('project-owned source collection manifest', () => {
         await writeFile(manifestPath, `${serializeCanonicalJson(
           parseSourceCollectionManifest(value),
         )}\n`);
+      },
+    })).rejects.toMatchObject({ code: 'SOURCE_SELECTION_CHANGED' });
+  });
+
+  it('revalidates earlier files before returning a multi-file selection', async () => {
+    const fixture = await createFixture();
+    await mkdir(join(fixture.sourceRoot, 'docs'));
+    const firstPath = join(fixture.sourceRoot, 'docs/a.md');
+    await Promise.all([
+      writeFile(firstPath, 'first'),
+      writeFile(join(fixture.sourceRoot, 'docs/b.md'), 'second'),
+    ]);
+    const loaded = await load(fixture, manifest([{
+      documentKind: 'markdown',
+      id: 'docs',
+      path: 'docs',
+      pathType: 'directory',
+    }]));
+
+    await expect(selectDeclaredSourceFiles(fixture.checkout, loaded, {
+      afterFileStat: async (sourceRef) => {
+        if (sourceRef === 'docs/b.md') await writeFile(firstPath, 'drifted-first');
       },
     })).rejects.toMatchObject({ code: 'SOURCE_SELECTION_CHANGED' });
   });
@@ -586,6 +758,15 @@ describe('project-owned source collection manifest', () => {
     expect(relativePathPattern.test('docs/guide.md')).toBe(true);
     expect(relativePathPattern.test('docs/./guide.md')).toBe(false);
     expect(relativePathPattern.test('.git/config.md')).toBe(false);
+    expect(relativePathPattern.test('.buildlore/sources.json')).toBe(false);
+    expect(relativePathPattern.test('.llmwiki/index.json')).toBe(false);
+    expect(relativePathPattern.test('docs/.llmwiki/index.json')).toBe(false);
+    expect(relativePathPattern.test('knowledge/projects/alpha.md')).toBe(false);
+    expect(relativePathPattern.test('projects/alpha/wiki.md')).toBe(false);
+    expect(relativePathPattern.test('sources/generated.md')).toBe(false);
+    expect(relativePathPattern.test('wiki/generated.md')).toBe(false);
+    expect(relativePathPattern.test('export/wiki.json')).toBe(false);
+    expect(relativePathPattern.test('exports/wiki.json')).toBe(false);
     expect(relativePathPattern.test('C:/docs/guide.md')).toBe(false);
     expect(relativePathPattern.test('docs//guide.md')).toBe(false);
     expect(relativePathPattern.test('docs/')).toBe(false);
@@ -612,5 +793,206 @@ describe('project-owned source collection manifest', () => {
     await selectDeclaredSourceFiles(fixture.checkout, loaded);
     expect(await readdir(fixture.sourceRoot, { recursive: true })).toEqual(before);
     expect(await readFile(join(fixture.sourceRoot, 'docs/a.md'), 'utf8')).toBe(sourceBefore);
+  });
+
+  it('reads canonical v2 generic declarations and keeps empty manifests valid', async () => {
+    const fixture = await createFixture();
+    await mkdir(join(fixture.sourceRoot, 'content'));
+    await Promise.all([
+      writeFile(join(fixture.sourceRoot, 'content/guide.md'), '# Guide\n'),
+      writeFile(join(fixture.sourceRoot, 'content/notes.txt'), 'portable notes\n'),
+      writeFile(join(fixture.sourceRoot, 'content/tool.ts'), 'export const value = 1;\n'),
+    ]);
+    const empty = parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository,
+      sources: [],
+    });
+    expect(empty.sources).toEqual([]);
+    const parsed = parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository,
+      sources: [
+        {
+          adapterId: 'buildlore.generic',
+          adapterVersion: 1,
+          id: 'text',
+          kind: 'text',
+          path: 'content/notes.txt',
+          pathType: 'file',
+        },
+        {
+          adapterId: 'buildlore.generic',
+          adapterVersion: 1,
+          id: 'code',
+          kind: 'code',
+          path: 'content/tool.ts',
+          pathType: 'file',
+        },
+        {
+          adapterId: 'buildlore.generic',
+          adapterVersion: 1,
+          id: 'markdown',
+          kind: 'markdown',
+          path: 'content/guide.md',
+          pathType: 'file',
+        },
+      ],
+    });
+    expect(parsed.sources.map((entry) => entry.id)).toEqual(['code', 'markdown', 'text']);
+    await writeFile(
+      join(fixture.sourceRoot, '.buildlore/sources.json'),
+      serializeCanonicalJson(parsed),
+    );
+    const loaded = await readSourceCollectionManifest(fixture.checkout, 'alpha');
+    const selected = await selectDeclaredSourceFiles(fixture.checkout, loaded);
+    expect(selected.files.map((file) => [
+      file.adapterId,
+      file.documentKind,
+      file.mediaType,
+      file.sourceRef,
+    ])).toEqual([
+      ['buildlore.generic', 'code', 'text/x-source-code', 'content/tool.ts'],
+      ['buildlore.generic', 'markdown', 'text/markdown', 'content/guide.md'],
+      ['buildlore.generic', 'text', 'text/plain', 'content/notes.txt'],
+    ]);
+  });
+
+  it('fails closed for unregistered v2 adapters and protected source roots', () => {
+    const declaration = {
+      adapterId: 'unknown.adapter',
+      adapterVersion: 1,
+      id: 'docs',
+      kind: 'markdown',
+      path: 'docs/guide.md',
+      pathType: 'file',
+    } as const;
+    expect(() => parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository,
+      sources: [declaration],
+    })).toThrowError(expect.objectContaining({ code: 'SOURCE_KIND_UNSUPPORTED' }));
+    expect(() => parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository,
+      sources: [{
+        ...declaration,
+        adapterId: 'buildlore.generic',
+        path: '.buildlore/sources.json',
+      }],
+    })).toThrowError(expect.objectContaining({ code: 'SOURCE_MANIFEST_INVALID' }));
+    expect(() => parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository,
+      sources: [{
+        ...declaration,
+        adapterId: 'buildlore.generic',
+        path: 'docs/access-token/value.md',
+      }],
+    })).toThrowError(expect.objectContaining({ code: 'SOURCE_MANIFEST_INVALID' }));
+    expect(() => parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository: '/private/alpha.git',
+      sources: [],
+    })).toThrowError(expect.objectContaining({ field: 'sourceRepository' }));
+    expect(() => parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository,
+      sources: [{
+        ...declaration,
+        adapterId: 'buildlore.generic',
+        kind: 'planning',
+      }],
+    })).toThrowError(expect.objectContaining({ code: 'SOURCE_KIND_UNSUPPORTED' }));
+    expect(() => parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository,
+      sources: [{
+        ...declaration,
+        adapterId: 'buildlore.generic',
+        metadata: {
+          namespace: 'buildlore.p2a',
+          schemaVersion: 'buildlore.p2a-metadata.v1',
+          values: {},
+        },
+      }],
+    })).toThrowError(expect.objectContaining({ code: 'SOURCE_KIND_UNSUPPORTED' }));
+  });
+
+  it('keeps the public v2 schema aligned with repository, path, and adapter codecs', async () => {
+    const schema = JSON.parse(await readFile(
+      new URL('../schemas/source-collection-manifest-v2.schema.json', import.meta.url),
+      'utf8',
+    )) as {
+      readonly $defs: {
+        readonly declaration: {
+          readonly allOf: readonly [unknown, {
+            readonly oneOf: readonly {
+              readonly properties: {
+                readonly adapterId: { readonly const: string };
+                readonly kind: { readonly const?: string; readonly enum?: readonly string[] };
+                readonly metadata: unknown;
+              };
+            }[];
+          }];
+          readonly 'x-buildlore-requiresProfileAdapter': boolean;
+        };
+        readonly relativePath: {
+          readonly pattern: string;
+          readonly 'x-buildlore-maxSegments': number;
+          readonly 'x-buildlore-normalization': string;
+        };
+        readonly sourceRepository: {
+          readonly anyOf: readonly { readonly pattern: string }[];
+        };
+      };
+    };
+    const repositoryPatterns = schema.$defs.sourceRepository.anyOf.map(
+      ({ pattern }) => new RegExp(pattern, 'u'),
+    );
+    const acceptsRepository = (value: string): boolean =>
+      repositoryPatterns.some((pattern) => pattern.test(value));
+    expect(acceptsRepository('https://example.test/alpha.git')).toBe(true);
+    expect(acceptsRepository('../alpha.git')).toBe(true);
+    expect(acceptsRepository('/private/alpha.git')).toBe(false);
+    expect(acceptsRepository('https://user@example.test/alpha.git')).toBe(false);
+
+    const pathPattern = new RegExp(schema.$defs.relativePath.pattern, 'u');
+    expect(schema.$defs.relativePath['x-buildlore-maxSegments']).toBe(64);
+    expect(schema.$defs.relativePath['x-buildlore-normalization']).toBe('NFC');
+    expect(pathPattern.test('docs/guide.md')).toBe(true);
+    for (const path of [
+      '.buildlore/sources.json',
+      '.llmwiki/index.json',
+      'docs/.llmwiki/index.json',
+      'knowledge/projects/alpha.md',
+      'projects/alpha/wiki.md',
+      'sources/generated.md',
+      'wiki/generated.md',
+      'export/wiki.json',
+      'exports/wiki.json',
+      'docs/access-token/value.md',
+      'docs/guide\u2060.md',
+      `${'a/'.repeat(64)}guide.md`,
+    ]) expect(pathPattern.test(path)).toBe(false);
+
+    expect(schema.$defs.declaration['x-buildlore-requiresProfileAdapter']).toBe(true);
+    const variants = schema.$defs.declaration.allOf[1].oneOf;
+    expect(variants.map((variant) => variant.properties.adapterId.const)).toEqual([
+      'buildlore.generic',
+      'buildlore.p2a',
+    ]);
+    expect(variants[0]?.properties.kind.enum).toEqual(['code', 'markdown', 'text']);
+    expect(variants[1]?.properties.kind.const).toBe('planning');
+    expect(JSON.stringify(variants)).toContain('buildlore.generic-metadata.v1');
+    expect(JSON.stringify(variants)).toContain('buildlore.p2a-metadata.v1');
   });
 });

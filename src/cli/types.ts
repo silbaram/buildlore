@@ -3,14 +3,28 @@ export const CLI_ENVELOPE_SCHEMA_VERSION = 'buildlore.cli-envelope.v1' as const;
 export type CliCommandId =
   | 'check'
   | 'compile'
+  | 'compile.activate'
   | 'compile.apply'
   | 'compile.approve'
   | 'compile.candidates'
+  | 'compile.hierarchy.approve'
+  | 'compile.hierarchy.child-review'
+  | 'compile.hierarchy.finalize'
+  | 'compile.hierarchy.review'
+  | 'compile.hierarchy.start'
+  | 'compile.hierarchy.status'
+  | 'compile.hierarchy.submit'
   | 'compile.plan'
   | 'context'
+  | 'export'
   | 'init'
+  | 'index.rebuild'
+  | 'index.status'
   | 'knowledge.pin.commit'
   | 'knowledge.pin.plan'
+  | 'model.bind'
+  | 'model.inspect'
+  | 'model.verify'
   | 'project.add'
   | 'project.bind'
   | 'project.list'
@@ -20,7 +34,14 @@ export type CliCommandId =
   | 'publish.push'
   | 'query'
   | 'search'
-  | 'sync';
+  | 'source.add'
+  | 'source.diff'
+  | 'source.list'
+  | 'sync'
+  | 'wiki.citations'
+  | 'wiki.curate'
+  | 'wiki.list'
+  | 'wiki.read';
 
 export type CliEnvelopeCommand = CliCommandId | 'unknown';
 export type CliExitCode = 0 | 2 | 3 | 4 | 5 | 6;
@@ -33,11 +54,15 @@ export type CliOperation =
   | 'knowledge.clone'
   | 'knowledge.init'
   | 'knowledge.status'
+  | 'model.bind'
+  | 'model.inspect'
+  | 'model.verify'
   | 'project.validate';
 
 export interface CliDiagnostic {
   readonly code: string;
   readonly message: string;
+  readonly reasonCode?: string;
   readonly recoveryCommand?: readonly string[];
 }
 

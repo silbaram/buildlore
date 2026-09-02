@@ -1,7 +1,9 @@
 export const GENERATED_SOURCE_KINDS = Object.freeze([
+  'code',
   'execution',
   'markdown',
   'planning',
+  'text',
 ] as const);
 
 export type GeneratedSourceKind = typeof GENERATED_SOURCE_KINDS[number];
@@ -9,9 +11,16 @@ export type GeneratedSourceKind = typeof GENERATED_SOURCE_KINDS[number];
 export const GENERATED_IDENTIFIER_PREFIXES = Object.freeze([
   'anchor',
   'candidate',
+  'citation',
+  'claim',
+  'conflict',
+  'gap',
   'merge',
+  'page',
+  'relation',
   'source',
   'task',
+  'unit',
 ] as const);
 
 export type GeneratedIdentifierPrefix = typeof GENERATED_IDENTIFIER_PREFIXES[number];

@@ -12,8 +12,10 @@ import {
   resolveProjectProfileBinding,
   showProject,
 } from '../src/knowledge/index.js';
+import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import {
   createBuildLoreLifecycleProfile,
+  createBuiltInProfileBinding,
   createProfileBindingPreflight,
   createProjectLifecycleProfile,
   renderLifecycleProfile,
@@ -59,6 +61,10 @@ describe('project lifecycle profile manager', () => {
   it('plans without writes, applies descriptor-last, and becomes unchanged', async () => {
     const knowledgeRoot = await fixture();
     await writeProfile(knowledgeRoot);
+    await writeFile(
+      join(workspace(knowledgeRoot), 'profile-binding.json'),
+      serializeCanonicalJson(createBuiltInProfileBinding('general', 'en')),
+    );
     const manager = createProjectLifecycleProfile({ knowledgeRoot });
 
     const plan = await manager.plan('alpha');
@@ -67,7 +73,7 @@ describe('project lifecycle profile manager', () => {
       migrationRequired: false,
       outputLanguage: 'en',
       projectId: 'alpha',
-      reasonCodes: ['default-to-buildlore'],
+      reasonCodes: ['default-to-buildlore', 'profile-binding-update'],
       recompileRequired: true,
     });
     expect(JSON.stringify(plan)).not.toContain(knowledgeRoot);
@@ -89,6 +95,8 @@ describe('project lifecycle profile manager', () => {
       schemaVersion: PROJECT_SCHEMA_VERSION_V2,
       sourceRepository: 'https://example.test/alpha.git',
     });
+    await expect(readFile(join(workspace(knowledgeRoot), 'profile-binding.json'), 'utf8'))
+      .resolves.toBe(serializeCanonicalJson(createBuiltInProfileBinding('development', 'en')));
     await expect(createProfileBindingPreflight(knowledgeRoot).resolve('alpha')).resolves.toEqual({
       mode: 'custom',
       outputLanguage: 'en',
@@ -126,6 +134,17 @@ describe('project lifecycle profile manager', () => {
     });
   });
 
+  it('fails preflight when an explicit adapter binding disagrees with the project profile', async () => {
+    const knowledgeRoot = await fixture();
+    await writeFile(
+      join(workspace(knowledgeRoot), 'profile-binding.json'),
+      serializeCanonicalJson(createBuiltInProfileBinding('development', 'ko')),
+    );
+
+    await expect(createProfileBindingPreflight(knowledgeRoot).resolve('alpha'))
+      .rejects.toMatchObject({ code: 'PROFILE_DRIFT', projectId: 'alpha' });
+  });
+
   it('supports an explicit en-to-ko source update without rewriting materialized schema', async () => {
     const knowledgeRoot = await fixture();
     await writeProfile(knowledgeRoot, 'en');
@@ -141,7 +160,7 @@ describe('project lifecycle profile manager', () => {
     expect(plan).toMatchObject({
       disposition: 'compatible-recompile',
       outputLanguage: 'ko',
-      reasonCodes: ['language-update'],
+      reasonCodes: ['language-update', 'profile-binding-update'],
     });
     await manager.apply(plan);
     await expect(readFile(join(workspace(knowledgeRoot), '.llmwiki', 'profile.json'), 'utf8'))

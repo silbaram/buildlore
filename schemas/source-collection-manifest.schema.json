@@ -61,7 +61,9 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 512,
-      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*%)(?!.*//)(?!.*\\/$)(?!(?:[^/]+/){64})(?!\\.(?:/|$))(?!.*\\/\\.(?:/|$))(?!\\.\\.(?:/|$))(?!.*\\/\\.\\.(?:/|$))(?!\\.git(?:/|$))(?!.*\\/\\.git(?:/|$))(?!.*\\p{Cf})(?!.*(?:^|[/_.-])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh][-_]?[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt][Ss]?|[Tt][Oo][Kk][Ee][Nn][Ss]?|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn])(?:$|[/_.-]))[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*%)(?!.*//)(?!.*\\/$)(?!(?:[^/]+/){64})(?!\\.(?:/|$))(?!.*\\/\\.(?:/|$))(?!\\.\\.(?:/|$))(?!.*\\/\\.\\.(?:/|$))(?!\\.git(?:/|$))(?!.*\\/\\.git(?:/|$))(?!\\.buildlore(?:/|$))(?!.*\\/\\.buildlore(?:/|$))(?!\\.llmwiki(?:/|$))(?!.*\\/\\.llmwiki(?:/|$))(?!(?:knowledge|projects|sources|wiki|export|exports)(?:/|$))(?!.*\\p{Cf})(?!.*(?:^|[/_.-])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh][-_]?[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt][Ss]?|[Tt][Oo][Kk][Ee][Nn][Ss]?|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn])(?:$|[/_.-]))[^\\u0000-\\u001f\\u007f-\\u009f\\uD800-\\uDFFF]+$",
+      "x-buildlore-maxSegments": 64,
+      "x-buildlore-normalization": "NFC"
     },
     "fileDeclaration": {
       "type": "object",

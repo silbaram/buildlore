@@ -10,12 +10,14 @@ export type SecurityOverrideReason =
   | 'false-positive-fixture'
   | 'non-secret-identifier';
 export type SecuritySourceKind =
+  | 'code'
   | 'compiler-cache'
   | 'execution'
   | 'markdown'
   | 'planning'
   | 'profile'
   | 'provider-request'
+  | 'text'
   | 'wiki';
 export type SecurityEgressCapability =
   | 'compile'

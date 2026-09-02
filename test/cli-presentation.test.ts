@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  HELP_TEXT,
   CliQualityGateError,
   CliUsageError,
   mapCliError,
@@ -10,6 +11,7 @@ import {
 } from '../src/cli/index.js';
 import {
   CompilerOperationError,
+  HierarchyContractError,
   ProjectCheckError,
   SessionCompileError,
 } from '../src/compiler/index.js';
@@ -22,8 +24,50 @@ import {
 import { RetrievalOperationError } from '../src/retrieval/index.js';
 import { SECURITY_RULES } from '../src/sanitizer/index.js';
 import { SecurityOperationError } from '../src/sanitizer/errors.js';
+import { WikiOperationError } from '../src/wiki/errors.js';
 
 describe('CLI presentation and exit taxonomy', () => {
+  it('documents the current-session hierarchy handoff without implying approval activates', () => {
+    for (const command of [
+      'start', 'status', 'submit', 'child-review', 'review', 'finalize', 'approve',
+    ]) {
+      expect(HELP_TEXT).toContain(`buildlore compile hierarchy ${command}`);
+    }
+    expect(HELP_TEXT).toContain('it never launches any agent process');
+    expect(HELP_TEXT).toContain('Records explicit human approval only; it does not activate');
+  });
+
+  it('maps closed hierarchy contract rejections to a value-free validation failure', () => {
+    const failure = mapCliError(new HierarchyContractError('alpha'), {
+      command: 'compile.hierarchy.submit',
+      projectId: 'alpha',
+    });
+
+    expect(failure).toMatchObject({
+      errors: [{ code: 'HIERARCHY_CONTRACT_INVALID' }],
+      exitCode: 3,
+      ok: false,
+      projectId: 'alpha',
+    });
+  });
+
+  it('preserves possible Wiki export side effects as a partial failure', () => {
+    const failure = mapCliError(new WikiOperationError(
+      'WIKI_EXPORT_FAILED',
+      'alpha',
+      { sideEffectsPossible: true },
+    ), { command: 'export', projectId: 'alpha' });
+
+    expect(failure).toMatchObject({
+      data: {
+        recoveryAction: 'inspect',
+        sideEffectsPossible: true,
+      },
+      exitCode: 4,
+      partial: true,
+    });
+  });
+
   it('renders deterministic human output by default', () => {
     const result: CliSuccessResult = {
       command: 'project.show',
@@ -51,11 +95,11 @@ describe('CLI presentation and exit taxonomy', () => {
     const result: CliSuccessResult = {
       command: 'compile.plan',
       data: {
-        schemaVersion: 'buildlore.compile-plan.v2',
+        schemaVersion: 'buildlore.compile-plan.v4',
         projectId: 'alpha',
         contractDigest: `sha256:${'a'.repeat(64)}`,
         planDigest: `sha256:${'b'.repeat(64)}`,
-        algorithmVersion: 'buildlore.session-planner.v1',
+        algorithmVersion: 'buildlore.session-planner.v3',
         sources: [{ sanitizedBody: sourceBody }],
         tasks: [{ taskId: 'task' }],
         mergeCandidates: [],

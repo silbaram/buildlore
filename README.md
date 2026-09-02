@@ -263,8 +263,8 @@ node dist/cli/bin.js compile apply \
 
 `compile plan` returns sanitized source text, deterministic tasks and merge
 candidates, exact original-file citation anchors, and a plan digest. BuildLore does
-not save that plan or launch a Claude/Codex executable, agent SDK, background worker,
-or child process. The current caller session may use its existing skills and
+not save that plan or launch a Claude/Codex executable, agent SDK, background agent,
+or agent/provider child process. The current caller session may use its existing skills and
 subagents to author canonical `buildlore.compile-proposal.v1` files. `compile apply`
 regenerates the current plan, validates every proposal as one batch, scans generated
 content again, and admits matching output only through the public SDK's untrusted OKF
@@ -292,6 +292,169 @@ The isolated project workspace contains flat sanitized sources under `sources/`,
 generated pages under `wiki/`, compiler state under `.llmwiki/`, and the applied
 language-neutral lifecycle profile.
 
+#### Recommended hierarchical CLI workflow
+
+The CLI is the recommended product workflow when the current Codex or Claude session
+authors a hierarchical Wiki. Every handoff path is relative to the BuildLore hub, and
+every digest argument must be copied exactly from the preceding command result.
+
+```sh
+# Refresh the sanitized project corpus, then create and inspect a durable local run.
+node dist/cli/bin.js sync --project example
+node dist/cli/bin.js compile hierarchy start \
+  --project example \
+  --purpose handoffs/wiki-purpose.json \
+  --json
+node dist/cli/bin.js compile hierarchy status \
+  --project example \
+  --run run-<64-lowercase-hex> \
+  --json
+
+# Give the returned exchange to the already-running agent session, then submit its JSON.
+node dist/cli/bin.js compile hierarchy submit \
+  --project example \
+  --run run-<64-lowercase-hex> \
+  --input handoffs/page-submission.json \
+  --expect-exchange sha256:<exchange-digest> \
+  --json
+
+# Explicitly review child synthesis before reviewing the combined content diff and quality.
+node dist/cli/bin.js compile hierarchy child-review \
+  --project example \
+  --run run-<64-lowercase-hex> \
+  --input handoffs/child-review.json \
+  --expect-review sha256:<child-review-digest> \
+  --json
+node dist/cli/bin.js compile hierarchy review \
+  --project example \
+  --run run-<64-lowercase-hex> \
+  --json
+
+# Finalize the reviewed surface, then record a separate explicit human approval.
+node dist/cli/bin.js compile hierarchy finalize \
+  --project example \
+  --run run-<64-lowercase-hex> \
+  --input handoffs/final-review.json \
+  --expect-review sha256:<integrated-review-digest> \
+  --json
+node dist/cli/bin.js compile hierarchy approve \
+  --project example \
+  --run run-<64-lowercase-hex> \
+  --expect-ledger sha256:<ledger-digest> \
+  --confirm-approval \
+  --json
+
+# Approval does not activate. Use the bundle path returned by approve and present its digest.
+node dist/cli/bin.js compile activate \
+  --project example \
+  --input .buildlore/hierarchy-runs/example/run-<64-lowercase-hex>/approved-wiki.json \
+  --confirm-approval sha256:<approval-digest> \
+  --json
+node dist/cli/bin.js compile hierarchy status \
+  --project example \
+  --run run-<64-lowercase-hex> \
+  --json
+
+# A clean, active run is available through the normal Wiki and retrieval commands.
+node dist/cli/bin.js wiki list --project example --json
+node dist/cli/bin.js wiki curate --project example --json
+node dist/cli/bin.js wiki read --project example --page page-<64-lowercase-hex> --json
+node dist/cli/bin.js wiki citations --project example --page page-<64-lowercase-hex> --json
+node dist/cli/bin.js search --project example --query "reviewed activation lineage" --mode graph
+```
+
+Each invocation may be a new OS process. BuildLore persists the project-confined run in
+the Git-ignored local directory `.buildlore/hierarchy-runs/`, then deterministically
+replays sanitized inputs, exchanges, generation receipts, reviews, and ledger bindings
+before advancing it. The `review` result presents the combined content diff and
+deterministic quality report; it does not accept the candidates. `approve` records the
+explicit human decision but does not activate, publish Git, or silently accept anything.
+
+BuildLore never launches Codex, Claude, a model provider, an agent SDK, or an
+agent/provider child process for this workflow. It never authors proposals, auto-accepts
+reviews, activates implicitly,
+or auto-publishes Git. The already-running caller session owns proposal authoring and
+passes only the declared JSON handoffs back to BuildLore.
+
+#### Library API
+
+The product-level library boundary is
+`createHierarchicalWorkflowService({ hubRoot, knowledgeRoot })`. Its
+`start/status/submit/childReview/review/finalize/approve` methods mirror the CLI while
+persisting and replaying the ignored, project-confined local run. `approve` returns the
+exact `activationBundlePath`, approval digest, and `activationArgs`; pass those to the
+separate activation service when the human intends to make the reviewed generation
+active. The lower-level compiler APIs keep outline, evidence, semantic quality, run
+lineage, and approval separate from model execution.
+
+An agent host can connect the already-active session to hierarchical generation through
+the importable `createCurrentSessionGenerationService({ knowledgeRoot })` API. Its
+`prepare(...)` call returns one bounded, serializable exchange containing the writing
+brief, sanitized evidence, reviewed child summaries, instructions, and the exact proposal
+contract. Give only that exchange to the current agent, then pass its versioned
+`buildlore.current-session-proposal-submission.v1` response to `session.submit(...)`.
+`prepare(...)` deliberately accepts only the original `EvidencePackV1` returned by
+`createEvidencePack(...)` in the same process; do not JSON-round-trip the pack before
+preparing the exchange. Reuse one service instance for the complete leaf-to-parent run so
+its sanitizer-approved child proofs remain bound to parent synthesis. BuildLore verifies
+the project, page, exchange, request, snapshot and live sanitizer-policy bindings, scans
+the generated text again, computes claim/proposal digests itself, and returns only a
+candidate plus a generation receipt. A later handoff can call
+`verifyCurrentSessionGenerationResult(result, exchange, projectId)` after JSON
+round-tripping to replay the closed proposal contract and verify the purpose, blueprint,
+evidence-pack, snapshot, request, sanitizer-policy, proposal, and exchange bindings. The
+same canonical scan digest is available without exposing the body through
+`digestCurrentSessionProposalSecurityBody(proposal, projectId)`. The public JSON boundary
+is `schemas/hierarchical-current-session.schema.json`.
+
+`createIntegratedWikiReviewSurface(...)` combines only verified `{ exchange, result }`
+handoffs with the actual outline, planning inventory, link reconciliation, deterministic
+semantic-quality reports, exact citation anchors, and a section-level content diff. It
+returns incomplete prefix runs as visible non-approvable review surfaces; duplicate,
+swapped, or non-prefix generations fail closed. A null `baselineGenerationDigest` means
+there is no prior baseline and requires an empty baseline proposal list. A non-null value
+names the prior authoritative generation while the full baseline proposals are bound by
+the surface digest. Approval replays that identity against the actual active state and
+requires the baseline page/proposal set to match it exactly. Baseline-only pages retain
+their full sanitized proposal for deletion review and prevent acceptance until a dedicated
+removal decision exists.
+
+This route does not launch a provider, agent SDK, executable, network client, or child
+process from BuildLore. `buildloreInitiatedEgress: "none"` records that boundary; it does
+not mean that sanitized evidence was hidden from the already-active agent session that
+received the exchange. Review, quality approval, finalization, activation, and Git
+publication remain separate steps. `finalizeCompileRun` now replays every generation
+handoff and requires the exact receipt set, integrated review surface, accepted page
+reviews, and reviewed child-summary set. Their canonical digests continue through the
+integrity report, finalized ledger, ownership graph, human activation approval, active
+state, and authoritative check. A self-rehashed receipt, review, approval, or stale
+baseline cannot substitute for those original inputs.
+
+`createHumanActivationApproval(...)` records an explicit local confirmation bound to the
+finalized ledger, ownership graph, receipt/review digests, and previous active generation.
+It does not claim to prove a cryptographic human identity, and it cannot be created for an
+ineligible ledger. Activation requires the caller to present that exact approval digest
+again before BuildLore reads live sources or changes the approved projection.
+
+Activation remains explicit:
+
+```sh
+node dist/cli/bin.js compile activate \
+  --project example \
+  --confirm-approval sha256:<approval-digest> \
+  --json
+```
+
+Activation validates the human approval, reviewed receipt lineage, prior active generation,
+approved state, ownership, evidence and sanitizer identities. A missing, mismatched, or
+stale confirmation preserves the previous projection. A successful activation also writes a
+deterministic, Git-trackable human reading surface under
+`knowledge/projects/<project-id>/wiki/buildlore-hierarchy/`: one `index.md`, one stable
+`page-<64-lowercase-hex>.md` per active page, and `manifest.json`. The approved JSON remains
+the only authority; direct Markdown edits are reported as materialization drift and are never
+used as retrieval or semantic-index input. Activation does not call an LLM, embed content,
+rebuild an index, commit/push Git, or pin the knowledge submodule.
+
 ## Read and retrieve knowledge
 
 Lexical search is deterministic and works without credentials:
@@ -303,15 +466,36 @@ node dist/cli/bin.js search \
   --mode lexical
 ```
 
-Semantic and hybrid search can use the configured embedding provider. If compatible
-embedding state or provider access is unavailable, the result explicitly reports its
-lexical fallback or recovery action instead of silently rebuilding the index.
+`wiki curate --project <project-id>` is also fully model-free. It reads only the clean,
+active approved Wiki and returns bounded review suggestions for possible duplicates,
+unsupported claims, broken links, and weak connections. Suggestion identities and
+evidence locators are deterministic and path-free. The command never edits, merges,
+approves, or deletes a page; a stored stale or invalid authority fails closed. Curate is
+projection-scoped and does not independently rescan the source checkout. Run sync and the
+compile authority check to discover source drift before a new explicit activation.
+
+Graph search also works without a model. Semantic and hybrid search use only the
+quality-approved hierarchical projection and the explicitly bound local model. Index status
+reports the approved projection, Markdown materialization, and semantic generation separately.
+Rebuild remains explicit; search never downloads a model or rebuilds an index implicitly.
+Before switching the semantic active pointer, rebuild re-reads the authority, corpus generation,
+sanitizer policy, chunker, and local embedding identity. A drifted build stays staged and the
+previous healthy index remains active.
 
 ```sh
+node dist/cli/bin.js index status --project example --json
+node dist/cli/bin.js index rebuild --project example --json
+node dist/cli/bin.js search --project example --query "related decisions" --mode graph
 node dist/cli/bin.js search --project example --query "authentication decision" --mode hybrid
 node dist/cli/bin.js query --project example --question "Why was this design selected?"
 node dist/cli/bin.js context --project example --prompt "Prepare an implementation plan"
 ```
+
+`semantic` returns a structured failure for a missing, stale, or incompatible local
+provider/index. Only `hybrid` may visibly exclude the semantic channel and continue
+with lexical/graph results. A project without an activated hierarchical projection
+keeps the legacy lexical reader as an explicitly partial compatibility path; it is not
+treated as semantic-quality-approved content.
 
 `query` always requests `save: false`, but the upstream compiler still appends query
 activity to the selected project's `log.md`. Context can explicitly fall back to a
@@ -373,6 +557,7 @@ must be included.
 init -> project add -> sync --dry-run -> sync -> compile -> check
                                          |                    |
                                          +-> compile plan -> current session -> compile apply -> review
+                                         +-> hierarchical quality approval -> compile activate -> index rebuild
                                          +-> search/query/context
                                          +-> publish plan -> commit -> push -> knowledge pin
 ```

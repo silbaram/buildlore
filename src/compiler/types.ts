@@ -252,6 +252,24 @@ export interface CompilerCorpusBackend {
   exportProject(workspaceRoot: string, projectId: string): Promise<unknown>;
 }
 
+export interface CompilerWikiBackend {
+  exportProjectOkf(workspaceRoot: string, outputRoot: string): Promise<unknown>;
+  getProjectPage(
+    workspaceRoot: string,
+    page: Readonly<{ readonly pageDirectory: 'concepts' | 'queries'; readonly slug: string }>,
+  ): Promise<unknown>;
+  listProjectPages(
+    workspaceRoot: string,
+    options: Readonly<{
+      readonly cursor?: string;
+      readonly includeBody?: boolean;
+      readonly limit?: number;
+      readonly problemCursor?: string;
+      readonly profileCursor?: string;
+    }>,
+  ): Promise<unknown>;
+}
+
 export type EgressCapability = 'compile' | 'context' | 'eval-full' | 'query' | 'search';
 
 export interface ProjectCompilerPort {

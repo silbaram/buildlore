@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/local-embedding.schema.json",
+  "title": "BuildLore local embedding contracts",
+  "oneOf": [
+    { "$ref": "#/$defs/embeddingIdentity" },
+    { "$ref": "#/$defs/modelBindingView" },
+    { "$ref": "#/$defs/providerCapabilities" }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basename", "bytes", "role", "sha256"],
+      "properties": {
+        "basename": {
+          "enum": ["config.json", "onnx/model.onnx", "tokenizer.json", "tokenizer_config.json"]
+        },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "role": { "enum": ["model", "model-config", "tokenizer", "tokenizer-config"] },
+        "sha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "embeddingIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter", "artifacts", "dimensions", "documentPrefix", "identityDigest",
+        "licenseId", "maximumTokens", "metric", "modelId", "modelRevision",
+        "normalization", "pooling", "providerKind", "queryPrefix", "scalarEncoding",
+        "schemaVersion", "tokenizerContractVersion"
+      ],
+      "properties": {
+        "adapter": {
+          "const": {
+            "contractVersion": 1,
+            "device": "cpu",
+            "kind": "transformers-js",
+            "packageName": "@huggingface/transformers",
+            "packageVersion": "4.2.0",
+            "runtimeDependency": "onnxruntime-node@1.24.3"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/artifact" },
+          "x-buildlore-uniqueBy": "basename"
+        },
+        "dimensions": { "const": 384 },
+        "documentPrefix": { "const": "passage: " },
+        "identityDigest": { "$ref": "#/$defs/digest" },
+        "licenseId": { "const": "MIT" },
+        "maximumTokens": { "const": 512 },
+        "metric": { "const": "cosine" },
+        "modelId": { "const": "intfloat/multilingual-e5-small" },
+        "modelRevision": { "const": "614241f622f53c4eeff9890bdc4f31cfecc418b3" },
+        "normalization": { "const": "l2" },
+        "pooling": { "const": "attention-mask-mean" },
+        "providerKind": { "const": "local-in-process" },
+        "queryPrefix": { "const": "query: " },
+        "scalarEncoding": { "const": "float32-little-endian" },
+        "schemaVersion": { "const": "buildlore.embedding-identity.v2" },
+        "tokenizerContractVersion": { "const": 1 }
+      }
+    },
+    "modelBindingView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activeIdentity", "profileId", "reasonCode", "recoveryAction", "state"],
+      "properties": {
+        "activeIdentity": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/embeddingIdentity" }]
+        },
+        "profileId": { "const": "multilingual-e5-small" },
+        "reasonCode": {
+          "type": ["string", "null"],
+          "enum": [
+            null, "artifact-checksum-mismatch", "artifact-config-incompatible",
+            "artifact-missing", "binding-missing", "binding-stale",
+            "model-directory-unavailable", "platform-unsupported", "runtime-unavailable"
+          ]
+        },
+        "recoveryAction": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "prefixItems": [
+                { "const": "model" },
+                { "enum": ["bind", "verify"] },
+                { "const": "--profile" },
+                { "const": "multilingual-e5-small" }
+              ],
+              "minItems": 4,
+              "maxItems": 4
+            }
+          ]
+        },
+        "state": { "enum": ["incompatible", "none", "ready", "unavailable"] }
+      }
+    },
+    "providerCapabilities": {
+      "const": {
+        "adapterKind": "transformers-js",
+        "device": "cpu",
+        "egress": "none",
+        "maximumBatchSize": 32,
+        "maximumQueryUtf8Bytes": 4096,
+        "networkAllowed": false,
+        "providerUsed": "local-in-process"
+      }
+    }
+  }
+}

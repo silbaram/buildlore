@@ -21,12 +21,14 @@ const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 const CREDENTIAL_PATH_PATTERN =
   /(?:^|[/_.-])(?:api[-_]?key|authorization|bearer|credentials?|password|private[-_]?key|refresh[-_]?token|secrets?|tokens?|access[-_]?token)(?:$|[/_.-])/iu;
 const SOURCE_KINDS = new Set<SecuritySourceKind>([
+  'code',
   'compiler-cache',
   'execution',
   'markdown',
   'planning',
   'profile',
   'provider-request',
+  'text',
   'wiki',
 ]);
 const RULE_ACTION_BY_ID = new Map<string, SecurityFindingAction>(

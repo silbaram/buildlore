@@ -1,0 +1,121 @@
+{
+  "schemaVersion": "buildlore.hierarchical-corpus-negative-fixture.v1",
+  "projectId": "fixture-project",
+  "sourceCount": 117,
+  "headingCount": 473,
+  "repeatedHeading": "Shared overview",
+  "repeatedHeadingSourceCount": 33,
+  "permutationSeed": 1592594996,
+  "repeatedHeadingPairCount": 528,
+  "expectedPlanDigest": "sha256:fd3b6c7b529cb0aa1827a9e176d66534f1bd64500d48d5fc1929a64d6f866240",
+  "provenance": {
+    "schemaVersion": "buildlore.historical-baseline-provenance.v1",
+    "entrySnapshot": {
+      "path": "plans/entries/buildlore-v0.2.2-hierarchical-semantic-wiki-compilation.md",
+      "byteLength": 78917,
+      "sha256": "sha256:6cb331cd3e723d76680bc5c5d879f44727941c372631be7d352f12162edfae74",
+      "claimIds": [
+        "entry.problem.approval-state-disconnect",
+        "entry.problem.flat-projection",
+        "entry.problem.merge-cap"
+      ]
+    },
+    "plannerBaseline": {
+      "commitSha": "945e42507bdeaac8fe96bdfca3d05cca6401e8f2",
+      "treeSha": "56ad7568fdbf3c962bdef7423c9b1bca5c271d88",
+      "planSchemaVersion": "buildlore.compile-plan.v1",
+      "algorithmVersion": "buildlore.session-planner.v1",
+      "contractDigest": "sha256:98607df63979a55c5756374ac3dc60c0525638ad004b82ff2924ed198a58aa39",
+      "maxMergeCandidates": 512,
+      "sourceFiles": [
+        {
+          "path": "src/compiler/session/contracts.ts",
+          "gitBlobSha1": "eaa61c72b92a1b9fa8f9e09fb75cc522160c1cda",
+          "sha256": "sha256:bb427bb9fccd85fe5ca988fe20586cb76d4f56a37b9901396628bb5e98301110"
+        },
+        {
+          "path": "src/compiler/session/planner-pure.ts",
+          "gitBlobSha1": "8ba65302e2257b8f309775e08696f94c785fcb78",
+          "sha256": "sha256:23c2b0d20ec4b4e66e5e0b794e939647c13d86096d5fd60e26342861bb5fe090"
+        },
+        {
+          "path": "src/compiler/session/types.ts",
+          "gitBlobSha1": "197e150a4ab97fdbefa9963135d720a6d249635c",
+          "sha256": "sha256:8465c9e0ad2dfcf67d755fd6bdf94a83ee2a062a06c6c970e2eddc1d35474f9a"
+        }
+      ]
+    },
+    "approvalBaseline": {
+      "commitSha": "8b2d5c2bc2ea11d3b82289a94a4139711a283249",
+      "treeSha": "0cc16761a885d4d4b4c885527d8db58c068ef17b",
+      "compilerDependencyVersion": "llm-wiki-compiler@1.1.0",
+      "sourceFiles": [
+        {
+          "path": "src/compiler/backend.ts",
+          "gitBlobSha1": "817563aa6bed7bdbbf573612a38e9477cf8da44a",
+          "sha256": "sha256:e3c8d1b552ddecb0d313702114002d8b50452891fad8e83e6c6f11889a39bf52"
+        },
+        {
+          "path": "src/compiler/check.ts",
+          "gitBlobSha1": "818b7bdfdef4706b2406fe025fb6fab0339d1769",
+          "sha256": "sha256:cc0ae02a4179503cb2a59fecebae0679232d71ef2659b518d4428adcdcbb5dac"
+        },
+        {
+          "path": "src/compiler/session/review-service.ts",
+          "gitBlobSha1": "2c6c094c1e256b67bffd2e00a52c89715f83bf6f",
+          "sha256": "sha256:4aa1e9f303de03c798508d37317f2d4f1658518bb39887a06794e491128e4f1b"
+        },
+        {
+          "path": "src/compiler/session/review-store.ts",
+          "gitBlobSha1": "aea9db4ee0f0fc24bbde79d5a1ac1d16618b2ca9",
+          "sha256": "sha256:18b18190e03427c1375395fe74e647e13be2b3009bbc4d5bab1d4c408adc6e4d"
+        }
+      ]
+    }
+  },
+  "historicalPlannerFailure": {
+    "schemaVersion": "buildlore.historical-planner-failure.v1",
+    "candidateOrdinal": 513,
+    "candidateCountBeforeFailure": 512,
+    "error": {
+      "candidateRefs": [],
+      "code": "SESSION_PLAN_DENIED",
+      "message": "Session compile input was rejected safely.",
+      "projectId": "fixture-project",
+      "recoveryAction": "check-config",
+      "retryable": false,
+      "sideEffectsPossible": false
+    }
+  },
+  "observedProjection": {
+    "schemaVersion": "buildlore.historical-projection-observation.v1",
+    "claimId": "entry.problem.flat-projection",
+    "sourceCount": 117,
+    "headingCount": 473,
+    "pageCount": 117,
+    "oneLinePageCount": 117,
+    "uncategorizedPageCount": 117,
+    "bodyWikiLinkCount": 0,
+    "omittedHeadingCount": 356
+  },
+  "expectedShallowWiki": {
+    "pageCount": 117,
+    "bodyWikiLinkCount": 0,
+    "uncategorizedPageCount": 117,
+    "templateBody": "This page summarizes its source document.",
+    "qualityReasonCode": "content-shallow"
+  },
+  "expectedLegacyApprovalCheck": {
+    "schemaVersion": "buildlore.historical-approve-check-expectation.v1",
+    "claimId": "entry.problem.approval-state-disconnect",
+    "approvalOutcome": "approved",
+    "providerUsed": false,
+    "sideEffectsPossible": false,
+    "checkExitCode": 5,
+    "gateCodes": ["pending-changes", "state-unhealthy"],
+    "stateStatus": "missing",
+    "pendingChangesCount": 1,
+    "sourceCount": 0,
+    "errorCode": "QUALITY_GATE_FAILED"
+  }
+}

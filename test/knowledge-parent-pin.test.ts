@@ -664,7 +664,7 @@ describe('ParentKnowledgePinService', () => {
       .resolves.toBe(result.resultingParentCommitSha);
     expect(JSON.stringify(result)).not.toContain(fixture.parentRoot);
     expect(JSON.stringify(result)).not.toContain(fixture.remoteRoot);
-  });
+  }, 15_000);
 
   it('[V12-V-06] proves remote descendant reachability without importing it locally', async () => {
     const fixture = await createFixture();

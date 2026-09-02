@@ -65,12 +65,14 @@ const PROJECT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const TOKEN_PATTERN = /(?<![A-Za-z0-9+.-])(?:https:\/\/[A-Za-z0-9_+./=%@-]{12,}|http:\/\/[A-Za-z0-9_+./=%@-]{13,})|[A-Za-z0-9_+./=-]{20,}/giu;
 const MAX_NEW_SAFE_ENTROPY_TOKEN_LENGTH = 128;
 const SOURCE_KINDS = new Set([
+  'code',
   'compiler-cache',
   'execution',
   'markdown',
   'planning',
   'profile',
   'provider-request',
+  'text',
   'wiki',
 ]);
 const SOURCE_REQUEST_FIELDS = new Set([
@@ -667,6 +669,16 @@ function safeEnvironmentVariableName(value: string): boolean {
     /^[A-Z][A-Z0-9]{0,15}$/u.test(segment) && !/[0-9][A-Z]/u.test(segment));
 }
 
+function safeBuildLoreSchemaIdentifier(value: string): boolean {
+  if (value.length < 20 || value.length > MAX_NEW_SAFE_ENTROPY_TOKEN_LENGTH) return false;
+  const match = /^buildlore\.([a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*)\.v(?:0|[1-9][0-9]{0,3})$/u
+    .exec(value);
+  if (match === null) return false;
+  const segments = match[1]?.split('-') ?? [];
+  return segments.length >= 1 && segments.length <= 6 &&
+    segments.every((segment) => segment.length <= 16);
+}
+
 function safeTechnicalTaxonomy(value: string): boolean {
   if (value.length < 20 || value.length > MAX_NEW_SAFE_ENTROPY_TOKEN_LENGTH ||
       value.startsWith('/') || value.endsWith('/') || value.includes('//')) return false;
@@ -691,6 +703,7 @@ function safeCredentialFreeHttpUri(value: string): boolean {
 function safeEntropyToken(value: string): boolean {
   if (/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value) ||
       /^sha256:[a-f0-9]{64}$/u.test(value) ||
+      /^(?:\.\/)?page-[a-f0-9]{64}\.md$/u.test(value) ||
       generatedSourceFilenameKind(value) !== null ||
       isGeneratedIdentifier(value) ||
       /^run-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-task-[a-z0-9-]+$/u.test(value) ||
@@ -698,7 +711,8 @@ function safeEntropyToken(value: string): boolean {
       /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(value) ||
       /^<(?:HOME|WORKSPACE|REDACTED:CREDENTIAL)>$/u.test(value)) return true;
   return safeTechnicalIdentifier(value) || safeEnvironmentVariableName(value) ||
-    safeTechnicalTaxonomy(value) || safeCredentialFreeHttpUri(value);
+    safeBuildLoreSchemaIdentifier(value) || safeTechnicalTaxonomy(value) ||
+    safeCredentialFreeHttpUri(value);
 }
 
 function collectEntropyCandidate(state: ScanState, value: string): void {

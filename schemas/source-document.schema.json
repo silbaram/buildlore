@@ -13,6 +13,7 @@
     "sourceType": { "enum": ["web", "file", "image", "pdf", "transcript"] },
     "truncated": { "const": true },
     "originalChars": {
+      "description": "Original body length measured in Unicode scalar values.",
       "type": "integer",
       "minimum": 100001,
       "maximum": 9007199254740991

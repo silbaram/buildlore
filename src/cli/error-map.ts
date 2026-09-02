@@ -1,4 +1,5 @@
 import { CompilerOperationError } from '../compiler/errors.js';
+import { HierarchyContractError } from '../compiler/hierarchy/errors.js';
 import { SessionCompileError } from '../compiler/session/errors.js';
 import { ProjectCheckError } from '../compiler/check.js';
 import { ProjectCorpusError } from '../compiler/corpus.js';
@@ -13,8 +14,20 @@ import {
   SourceSelectionError,
 } from '../projector/errors.js';
 import { ProjectSyncError } from '../projector/sync.js';
-import { RetrievalOperationError } from '../retrieval/index.js';
+import { SourceManagementError } from '../projector/source-management.js';
+import {
+  ApprovedWikiProjectionError,
+  HierarchicalMarkdownMaterializationError,
+  LocalWikiRetrievalError,
+  RetrievalOperationError,
+} from '../retrieval/index.js';
+import { LocalEmbeddingError } from '../retrieval/embedding/index.js';
+import { SemanticIndexError } from '../retrieval/vector-index/index.js';
 import { SecurityOperationError } from '../sanitizer/errors.js';
+import { WikiOperationError } from '../wiki/errors.js';
+import { HierarchicalWikiActivationError } from './hierarchical-activation.js';
+import { HierarchicalWorkflowRunStoreError } from './hierarchical-run-store.js';
+import { HierarchicalWorkflowError } from './hierarchical-workflow.js';
 import { CliUsageError } from './parser.js';
 import type {
   CliEnvelopeCommand,
@@ -124,6 +137,7 @@ function baseFailure(
   code: string,
   message: string,
   recoveryCommand?: readonly string[],
+  reasonCode?: string,
 ): CliFailureResult {
   return Object.freeze({
     ...context,
@@ -131,6 +145,7 @@ function baseFailure(
       Object.freeze({
         code,
         message,
+        ...(reasonCode === undefined ? {} : { reasonCode }),
         ...(recoveryCommand === undefined ? {} : { recoveryCommand }),
       }),
     ]),
@@ -149,6 +164,88 @@ export function mapCliError(
       2,
       error.code,
       'Command usage is invalid. Run buildlore --help for usage.',
+    );
+  }
+  if (error instanceof HierarchyContractError) {
+    return baseFailure(context, 3, error.code, error.message);
+  }
+  if (error instanceof LocalEmbeddingError) {
+    const recoveryCommand = error.reasonCode === null || context.command === 'unknown'
+      ? undefined
+      : safeRecoveryCommand([
+          'model',
+          error.reasonCode === 'binding-missing' ||
+            error.reasonCode === 'model-directory-unavailable' ? 'bind' : 'verify',
+          '--profile',
+          'multilingual-e5-small',
+        ]);
+    return baseFailure(
+      context,
+      error.code === 'LOCAL_EMBEDDING_CONFIG_INVALID' ? 2
+        : error.code === 'LOCAL_EMBEDDING_INCOMPATIBLE' ? 3 : 4,
+      error.code,
+      error.message,
+      recoveryCommand,
+    );
+  }
+  if (error instanceof HierarchicalWikiActivationError) {
+    return baseFailure(context, 3, error.code, error.message);
+  }
+  if (error instanceof HierarchicalWorkflowRunStoreError) {
+    return baseFailure(
+      context,
+      error.code === 'HIERARCHICAL_WORKFLOW_RUN_BUSY' ||
+        error.code === 'HIERARCHICAL_WORKFLOW_RUN_CONFLICT' ||
+        error.code === 'HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED' ? 4 : 3,
+      error.code,
+      error.message,
+    );
+  }
+  if (error instanceof HierarchicalWorkflowError) {
+    return baseFailure(context, 3, error.code, error.message);
+  }
+  if (error instanceof ApprovedWikiProjectionError) {
+    return baseFailure(
+      context,
+      error.code === 'APPROVED_WIKI_PROJECTION_WRITE_FAILED' ? 4 : 3,
+      error.code,
+      error.message,
+    );
+  }
+  if (error instanceof HierarchicalMarkdownMaterializationError) {
+    return baseFailure(
+      context,
+      error.code === 'HIERARCHICAL_MARKDOWN_CONTRACT_INVALID' ||
+        error.code === 'HIERARCHICAL_MARKDOWN_DRIFT' ||
+        error.code === 'HIERARCHICAL_MARKDOWN_SECURITY_DENIED' ? 3 : 4,
+      error.code,
+      error.message,
+      context.projectId === undefined || context.projectId === null
+        ? undefined
+        : safeRecoveryCommand(['compile', 'activate', '--project', context.projectId]),
+    );
+  }
+  if (error instanceof LocalWikiRetrievalError) {
+    return baseFailure(
+      context,
+      error.code === 'LOCAL_WIKI_RETRIEVAL_CONFIG_INVALID' ? 2
+        : error.code === 'LOCAL_WIKI_SEMANTIC_UNAVAILABLE' ? 4 : 3,
+      error.code,
+      error.message,
+      safeRecoveryCommand(error.recoveryAction ?? undefined),
+      error.reasonCode ?? undefined,
+    );
+  }
+  if (error instanceof SemanticIndexError) {
+    return baseFailure(
+      context,
+      error.code === 'SEMANTIC_INDEX_CONFIG_INVALID' ? 2
+        : error.retryable ? 4 : 3,
+      error.code,
+      error.message,
+      context.projectId === undefined || context.projectId === null
+        ? undefined
+        : safeRecoveryCommand(['index', 'rebuild', '--project', context.projectId]),
     );
   }
   if (error instanceof ModeAInitializationError) {
@@ -272,6 +369,33 @@ export function mapCliError(
       validationFailure ? 'Project corpus was rejected safely.' : 'Project corpus read failed safely.',
     );
   }
+  if (error instanceof WikiOperationError) {
+    const validationFailure = error.code === 'WIKI_CITATION_INVALID' ||
+      error.code === 'WIKI_CONTRACT_INVALID' ||
+      error.code === 'WIKI_CURSOR_INVALID' ||
+      error.code === 'WIKI_EXPORT_DESTINATION_INVALID' ||
+      error.code === 'WIKI_PAGE_NOT_FOUND' ||
+      error.code === 'WIKI_PAGE_REF_INVALID' ||
+      error.code === 'WIKI_SECURITY_DENIED';
+    const failure = baseFailure(
+      context,
+      validationFailure ? 3 : 4,
+      error.code,
+      error.sideEffectsPossible
+        ? 'Wiki export state requires inspection.'
+        : validationFailure
+          ? 'Wiki input or verified content was rejected safely.'
+          : 'Wiki operation failed safely.',
+    );
+    return Object.freeze({
+      ...failure,
+      data: Object.freeze({
+        recoveryAction: error.recoveryAction,
+        sideEffectsPossible: error.sideEffectsPossible,
+      }),
+      partial: error.partial,
+    });
+  }
   if (error instanceof RetrievalOperationError) {
     return baseFailure(
       context,
@@ -310,6 +434,17 @@ export function mapCliError(
       }),
       partial: error.partial,
     });
+  }
+  if (error instanceof SourceManagementError) {
+    const validationFailure = error.code === 'SOURCE_DECLARATION_CONFLICT';
+    return baseFailure(
+      context,
+      validationFailure ? 3 : 4,
+      error.code,
+      validationFailure
+        ? 'Source declaration was rejected safely.'
+        : 'Source manifest state could not be updated safely.',
+    );
   }
   if (error instanceof SourceSelectionError) {
     return baseFailure(

@@ -11,6 +11,8 @@ plans/
 /.buildlore/local-projects.json
 /.buildlore/local-projects.json.lock
 /.buildlore/.local-projects.json.*.tmp
+/.buildlore/approved-wiki.json
+/.buildlore/hierarchy-runs/
 
 # Dependencies / build outputs
 node_modules/

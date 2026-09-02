@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { constants as fsConstants, type Dirent } from 'node:fs';
+import { constants as fsConstants, type BigIntStats, type Dirent } from 'node:fs';
 import { lstat, open, opendir, realpath } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative } from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -18,6 +18,9 @@ import {
   validateCollectionSourceIdentityBinding,
   validateP2aSourceIdentity,
 } from '../projector/source-identity.js';
+import type { SourceAdapterRegistry } from '../projector/source-adapter-registry.js';
+import { resolveRegisteredProfileBinding } from '../profile/preflight.js';
+import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import { showProject } from '../knowledge/index.js';
 import type { CompilerRequest, EgressCapability } from './types.js';
 
@@ -77,6 +80,13 @@ function denied(): never {
   throw new Error('Compiler egress security preflight failed.');
 }
 
+function isStoredSourceKind(
+  value: string,
+): value is Extract<SecuritySourceKind, 'code' | 'execution' | 'markdown' | 'planning' | 'text'> {
+  return value === 'code' || value === 'execution' || value === 'markdown' ||
+    value === 'planning' || value === 'text';
+}
+
 function sha256(value: string | Uint8Array): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
@@ -104,26 +114,41 @@ async function readBoundedDirectory(path: string, maximum: number): Promise<read
 }
 
 async function readRegularUtf8(path: string, workspace: string): Promise<string> {
-  let status: Awaited<ReturnType<typeof lstat>>;
+  let status: BigIntStats;
   try {
     const canonical = await realpath(path);
     if (canonical !== path || !isContained(workspace, canonical)) return denied();
-    status = await lstat(path);
+    status = await lstat(path, { bigint: true });
   } catch {
     return denied();
   }
-  if (!status.isFile() || status.isSymbolicLink() || status.size > MAX_PROVIDER_INPUT_FILE_BYTES) {
+  if (!status.isFile() || status.isSymbolicLink() || status.nlink !== 1n ||
+      status.size > BigInt(MAX_PROVIDER_INPUT_FILE_BYTES)) {
     return denied();
   }
   let handle;
   try {
     handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    const actual = await handle.stat();
-    if (!actual.isFile() || actual.dev !== status.dev || actual.ino !== status.ino ||
-        actual.size > MAX_PROVIDER_INPUT_FILE_BYTES) return denied();
+    const actual = await handle.stat({ bigint: true });
+    if (!actual.isFile() || actual.nlink !== 1n || actual.dev !== status.dev ||
+        actual.ino !== status.ino || actual.size !== status.size ||
+        actual.ctimeNs !== status.ctimeNs ||
+        actual.size > BigInt(MAX_PROVIDER_INPUT_FILE_BYTES)) return denied();
     const canonical = await realpath(path);
     if (canonical !== path || !isContained(workspace, canonical)) return denied();
     const bytes = await handle.readFile();
+    const [completed, current, finalCanonical] = await Promise.all([
+      handle.stat({ bigint: true }),
+      lstat(path, { bigint: true }),
+      realpath(path),
+    ]);
+    if (!completed.isFile() || completed.nlink !== 1n || completed.dev !== actual.dev ||
+        completed.ino !== actual.ino || completed.size !== actual.size ||
+        completed.ctimeNs !== actual.ctimeNs || !current.isFile() ||
+        current.isSymbolicLink() || current.nlink !== 1n || current.dev !== actual.dev ||
+        current.ino !== actual.ino || current.size !== actual.size ||
+        current.ctimeNs !== actual.ctimeNs || bytes.byteLength !== Number(actual.size) ||
+        finalCanonical !== path || !isContained(workspace, finalCanonical)) return denied();
     try {
       return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     } catch {
@@ -218,6 +243,7 @@ async function providerInputs(
   workspace: string,
   repository: string,
   request: CompilerRequest & { readonly capability: EgressCapability },
+  sourceAdapters: SourceAdapterRegistry,
 ): Promise<readonly ProviderInput[]> {
   const sourcePaths = await listFlatSources(workspace);
   const generatedPaths = [
@@ -241,14 +267,15 @@ async function providerInputs(
         return denied();
       }
       const sourceKind = document.buildlore.sourceKind;
-      if ((sourceKind !== 'markdown' && sourceKind !== 'planning' && sourceKind !== 'execution') ||
+      if (!isStoredSourceKind(sourceKind) ||
           document.buildlore.projectId !== request.projectId ||
           basename(path) !== `${sourceKind}--${sha256(document.source).slice('sha256:'.length)}.md`) {
         return denied();
       }
-      const sourceIdentity = document.buildlore.producer === 'buildlore' && sourceKind === 'markdown'
+      const sourceIdentity = document.buildlore.producer === 'buildlore' &&
+          (sourceKind === 'code' || sourceKind === 'markdown' || sourceKind === 'text')
         ? validateCollectionSourceIdentityBinding({
-            documentKind: 'markdown',
+            documentKind: sourceKind,
             projectId: request.projectId,
             repository,
           }, document.source)
@@ -262,7 +289,30 @@ async function providerInputs(
             })
           : null;
       if (sourceIdentity === null) return denied();
-      const scanBody = [document.title, document.body].join('\n');
+      const descriptor = document.buildlore.descriptor;
+      if (descriptor !== undefined) {
+        try {
+          const resolution = sourceAdapters.resolve({
+            adapterId: descriptor.adapterId,
+            adapterVersion: descriptor.adapterVersion,
+            kind: descriptor.kind,
+            mediaType: descriptor.mediaType,
+            ...(descriptor.metadata === undefined ? {} : { metadata: descriptor.metadata }),
+          });
+          if (resolution.kind !== sourceKind || resolution.mediaType !== descriptor.mediaType) {
+            return denied();
+          }
+        } catch {
+          return denied();
+        }
+      }
+      const scanBody = [
+        document.title,
+        document.body,
+        ...(descriptor?.metadata === undefined
+          ? []
+          : [serializeCanonicalJson(descriptor.metadata)]),
+      ].join('\n');
       inputs.push({
         body,
         contentDigest: sha256(body),
@@ -313,8 +363,16 @@ async function buildManifest(
   const loaded = await readSecurityPolicy(knowledgeRoot, request.projectId);
   if (loaded.workspace !== workspace) return denied();
   const project = await showProject(knowledgeRoot, request.projectId);
+  const profile = await resolveRegisteredProfileBinding(knowledgeRoot, request.projectId)
+    .catch(() => denied());
+  if (profile.workspace !== workspace) return denied();
   const service = createProjectSecurityService({ knowledgeRoot });
-  const inputs = await providerInputs(workspace, project.descriptor.sourceRepository, request);
+  const inputs = await providerInputs(
+    workspace,
+    project.descriptor.sourceRepository,
+    request,
+    profile.sourceAdapters,
+  );
   const classifications = new Set<DataClassification>();
   const bindings: string[] = [];
   for (const input of inputs) {

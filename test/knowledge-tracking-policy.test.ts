@@ -149,6 +149,33 @@ describe('knowledge tracking policy v1', () => {
       'projects/fixture/.llmwiki/buildlore-embedding-identity.json',
       packageIdentity,
     )).toMatchObject({ classification: 'always-track', disposition: 'include', ok: true });
+    expect(classifyTrackingPath(
+      'projects/fixture/wiki/buildlore-hierarchy/manifest.json',
+      packageIdentity,
+    )).toEqual({
+      classification: 'always-track',
+      disposition: 'include',
+      entryId: 'always-track-hierarchical-markdown-manifest',
+      ok: true,
+    });
+    expect(classifyTrackingPath(
+      `projects/fixture/wiki/buildlore-hierarchy/page-${'0'.repeat(64)}.md`,
+      packageIdentity,
+    )).toEqual({
+      classification: 'always-track',
+      disposition: 'include',
+      entryId: 'always-track-wiki-page',
+      ok: true,
+    });
+    expect(classifyTrackingPath(
+      'projects/fixture/.buildlore/indexes/semantic/generations/generation-abc/vectors.f32',
+      packageIdentity,
+    )).toEqual({
+      classification: 'always-ignore',
+      disposition: 'exclude',
+      entryId: 'always-ignore-buildlore-semantic-index',
+      ok: true,
+    });
     expect(classifyTrackingPath('manifest.json.lock', packageIdentity)).toMatchObject({
       classification: 'always-ignore',
       disposition: 'exclude',

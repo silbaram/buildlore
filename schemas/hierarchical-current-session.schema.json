@@ -1,0 +1,789 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/hierarchical-current-session.schema.json",
+  "title": "BuildLore Agent Session and Authorized External Wiki Generation Contracts v1",
+  "oneOf": [
+    { "$ref": "#/$defs/generationExchange" },
+    { "$ref": "#/$defs/proposalSubmission" },
+    { "$ref": "#/$defs/generationReceipt" },
+    { "$ref": "#/$defs/externalGenerationPayload" },
+    { "$ref": "#/$defs/externalGenerationExecutionRequest" },
+    { "$ref": "#/$defs/externalGenerationProposalSubmission" },
+    { "$ref": "#/$defs/externalGenerationProviderReceipt" },
+    { "$ref": "#/$defs/externalGenerationAudit" }
+  ],
+  "$defs": {
+    "generationExchange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "purposeDigest",
+        "requestDigest",
+        "writingBrief",
+        "request",
+        "evidencePack",
+        "instructions",
+        "proposalContract",
+        "boundary",
+        "exchangeDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.current-session-generation-exchange.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "pageId": {
+          "type": "string",
+          "pattern": "^page-[a-f0-9]{64}$"
+        },
+        "purposeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "requestDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "writingBrief": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "audience",
+            "goals",
+            "scopeHints",
+            "excludedTopics",
+            "outputLanguage",
+            "title",
+            "role",
+            "keyQuestions",
+            "minimumDistinctSources"
+          ],
+          "properties": {
+            "audience": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "x-buildlore-normalization": "NFC"
+              }
+            },
+            "goals": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "x-buildlore-normalization": "NFC"
+              }
+            },
+            "scopeHints": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "x-buildlore-normalization": "NFC"
+              }
+            },
+            "excludedTopics": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "x-buildlore-normalization": "NFC"
+              }
+            },
+            "outputLanguage": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 35,
+              "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000,
+              "x-buildlore-normalization": "NFC"
+            },
+            "role": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+            },
+            "keyQuestions": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "x-buildlore-normalization": "NFC"
+              }
+            },
+            "minimumDistinctSources": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4096
+            }
+          }
+        },
+        "request": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/currentSessionGenerationRequest"
+        },
+        "evidencePack": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/evidencePack"
+        },
+        "instructions": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "text"],
+            "properties": {
+              "code": {
+                "enum": [
+                  "cite-substantive-claims",
+                  "preserve-evidence-bytes",
+                  "render-citation-markers",
+                  "render-wikilinks",
+                  "submit-candidate-only",
+                  "use-required-sections",
+                  "use-required-wikilinks"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "x-buildlore-normalization": "NFC"
+              }
+            }
+          },
+          "x-buildlore-canonicalOrderBy": "code",
+          "x-buildlore-uniqueBy": "code"
+        },
+        "proposalContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "requiredProperties",
+            "sectionProperties",
+            "claimProperties",
+            "citationMarkerSyntax",
+            "wikilinkSyntax",
+            "lifecycle",
+            "maxUtf8Bytes"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "buildlore.current-session-proposal-submission.v1"
+            },
+            "requiredProperties": {
+              "type": "array",
+              "const": [
+                "schemaVersion",
+                "projectId",
+                "pageId",
+                "exchangeDigest",
+                "requestDigest",
+                "title",
+                "summary",
+                "sections",
+                "claims",
+                "wikilinks"
+              ]
+            },
+            "sectionProperties": {
+              "type": "array",
+              "const": ["sectionId", "body"]
+            },
+            "claimProperties": {
+              "type": "array",
+              "const": ["text", "evidenceUnitIds", "citationIds"]
+            },
+            "citationMarkerSyntax": { "const": "[^<citationId>]" },
+            "wikilinkSyntax": { "const": "[[<pageId>]]" },
+            "lifecycle": { "const": "candidate" },
+            "maxUtf8Bytes": { "const": 524288 }
+          }
+        },
+        "boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "generationActor",
+            "disclosureScope",
+            "buildloreInitiatedEgress",
+            "providerUsed",
+            "processSpawned"
+          ],
+          "properties": {
+            "generationActor": { "const": "current-agent-session" },
+            "disclosureScope": { "const": "sanitized-evidence-only" },
+            "buildloreInitiatedEgress": { "const": "none" },
+            "providerUsed": { "type": "null" },
+            "processSpawned": { "const": false }
+          }
+        },
+        "exchangeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      },
+      "x-buildlore-digestExcludes": ["exchangeDigest"],
+      "x-buildlore-maxUtf8Bytes": 524288
+    },
+    "proposalSubmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "exchangeDigest",
+        "requestDigest",
+        "title",
+        "summary",
+        "sections",
+        "claims",
+        "wikilinks"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.current-session-proposal-submission.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "pageId": {
+          "type": "string",
+          "pattern": "^page-[a-f0-9]{64}$"
+        },
+        "exchangeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "requestDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "x-buildlore-normalization": "NFC"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "x-buildlore-normalization": "NFC"
+        },
+        "sections": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sectionId", "body"],
+            "properties": {
+              "sectionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+              },
+              "body": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 524288,
+                "x-buildlore-normalization": "NFC"
+              }
+            }
+          },
+          "x-buildlore-uniqueBy": "sectionId"
+        },
+        "claims": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "evidenceUnitIds", "citationIds"],
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "x-buildlore-normalization": "NFC"
+              },
+              "evidenceUnitIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^unit-[a-f0-9]{64}$"
+                },
+                "x-buildlore-canonicalOrder": "ascending"
+              },
+              "citationIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^citation-[a-f0-9]{64}$"
+                },
+                "x-buildlore-canonicalOrder": "ascending"
+              }
+            }
+          }
+        },
+        "wikilinks": {
+          "type": "array",
+          "maxItems": 96,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^page-[a-f0-9]{64}$"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        }
+      },
+      "x-buildlore-maxUtf8Bytes": 524288
+    },
+    "generationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "purposeDigest",
+        "exchangeDigest",
+        "requestDigest",
+        "blueprintDigest",
+        "evidencePackDigest",
+        "snapshotDigest",
+        "proposalDigest",
+        "sanitizerPolicyDigest",
+        "sanitizerRulesVersion",
+        "sanitizerInputDigest",
+        "generationActor",
+        "proposalOutputSanitized",
+        "egress",
+        "providerUsed",
+        "processSpawned",
+        "receiptDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.current-session-generation-receipt.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "pageId": {
+          "type": "string",
+          "pattern": "^page-[a-f0-9]{64}$"
+        },
+        "purposeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "exchangeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "requestDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "blueprintDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "evidencePackDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "snapshotDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "proposalDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "sanitizerPolicyDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "sanitizerRulesVersion": {
+          "const": "buildlore.sanitizer-rules.v5"
+        },
+        "sanitizerInputDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "generationActor": { "const": "current-agent-session" },
+        "proposalOutputSanitized": { "const": true },
+        "egress": { "const": "none" },
+        "providerUsed": { "type": "null" },
+        "processSpawned": { "const": false },
+        "receiptDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      },
+      "x-buildlore-digestExcludes": ["receiptDigest"]
+    },
+    "externalGenerationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "purposeDigest",
+        "exchangeDigest",
+        "requestDigest",
+        "blueprintDigest",
+        "evidencePackDigest",
+        "snapshotDigest",
+        "sanitizerPolicyDigest",
+        "generationOrder",
+        "writingBrief",
+        "instructions",
+        "requiredSections",
+        "requiredLinkPageIds",
+        "approvedChildSummaries",
+        "evidencePack",
+        "disclosureScope",
+        "proposalContract",
+        "sanitizedPayloadScopeDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.external-generation-payload.v1" },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "pageId": { "type": "string", "pattern": "^page-[a-f0-9]{64}$" },
+        "purposeDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "exchangeDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "requestDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "blueprintDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "evidencePackDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "snapshotDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "sanitizerPolicyDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "generationOrder": { "type": "integer", "minimum": 0, "maximum": 96 },
+        "writingBrief": { "$ref": "#/$defs/generationExchange/properties/writingBrief" },
+        "instructions": { "$ref": "#/$defs/generationExchange/properties/instructions" },
+        "requiredSections": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/currentSessionGenerationRequest/properties/requiredSections"
+        },
+        "requiredLinkPageIds": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/currentSessionGenerationRequest/properties/requiredLinkPageIds"
+        },
+        "approvedChildSummaries": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/currentSessionGenerationRequest/properties/approvedChildSummaries"
+        },
+        "evidencePack": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/evidencePack"
+        },
+        "disclosureScope": { "const": "sanitized-evidence-only" },
+        "proposalContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "requiredProperties",
+            "sectionProperties",
+            "claimProperties",
+            "citationMarkerSyntax",
+            "wikilinkSyntax",
+            "lifecycle",
+            "maxUtf8Bytes"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "buildlore.external-generation-proposal-submission.v1"
+            },
+            "requiredProperties": {
+              "const": [
+                "schemaVersion",
+                "projectId",
+                "pageId",
+                "executionDigest",
+                "requestDigest",
+                "title",
+                "summary",
+                "sections",
+                "claims",
+                "wikilinks"
+              ]
+            },
+            "sectionProperties": { "const": ["sectionId", "body"] },
+            "claimProperties": { "const": ["text", "evidenceUnitIds", "citationIds"] },
+            "citationMarkerSyntax": { "const": "[^<citationId>]" },
+            "wikilinkSyntax": { "const": "[[<pageId>]]" },
+            "lifecycle": { "const": "candidate" },
+            "maxUtf8Bytes": { "const": 524288 }
+          }
+        },
+        "sanitizedPayloadScopeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      },
+      "x-buildlore-digestExcludes": ["sanitizedPayloadScopeDigest"],
+      "x-buildlore-maxUtf8Bytes": 524288
+    },
+    "externalGenerationExecutionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "authorizationDigest",
+        "destinationId",
+        "providerIdentity",
+        "sanitizedPayloadScopeDigest",
+        "payload",
+        "executionDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.external-generation-execution-request.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "pageId": { "type": "string", "pattern": "^page-[a-f0-9]{64}$" },
+        "authorizationDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "destinationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        },
+        "providerIdentity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        },
+        "sanitizedPayloadScopeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "payload": { "$ref": "#/$defs/externalGenerationPayload" },
+        "executionDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      },
+      "x-buildlore-digestExcludes": ["executionDigest"]
+    },
+    "externalGenerationProposalSubmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "executionDigest",
+        "requestDigest",
+        "title",
+        "summary",
+        "sections",
+        "claims",
+        "wikilinks"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.external-generation-proposal-submission.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "pageId": { "type": "string", "pattern": "^page-[a-f0-9]{64}$" },
+        "executionDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "requestDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "title": { "$ref": "#/$defs/proposalSubmission/properties/title" },
+        "summary": { "$ref": "#/$defs/proposalSubmission/properties/summary" },
+        "sections": { "$ref": "#/$defs/proposalSubmission/properties/sections" },
+        "claims": { "$ref": "#/$defs/proposalSubmission/properties/claims" },
+        "wikilinks": { "$ref": "#/$defs/proposalSubmission/properties/wikilinks" }
+      },
+      "x-buildlore-maxUtf8Bytes": 524288
+    },
+    "externalGenerationProviderReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "authorizationDigest",
+        "executionDigest",
+        "destinationUsed",
+        "providerUsed",
+        "sanitizedPayloadScopeDigest",
+        "submissionDigest",
+        "egress",
+        "receiptDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.external-generation-provider-receipt.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "pageId": { "type": "string", "pattern": "^page-[a-f0-9]{64}$" },
+        "authorizationDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "executionDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "destinationUsed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        },
+        "providerUsed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        },
+        "sanitizedPayloadScopeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "submissionDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "egress": { "const": "sanitized-evidence-only" },
+        "receiptDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      },
+      "x-buildlore-digestExcludes": ["receiptDigest"]
+    },
+    "externalGenerationAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "authorizationDigest",
+        "executionDigest",
+        "providerReceiptDigest",
+        "proposalDigest",
+        "destinationUsed",
+        "providerUsed",
+        "sanitizedPayloadScopeDigest",
+        "egress",
+        "proposalOutputSanitized",
+        "buildloreProcessSpawned",
+        "auditDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.external-generation-audit.v1" },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "pageId": { "type": "string", "pattern": "^page-[a-f0-9]{64}$" },
+        "authorizationDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "executionDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "providerReceiptDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "proposalDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "destinationUsed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        },
+        "providerUsed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        },
+        "sanitizedPayloadScopeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "egress": { "const": "sanitized-evidence-only" },
+        "proposalOutputSanitized": { "const": true },
+        "buildloreProcessSpawned": { "const": false },
+        "auditDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      },
+      "x-buildlore-digestExcludes": ["auditDigest"]
+    }
+  }
+}

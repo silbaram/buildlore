@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parse } from 'yaml';
 
+import { normalizeLlmWikiCompilerExport } from '../export-normalizer.js';
 import { compareSessionText, digestSessionValue, sessionSha256 } from './canonical.js';
 import {
   SessionCompileError,
@@ -82,7 +83,9 @@ type ExportInspection =
 function defaultPort(): SessionReviewServicePort {
   const port: SessionReviewServicePort = {
     async exportJson(workspace, projectId): Promise<unknown> {
-      return createWiki({ root: workspace }).exportJson({ projectId });
+      return normalizeLlmWikiCompilerExport(
+        await createWiki({ root: workspace }).exportJson({ projectId }),
+      );
     },
     async importOkf(workspace, bundle, options): Promise<unknown> {
       return createWiki({ root: workspace }).importOkf(bundle, options);

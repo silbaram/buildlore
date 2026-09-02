@@ -6,6 +6,10 @@ import { basename, isAbsolute, join, relative } from 'node:path';
 import { syncDirectory } from '../knowledge/atomic-file.js';
 import { generatedSourceFilenameKind } from '../sanitizer/index.js';
 import { ProjectionError } from './errors.js';
+import type {
+  SourceDescriptorV1,
+  SourceRangeMappingV1,
+} from './source-contracts.js';
 import type { ProjectionWriteStatus } from './planning-types.js';
 import {
   createSourceDocument,
@@ -15,11 +19,20 @@ import {
 
 const MAX_TARGET_BYTES = 512 * 1024;
 export type ProjectSourceProducer = 'buildlore' | 'p2a';
-export type ProjectSourceKind = 'execution' | 'markdown' | 'planning';
+export type ProjectSourceKind = 'code' | 'execution' | 'markdown' | 'planning' | 'text';
+export type CollectableProjectSourceKind = Exclude<ProjectSourceKind, 'execution'>;
+
+export function isCollectableProjectSourceKind(
+  value: ProjectSourceKind,
+): value is CollectableProjectSourceKind {
+  return value === 'code' || value === 'markdown' || value === 'planning' || value === 'text';
+}
 
 export interface ProjectSourceInput {
   readonly body: string;
+  readonly descriptor?: SourceDescriptorV1;
   readonly ingestedAt: string;
+  readonly originMappings?: readonly SourceRangeMappingV1[];
   /** Omitted only by legacy planning/execution callers, which remain P2A-owned. */
   readonly producer?: ProjectSourceProducer;
   readonly sourceRevision: `sha256:${string}`;
@@ -88,7 +101,8 @@ function isContained(root: string, candidate: string): boolean {
 export function projectSourceProducer(input: ProjectSourceInput): ProjectSourceProducer {
   const producer = input.producer ?? 'p2a';
   const compatible =
-    (producer === 'buildlore' && input.sourceKind === 'markdown') ||
+    (producer === 'buildlore' &&
+      (input.sourceKind === 'code' || input.sourceKind === 'markdown' || input.sourceKind === 'text')) ||
     (producer === 'p2a' && (input.sourceKind === 'execution' || input.sourceKind === 'planning'));
   if (!compatible) {
     fail('PROJECTION_ARTIFACT_INVALID', 'The source producer and kind are incompatible.');
@@ -239,11 +253,13 @@ async function readExistingTarget(
   }
 }
 
-function expectedMarkdown(input: ProjectSourceInput, projectId: string): string {
+export function renderExpectedProjectSource(input: ProjectSourceInput, projectId: string): string {
   const producer = projectSourceProducer(input);
   return renderSourceDocument(createSourceDocument({
     body: input.body,
+    ...(input.descriptor === undefined ? {} : { descriptor: input.descriptor }),
     ingestedAt: input.ingestedAt,
+    ...(input.originMappings === undefined ? {} : { originMappings: input.originMappings }),
     producer,
     projectId,
     source: input.sourceUri,
@@ -319,7 +335,7 @@ export async function createProjectSourceWriter(
 
     async inspect(input): Promise<ProjectSourceTargetSnapshot> {
       assertDerivedTarget(input);
-      const expected = expectedMarkdown(input, projectId);
+      const expected = renderExpectedProjectSource(input, projectId);
       const existing = await readExistingTarget(sources, input, projectId);
       if (existing === null) return { contentDigest: null, writeStatus: 'create' };
       return {

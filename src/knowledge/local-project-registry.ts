@@ -36,6 +36,7 @@ const LOCAL_REGISTRY_GIT_EXCLUDE_RULES = Object.freeze([
   '/.buildlore/local-projects.json',
   '/.buildlore/local-projects.json.lock',
   '/.buildlore/.local-projects.json.*.tmp',
+  '/.buildlore/hierarchy-runs/',
 ]);
 const MAX_GIT_EXCLUDE_BYTES = 256 * 1024;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
@@ -255,16 +256,16 @@ export function parseLocalProjectRegistry(value: unknown): LocalProjectRegistry 
   }
   const bindings = record.bindings.map(parseBinding);
   const projectIds = new Set<string>();
-  const sourceRoots = new Set<string>();
+  const sourceRoots: string[] = [];
   for (const binding of bindings) {
     if (projectIds.has(binding.projectId)) {
       invalid('Local project registry contains a duplicate projectId.');
     }
-    if (sourceRoots.has(binding.sourceRoot)) {
-      invalid('Local project registry contains a duplicate sourceRoot binding field.');
+    if (sourceRoots.some((sourceRoot) => rootsOverlap(sourceRoot, binding.sourceRoot))) {
+      invalid('Local project registry contains an overlapping sourceRoot binding field.');
     }
     projectIds.add(binding.projectId);
-    sourceRoots.add(binding.sourceRoot);
+    sourceRoots.push(binding.sourceRoot);
   }
   return Object.freeze({
     bindings: Object.freeze(
@@ -299,6 +300,10 @@ function isContained(root: string, candidate: string): boolean {
 
 function rootsOverlap(left: string, right: string): boolean {
   return isContained(left, right) || isContained(right, left);
+}
+
+function rootsStrictlyOverlap(left: string, right: string): boolean {
+  return left !== right && rootsOverlap(left, right);
 }
 
 function hasOwnerOnlyPermissions(mode: number): boolean {
@@ -549,7 +554,7 @@ async function validateSourceRoot(
     !status.isDirectory() ||
     status.isSymbolicLink() ||
     canonical !== sourceRoot ||
-    rootsOverlap(hubRoot, canonical)
+    rootsStrictlyOverlap(hubRoot, canonical)
   ) {
     return invalid('sourceRoot binding field is not a confined canonical checkout root.');
   }
@@ -751,7 +756,7 @@ export async function bindLocalProject(
     if (
       registry.bindings.some(
         (binding) =>
-          binding.projectId !== projectId && binding.sourceRoot === sourceIdentity.root,
+          binding.projectId !== projectId && rootsOverlap(binding.sourceRoot, sourceIdentity.root),
       )
     ) {
       return conflict('sourceRoot binding field is already assigned to another project.');
@@ -792,7 +797,7 @@ export async function inspectLocalProjectBindingCandidate(
   if (
     registry.bindings.some(
       (binding) =>
-        binding.projectId !== projectId && binding.sourceRoot === sourceIdentity.root,
+        binding.projectId !== projectId && rootsOverlap(binding.sourceRoot, sourceIdentity.root),
     )
   ) {
     return conflict('sourceRoot binding field is already assigned to another project.');

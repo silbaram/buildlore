@@ -15,8 +15,21 @@ export { ProfileOperationError, type ProfileOperationErrorCode } from './errors.
 export { createProjectLifecycleProfile } from './manager.js';
 export { materializeLifecycleProfile } from './materializer.js';
 export {
+  createBuiltInProfileBinding,
+  parseProfileBinding,
+  PROFILE_BINDING_SCHEMA_VERSION,
+  profileBindingForLegacyResolution,
+  registerProfileBinding,
+  type BuiltInProfileId,
+  type ProfileAdapterBindingV1,
+  type ProfileBindingV1,
+  type RegisteredProfileBindingV1,
+} from './bindings.js';
+export {
   createProfileBindingPreflight,
+  resolveRegisteredProfileBinding,
   type ProfileBindingPreflight,
+  type ResolvedRegisteredProfileBindingV1,
 } from './preflight.js';
 export {
   BUILDLORE_PROFILE_ID,

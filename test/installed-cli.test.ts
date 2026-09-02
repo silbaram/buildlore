@@ -1,10 +1,11 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import {
   chmod,
   copyFile,
   cp,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rm,
   symlink,
@@ -39,27 +40,43 @@ function runForExitCode(command: string, args: readonly string[], cwd: string): 
   });
 }
 
-function run(
+async function run(
   command: string,
   args: readonly string[],
   cwd: string,
   shell = false,
 ): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      command,
-      args,
-      { cwd, encoding: 'utf8', shell },
-      (error, stdout, stderr) => {
-        if (error !== null) {
-          reject(new Error(`${command} failed:\n${stdout}${stderr}`, { cause: error }));
-          return;
-        }
-
-        resolve({ stderr, stdout });
-      },
-    );
-  });
+  const captureRoot = await mkdtemp(join(tmpdir(), 'buildlore-installed-command-'));
+  const stdoutPath = join(captureRoot, 'stdout');
+  const stderrPath = join(captureRoot, 'stderr');
+  const [stdoutHandle, stderrHandle] = await Promise.all([
+    open(stdoutPath, 'wx', 0o600),
+    open(stderrPath, 'wx', 0o600),
+  ]);
+  try {
+    const code = await new Promise<number | null>((resolve, reject) => {
+      const child = spawn(command, [...args], {
+        cwd,
+        shell,
+        stdio: ['ignore', stdoutHandle.fd, stderrHandle.fd],
+      });
+      child.once('error', (error) => reject(new Error(`${command} failed`, { cause: error })));
+      child.once('close', resolve);
+    });
+    await Promise.all([stdoutHandle.close(), stderrHandle.close()]);
+    const [stdout, stderr] = await Promise.all([
+      readFile(stdoutPath, 'utf8'),
+      readFile(stderrPath, 'utf8'),
+    ]);
+    if (code !== 0) throw new Error(`${command} failed:\n${stdout}${stderr}`);
+    return { stderr, stdout };
+  } finally {
+    await Promise.all([
+      stdoutHandle.close().catch(() => undefined),
+      stderrHandle.close().catch(() => undefined),
+    ]);
+    await rm(captureRoot, { force: true, recursive: true });
+  }
 }
 
 interface PackageJson {
@@ -132,7 +149,18 @@ describe('installed CLI', () => {
         'compile',
         'compile plan',
         'compile apply',
+        'compile activate',
+        'compile hierarchy start',
+        'compile hierarchy status',
+        'compile hierarchy submit',
+        'compile hierarchy child-review',
+        'compile hierarchy review',
+        'compile hierarchy finalize',
+        'compile hierarchy approve',
         'check',
+        'wiki curate',
+        'index status',
+        'index rebuild',
         'search',
         'query',
         'context',
@@ -179,6 +207,7 @@ describe('installed CLI', () => {
         '.buildlore/local-projects.json',
         '.buildlore/local-projects.json.lock',
         '.buildlore/.local-projects.json.probe.tmp',
+        `.buildlore/hierarchy-runs/alpha/run-${'a'.repeat(64)}/run.json`,
       ]) {
         await run('git', ['check-ignore', '--quiet', '--no-index', '--', localPath], workspaceRoot);
       }

@@ -3,10 +3,18 @@ import { createHash } from 'node:crypto';
 import { parseDocument } from 'yaml';
 
 import { SourceDocumentError, type SourceDocumentErrorCode } from './errors.js';
+import {
+  parseSourceDescriptor,
+  validateSourceOriginRange,
+  type SourceDescriptorV1,
+  type SourceRangeMappingV1,
+} from './source-contracts.js';
 import { normalizeRfc3339Instant } from './timestamp.js';
+import { sliceUnicodeScalars, unicodeScalarLength } from './text-units.js';
 import {
   MAX_SOURCE_BODY_CHARS,
   SOURCE_DOCUMENT_SCHEMA_VERSION,
+  SOURCE_DOCUMENT_V2_SCHEMA_VERSION,
   type BuildLoreSourceMetadata,
   type CreateSourceDocumentInput,
   type SourceDocument,
@@ -61,8 +69,8 @@ function requireString(
 ): string {
   if (
     typeof value !== 'string' ||
-    value.length < 1 ||
-    value.length > options.max ||
+    unicodeScalarLength(value) < 1 ||
+    unicodeScalarLength(value) > options.max ||
     containsUnsafeCharacter(value) ||
     (options.identifier === true && !IDENTIFIER_PATTERN.test(value))
   ) {
@@ -115,12 +123,12 @@ function canonicalBody(value: string): {
   readonly truncated: boolean;
 } {
   const payload = normalizeSourceBody(value);
-  const originalChars = payload.length;
+  const originalChars = unicodeScalarLength(payload);
   if (originalChars <= MAX_SOURCE_BODY_CHARS) {
     return { body: `${payload}\n`, originalChars, truncated: false };
   }
-  const sliced = payload.slice(0, MAX_SOURCE_BODY_CHARS);
-  const utf8Stable = Buffer.from(sliced, 'utf8').toString('utf8').replace(/\n+$/u, '');
+  const utf8Stable = sliceUnicodeScalars(payload, MAX_SOURCE_BODY_CHARS)
+    .replace(/\n+$/u, '');
   return { body: `${utf8Stable}\n`, originalChars, truncated: true };
 }
 
@@ -132,28 +140,173 @@ function sourceType(value: unknown): SourceType | undefined {
   return value as SourceType;
 }
 
-function parseBuildLore(value: unknown, body: string): BuildLoreSourceMetadata {
+function parseRangeMappings(value: unknown): readonly SourceRangeMappingV1[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 128) {
+    return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mappings are invalid.');
+  }
+  let previousEndLine = 0;
+  const mappings = value.map((entry) => {
+    if (!isRecord(entry)) {
+      return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mapping is invalid.');
+    }
+    requireExactKeys(entry, ['canonical', 'origin']);
+    let canonical;
+    let origin;
+    try {
+      canonical = validateSourceOriginRange(entry.canonical);
+      origin = validateSourceOriginRange(entry.origin);
+    } catch {
+      return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mapping is invalid.');
+    }
+    if (canonical.startLine <= previousEndLine ||
+        canonical.endLine - canonical.startLine !== origin.endLine - origin.startLine) {
+      return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mappings are inconsistent.');
+    }
+    previousEndLine = canonical.endLine;
+    return Object.freeze({ canonical, origin });
+  });
+  return Object.freeze(mappings);
+}
+
+function bodyEnd(body: string): SourceRangeMappingV1['canonical'] {
+  const payload = body.endsWith('\n') ? body.slice(0, -1) : body;
+  const lines = payload.split('\n');
+  return Object.freeze({
+    endColumn: unicodeScalarLength(lines.at(-1) ?? '') + 1,
+    endLine: lines.length,
+    startColumn: 1,
+    startLine: 1,
+  });
+}
+
+function positionAfter(
+  line: number,
+  column: number,
+  boundaryLine: number,
+  boundaryColumn: number,
+): boolean {
+  return line > boundaryLine || (line === boundaryLine && column > boundaryColumn);
+}
+
+function assertRangeMappingsWithinBody(
+  mappings: readonly SourceRangeMappingV1[],
+  body: string,
+): readonly SourceRangeMappingV1[] {
+  const boundary = bodyEnd(body);
+  if (mappings.some((mapping) =>
+    positionAfter(
+      mapping.canonical.startLine,
+      mapping.canonical.startColumn,
+      boundary.endLine,
+      boundary.endColumn,
+    ) || positionAfter(
+      mapping.canonical.endLine,
+      mapping.canonical.endColumn,
+      boundary.endLine,
+      boundary.endColumn,
+    ))) {
+    return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mappings exceed the canonical body.');
+  }
+  return mappings;
+}
+
+function fitRangeMappings(
+  value: readonly SourceRangeMappingV1[],
+  body: string,
+  truncated: boolean,
+): readonly SourceRangeMappingV1[] {
+  const mappings = parseRangeMappings(value);
+  const boundary = bodyEnd(body);
+  const result: SourceRangeMappingV1[] = [];
+  for (const mapping of mappings) {
+    if (positionAfter(
+      mapping.canonical.startLine,
+      mapping.canonical.startColumn,
+      boundary.endLine,
+      boundary.endColumn,
+    )) {
+      if (!truncated) {
+        return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mappings exceed the canonical body.');
+      }
+      break;
+    }
+    if (!positionAfter(
+      mapping.canonical.endLine,
+      mapping.canonical.endColumn,
+      boundary.endLine,
+      boundary.endColumn,
+    )) {
+      result.push(mapping);
+      continue;
+    }
+    if (!truncated && mapping.canonical.endLine > boundary.endLine) {
+      return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mappings exceed the canonical body.');
+    }
+    const endLineDelta = boundary.endLine - mapping.canonical.startLine;
+    const originEndColumn = truncated
+      ? boundary.endLine === mapping.canonical.endLine
+        ? mapping.origin.endColumn + boundary.endColumn - mapping.canonical.endColumn
+        : boundary.endColumn
+      : mapping.origin.endColumn;
+    result.push(Object.freeze({
+      canonical: Object.freeze({
+        ...mapping.canonical,
+        endColumn: boundary.endColumn,
+        endLine: boundary.endLine,
+      }),
+      origin: Object.freeze({
+        ...mapping.origin,
+        endColumn: originEndColumn,
+        endLine: mapping.origin.startLine + endLineDelta,
+      }),
+    }));
+    break;
+  }
+  if (result.length < 1) {
+    return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mappings do not cover the canonical body.');
+  }
+  return Object.freeze(result);
+}
+
+function parseBuildLore(
+  value: unknown,
+  body: string,
+  schemaVersion: SourceDocument['schemaVersion'],
+): BuildLoreSourceMetadata {
   const record = requireRecord(value, 'buildlore');
-  requireExactKeys(record, [
-    'contentHash',
-    'producer',
-    'projectId',
-    'schemaVersion',
-    'sourceKind',
-    'sourceRevision',
-  ]);
-  if (record.schemaVersion !== SOURCE_DOCUMENT_SCHEMA_VERSION) {
+  const commonKeys = [
+    'contentHash', 'producer', 'projectId', 'schemaVersion', 'sourceKind', 'sourceRevision',
+  ];
+  requireExactKeys(record, schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION
+    ? [...commonKeys, 'descriptor', 'originMappings']
+    : commonKeys);
+  if (record.schemaVersion !== schemaVersion) {
     return invalid('SOURCE_SCHEMA_UNSUPPORTED', 'SourceDocument schema is unsupported.');
   }
   const contentHash = requireDigest(record.contentHash, 'contentHash');
   if (contentHash !== sha256(body)) {
     return invalid('SOURCE_DOCUMENT_INVALID', 'Source body hash does not match metadata.');
   }
+  let descriptor: SourceDescriptorV1 | undefined;
+  let originMappings: readonly SourceRangeMappingV1[] | undefined;
+  if (schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION) {
+    try {
+      descriptor = parseSourceDescriptor(record.descriptor);
+    } catch {
+      return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor is invalid.');
+    }
+    originMappings = assertRangeMappingsWithinBody(
+      parseRangeMappings(record.originMappings),
+      body,
+    );
+  }
   return {
     contentHash,
+    ...(descriptor === undefined ? {} : { descriptor }),
+    ...(originMappings === undefined ? {} : { originMappings }),
     producer: requireString(record.producer, 'producer', { identifier: true, max: 64 }),
     projectId: requireString(record.projectId, 'projectId', { identifier: true, max: 64 }),
-    schemaVersion: SOURCE_DOCUMENT_SCHEMA_VERSION,
+    schemaVersion,
     sourceKind: requireString(record.sourceKind, 'sourceKind', { identifier: true, max: 64 }),
     sourceRevision: requireDigest(record.sourceRevision, 'sourceRevision'),
   };
@@ -188,12 +341,16 @@ function validateTruncation(
 
 export function validateSourceDocument(value: unknown): SourceDocument {
   const record = requireRecord(value, 'SourceDocument');
-  if (record.schemaVersion !== SOURCE_DOCUMENT_SCHEMA_VERSION) {
+  if (
+    record.schemaVersion !== SOURCE_DOCUMENT_SCHEMA_VERSION &&
+    record.schemaVersion !== SOURCE_DOCUMENT_V2_SCHEMA_VERSION
+  ) {
     return invalid('SOURCE_SCHEMA_UNSUPPORTED', 'SourceDocument schema is unsupported.');
   }
+  const schemaVersion = record.schemaVersion;
   const body = typeof record.body === 'string' ? record.body : '';
   if (
-    body.length < 2 ||
+    unicodeScalarLength(body) < 2 ||
     body.includes('\r') ||
     !body.endsWith('\n') ||
     body.endsWith('\n\n') ||
@@ -202,15 +359,27 @@ export function validateSourceDocument(value: unknown): SourceDocument {
   ) {
     return invalid('SOURCE_BODY_INVALID', 'Source body is not canonical.');
   }
-  const truncation = validateTruncation(record, body.slice(0, -1).length);
+  const truncation = validateTruncation(record, unicodeScalarLength(body.slice(0, -1)));
   const parsedSourceType = sourceType(record.sourceType);
+  const source = requireString(record.source, 'source', { max: 4096 });
+  const buildlore = parseBuildLore(record.buildlore, body, schemaVersion);
+  if (schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION) {
+    const descriptor = buildlore.descriptor;
+    if (
+      descriptor === undefined ||
+      descriptor.projectId !== buildlore.projectId ||
+      descriptor.sourceUri !== source ||
+      descriptor.sourceRevision !== buildlore.sourceRevision ||
+      descriptor.kind !== buildlore.sourceKind
+    ) return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor binding is invalid.');
+  }
   return {
     body,
-    buildlore: parseBuildLore(record.buildlore, body),
+    buildlore,
     ingestedAt: requireTimestamp(record.ingestedAt),
     ...(truncation.originalChars === undefined ? {} : { originalChars: truncation.originalChars }),
-    schemaVersion: SOURCE_DOCUMENT_SCHEMA_VERSION,
-    source: requireString(record.source, 'source', { max: 4096 }),
+    schemaVersion,
+    source,
     ...(parsedSourceType === undefined ? {} : { sourceType: parsedSourceType }),
     title: requireString(record.title, 'title', { max: 500 }),
     ...(truncation.truncated === undefined ? {} : { truncated: truncation.truncated }),
@@ -219,19 +388,44 @@ export function validateSourceDocument(value: unknown): SourceDocument {
 
 export function createSourceDocument(input: CreateSourceDocumentInput): SourceDocument {
   const canonical = canonicalBody(input.body);
+  let descriptor: SourceDescriptorV1 | undefined;
+  if (input.descriptor !== undefined) {
+    try {
+      descriptor = parseSourceDescriptor(input.descriptor);
+    } catch {
+      return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor is invalid.');
+    }
+  }
+  const schemaVersion = descriptor === undefined
+    ? SOURCE_DOCUMENT_SCHEMA_VERSION
+    : SOURCE_DOCUMENT_V2_SCHEMA_VERSION;
+  const originMappings = input.originMappings === undefined
+    ? undefined
+    : fitRangeMappings(input.originMappings, canonical.body, canonical.truncated);
+  if (
+    descriptor !== undefined && (
+      descriptor.projectId !== input.projectId ||
+      descriptor.sourceUri !== input.source ||
+      descriptor.sourceRevision !== input.sourceRevision ||
+      descriptor.kind !== input.sourceKind ||
+      originMappings === undefined
+    )
+  ) return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor binding is invalid.');
   return validateSourceDocument({
     body: canonical.body,
     buildlore: {
       contentHash: sha256(canonical.body),
       producer: input.producer,
       projectId: input.projectId,
-      schemaVersion: SOURCE_DOCUMENT_SCHEMA_VERSION,
+      ...(descriptor === undefined ? {} : { descriptor }),
+      ...(originMappings === undefined ? {} : { originMappings }),
+      schemaVersion,
       sourceKind: input.sourceKind,
       sourceRevision: input.sourceRevision,
     },
     ingestedAt: input.ingestedAt,
     ...(canonical.truncated ? { originalChars: canonical.originalChars } : {}),
-    schemaVersion: SOURCE_DOCUMENT_SCHEMA_VERSION,
+    schemaVersion,
     source: input.source,
     ...(input.sourceType === undefined ? {} : { sourceType: input.sourceType }),
     title: input.title,
@@ -265,9 +459,14 @@ export function renderSourceDocument(value: SourceDocument): string {
     `  projectId: ${quoted(document.buildlore.projectId)}`,
     `  sourceRevision: ${quoted(document.buildlore.sourceRevision)}`,
     `  contentHash: ${quoted(document.buildlore.contentHash)}`,
-    '---',
-    '',
   );
+  if (document.schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION) {
+    lines.push(
+      `  descriptor: ${JSON.stringify(document.buildlore.descriptor)}`,
+      `  originMappings: ${JSON.stringify(document.buildlore.originMappings)}`,
+    );
+  }
+  lines.push('---', '');
   return `${lines.join('\n')}\n${document.body}`;
 }
 
@@ -300,12 +499,15 @@ export function parseSourceDocument(markdown: string): SourceDocument {
     return invalid('SOURCE_FRONTMATTER_INVALID', 'SourceDocument frontmatter is invalid.');
   }
   const record = requireRecord(metadata, 'SourceDocument frontmatter');
+  const schemaVersion = record.buildlore !== undefined && isRecord(record.buildlore)
+    ? record.buildlore.schemaVersion
+    : undefined;
   return validateSourceDocument({
     body: match[2],
     buildlore: record.buildlore,
     ingestedAt: record.ingestedAt,
     ...(Object.hasOwn(record, 'originalChars') ? { originalChars: record.originalChars } : {}),
-    schemaVersion: SOURCE_DOCUMENT_SCHEMA_VERSION,
+    schemaVersion,
     source: record.source,
     ...(Object.hasOwn(record, 'sourceType') ? { sourceType: record.sourceType } : {}),
     title: record.title,

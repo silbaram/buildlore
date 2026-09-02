@@ -1,0 +1,347 @@
+{
+  "schemaVersion": "buildlore.hierarchical-retrieval-gold.v2",
+  "fixtureId": "buildlore-hierarchical-gold-v2",
+  "corpus": {
+    "schemaVersion": "buildlore.approved-wiki-retrieval-corpus.v1",
+    "projectId": "buildlore-fixture",
+    "generationDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "pages": [
+      {
+        "pageId": "concepts/cache-invalidation",
+        "title": "Session cache invalidation",
+        "summary": "How stale authentication sessions are removed.",
+        "sections": [
+          {
+            "sectionId": "invalidate-session-cache",
+            "body": "invalidateSessionCache removes stale session tokens from src/auth/cache.ts before authentication recovery retries.",
+            "citationLocators": [
+              { "citationId": "citation-cache", "sourceId": "source-cache" }
+            ]
+          }
+        ],
+        "parentPageId": "overview/system",
+        "childPageIds": [],
+        "relationPageIds": ["guides/auth-recovery", "overview/system"],
+        "proposalDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "status": "active"
+      },
+      {
+        "pageId": "concepts/retrieval",
+        "title": "Local retrieval channels",
+        "summary": "Unicode lexical and relation graph retrieval without a model.",
+        "sections": [
+          {
+            "sectionId": "lexical-graph",
+            "body": "한글 엔그램 어휘 검색은 Unicode text를 찾고 relation graph search는 연결된 Wiki section을 확장한다.",
+            "citationLocators": [
+              { "citationId": "citation-retrieval", "sourceId": "source-retrieval" }
+            ]
+          }
+        ],
+        "parentPageId": "overview/system",
+        "childPageIds": [],
+        "relationPageIds": ["overview/system", "reference/api"],
+        "proposalDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "status": "active"
+      },
+      {
+        "pageId": "concepts/security",
+        "title": "Sanitization boundary",
+        "summary": "Secret detection fails closed before persistence.",
+        "sections": [
+          {
+            "sectionId": "fail-closed",
+            "body": "비밀 탐지는 저장과 외부 컴파일 전에 실패 폐쇄하며 sanitizer 경계가 source value 유출을 막는다.",
+            "citationLocators": [
+              { "citationId": "citation-security", "sourceId": "source-security" }
+            ]
+          }
+        ],
+        "parentPageId": "overview/system",
+        "childPageIds": [],
+        "relationPageIds": ["guides/auth-recovery", "overview/system"],
+        "proposalDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "status": "active"
+      },
+      {
+        "pageId": "guides/auth-recovery",
+        "title": "Authentication error recovery",
+        "summary": "인증 오류 복구 절차와 관련 보안 및 cache 단계.",
+        "sections": [
+          {
+            "sectionId": "recovery-steps",
+            "body": "Credential verification starts authentication recovery, then the session cache is invalidated before retry.",
+            "citationLocators": [
+              { "citationId": "citation-auth", "sourceId": "source-auth" }
+            ]
+          }
+        ],
+        "parentPageId": "overview/system",
+        "childPageIds": [],
+        "relationPageIds": ["concepts/cache-invalidation", "concepts/security", "overview/system"],
+        "proposalDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "status": "active"
+      },
+      {
+        "pageId": "guides/deployment",
+        "title": "Local installation",
+        "summary": "A local npm workflow with no required service.",
+        "sections": [
+          {
+            "sectionId": "no-server",
+            "body": "BuildLore runs locally without a Docker server, database, daemon, or always-on process.",
+            "citationLocators": [
+              { "citationId": "citation-deployment", "sourceId": "source-deployment" }
+            ]
+          }
+        ],
+        "parentPageId": "overview/system",
+        "childPageIds": [],
+        "relationPageIds": ["overview/system"],
+        "proposalDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        "status": "active"
+      },
+      {
+        "pageId": "overview/system",
+        "title": "BuildLore system architecture",
+        "summary": "A local-first Git-backed knowledge compiler.",
+        "sections": [
+          {
+            "sectionId": "architecture-map",
+            "body": "The system architecture map connects compilation, approval, retrieval, security, and local installation pages.",
+            "citationLocators": [
+              { "citationId": "citation-overview", "sourceId": "source-overview" }
+            ]
+          }
+        ],
+        "parentPageId": null,
+        "childPageIds": ["concepts/cache-invalidation", "concepts/retrieval", "concepts/security", "guides/auth-recovery", "guides/deployment", "reference/api"],
+        "relationPageIds": ["concepts/cache-invalidation", "concepts/retrieval", "concepts/security", "guides/auth-recovery", "guides/deployment", "reference/api"],
+        "proposalDigest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+        "status": "active"
+      },
+      {
+        "pageId": "reference/api",
+        "title": "Hierarchical retrieval API",
+        "summary": "Public entrypoints for approved Wiki retrieval.",
+        "sections": [
+          {
+            "sectionId": "typescript-entrypoint",
+            "body": "createApprovedWikiRetrieval is exported from src/retrieval/hierarchical.ts and returns stable page, section, source, and citation locators.",
+            "citationLocators": [
+              { "citationId": "citation-api", "sourceId": "source-api" }
+            ]
+          }
+        ],
+        "parentPageId": "overview/system",
+        "childPageIds": [],
+        "relationPageIds": ["concepts/retrieval", "overview/system"],
+        "proposalDigest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "status": "active"
+      }
+    ],
+    "corpusDigest": "sha256:4e1b5c329bbd73f7da6391f9e90fad576f72c189d3a38ae7d580c13ecba0416d"
+  },
+  "questions": [
+    {
+      "queryId": "q01-auth-ko",
+      "language": "ko",
+      "kind": "local",
+      "answerAssertions": ["Credential verification starts authentication recovery"],
+      "text": "인증 오류 복구 절차",
+      "expected": [
+        { "pageId": "guides/auth-recovery", "sectionId": "recovery-steps", "sourceIds": ["source-auth"], "citationIds": ["citation-auth"], "relevance": 3 }
+      ]
+    },
+    {
+      "queryId": "q02-cache-en",
+      "language": "en",
+      "kind": "local",
+      "answerAssertions": ["invalidateSessionCache removes stale session tokens"],
+      "text": "invalidateSessionCache stale session token",
+      "expected": [
+        { "pageId": "concepts/cache-invalidation", "sectionId": "invalidate-session-cache", "sourceIds": ["source-cache"], "citationIds": ["citation-cache"], "relevance": 3 }
+      ]
+    },
+    {
+      "queryId": "q03-api-code",
+      "language": "code",
+      "kind": "local",
+      "answerAssertions": ["createApprovedWikiRetrieval is exported"],
+      "text": "createApprovedWikiRetrieval",
+      "expected": [
+        { "pageId": "reference/api", "sectionId": "typescript-entrypoint", "sourceIds": ["source-api"], "citationIds": ["citation-api"], "relevance": 3 }
+      ]
+    },
+    {
+      "queryId": "q04-file-code",
+      "language": "code",
+      "kind": "local",
+      "answerAssertions": ["src/retrieval/hierarchical.ts"],
+      "text": "src/retrieval/hierarchical.ts",
+      "expected": [
+        { "pageId": "reference/api", "sectionId": "typescript-entrypoint", "sourceIds": ["source-api"], "citationIds": ["citation-api"], "relevance": 3 }
+      ]
+    },
+    {
+      "queryId": "q05-security-ko",
+      "language": "ko",
+      "kind": "local",
+      "answerAssertions": ["비밀 탐지는 저장과 외부 컴파일 전에 실패 폐쇄"],
+      "text": "비밀 탐지 실패 폐쇄",
+      "expected": [
+        { "pageId": "concepts/security", "sectionId": "fail-closed", "sourceIds": ["source-security"], "citationIds": ["citation-security"], "relevance": 3 }
+      ]
+    },
+    {
+      "queryId": "q06-overview-en",
+      "language": "en",
+      "kind": "global",
+      "answerAssertions": ["system architecture map connects compilation"],
+      "text": "local-first Git-backed architecture",
+      "expected": [
+        { "pageId": "overview/system", "sectionId": "architecture-map", "sourceIds": ["source-overview"], "citationIds": ["citation-overview"], "relevance": 3 }
+      ]
+    },
+    {
+      "queryId": "q07-retrieval-ko",
+      "language": "ko",
+      "kind": "local",
+      "answerAssertions": ["한글 엔그램 어휘 검색은 Unicode text를 찾고"],
+      "text": "한글 엔그램 어휘 검색",
+      "expected": [
+        { "pageId": "concepts/retrieval", "sectionId": "lexical-graph", "sourceIds": ["source-retrieval"], "citationIds": ["citation-retrieval"], "relevance": 3 }
+      ]
+    },
+    {
+      "queryId": "q08-deployment-en",
+      "language": "en",
+      "kind": "local",
+      "answerAssertions": ["runs locally without a Docker server"],
+      "text": "Docker server daemon not required",
+      "expected": [
+        { "pageId": "guides/deployment", "sectionId": "no-server", "sourceIds": ["source-deployment"], "citationIds": ["citation-deployment"], "relevance": 3 }
+      ]
+    },
+    {
+      "queryId": "q09-zero-lexical",
+      "language": "en",
+      "kind": "zero-result",
+      "answerAssertions": [],
+      "text": "quantum banana constellation",
+      "expected": []
+    },
+    {
+      "queryId": "q10-auth-security",
+      "language": "en",
+      "kind": "multi-hop",
+      "answerAssertions": [
+        "Credential verification starts authentication recovery",
+        "sanitizer 경계가 source value 유출을 막는다"
+      ],
+      "text": "secret credential verification recovery",
+      "expected": [
+        { "pageId": "guides/auth-recovery", "sectionId": "recovery-steps", "sourceIds": ["source-auth"], "citationIds": ["citation-auth"], "relevance": 3 },
+        { "pageId": "concepts/security", "sectionId": "fail-closed", "sourceIds": ["source-security"], "citationIds": ["citation-security"], "relevance": 2 }
+      ]
+    },
+    {
+      "queryId": "q11-auth-cache",
+      "language": "ko",
+      "kind": "multi-hop",
+      "answerAssertions": [
+        "invalidateSessionCache removes stale session tokens",
+        "session cache is invalidated before retry"
+      ],
+      "text": "session cache 인증 복구 단계",
+      "expected": [
+        { "pageId": "concepts/cache-invalidation", "sectionId": "invalidate-session-cache", "sourceIds": ["source-cache"], "citationIds": ["citation-cache"], "relevance": 3 },
+        { "pageId": "guides/auth-recovery", "sectionId": "recovery-steps", "sourceIds": ["source-auth"], "citationIds": ["citation-auth"], "relevance": 2 }
+      ]
+    },
+    {
+      "queryId": "q12-retrieval-api",
+      "language": "en",
+      "kind": "multi-hop",
+      "answerAssertions": [
+        "relation graph search는 연결된 Wiki section을 확장한다",
+        "returns stable page, section, source, and citation locators"
+      ],
+      "text": "public entrypoint relation graph search",
+      "expected": [
+        { "pageId": "concepts/retrieval", "sectionId": "lexical-graph", "sourceIds": ["source-retrieval"], "citationIds": ["citation-retrieval"], "relevance": 3 },
+        { "pageId": "reference/api", "sectionId": "typescript-entrypoint", "sourceIds": ["source-api"], "citationIds": ["citation-api"], "relevance": 2 }
+      ]
+    },
+    {
+      "queryId": "q13-api-retrieval",
+      "language": "code",
+      "kind": "multi-hop",
+      "answerAssertions": [
+        "createApprovedWikiRetrieval is exported",
+        "relation graph search는 연결된 Wiki section을 확장한다"
+      ],
+      "text": "hierarchical retrieval entrypoint",
+      "expected": [
+        { "pageId": "reference/api", "sectionId": "typescript-entrypoint", "sourceIds": ["source-api"], "citationIds": ["citation-api"], "relevance": 3 },
+        { "pageId": "concepts/retrieval", "sectionId": "lexical-graph", "sourceIds": ["source-retrieval"], "citationIds": ["citation-retrieval"], "relevance": 2 }
+      ]
+    },
+    {
+      "queryId": "q14-overview-security",
+      "language": "en",
+      "kind": "global",
+      "answerAssertions": [
+        "system architecture map connects compilation",
+        "비밀 탐지는 저장과 외부 컴파일 전에 실패 폐쇄"
+      ],
+      "text": "secret system architecture map",
+      "expected": [
+        { "pageId": "overview/system", "sectionId": "architecture-map", "sourceIds": ["source-overview"], "citationIds": ["citation-overview"], "relevance": 3 },
+        { "pageId": "concepts/security", "sectionId": "fail-closed", "sourceIds": ["source-security"], "citationIds": ["citation-security"], "relevance": 2 }
+      ]
+    },
+    {
+      "queryId": "q15-security-overview",
+      "language": "ko",
+      "kind": "multi-hop",
+      "answerAssertions": [
+        "sanitizer 경계가 source value 유출을 막는다",
+        "system architecture map connects compilation"
+      ],
+      "text": "system architecture 저장 전 sanitizer 경계",
+      "expected": [
+        { "pageId": "concepts/security", "sectionId": "fail-closed", "sourceIds": ["source-security"], "citationIds": ["citation-security"], "relevance": 3 },
+        { "pageId": "overview/system", "sectionId": "architecture-map", "sourceIds": ["source-overview"], "citationIds": ["citation-overview"], "relevance": 2 }
+      ]
+    },
+    {
+      "queryId": "q16-zero-graph",
+      "language": "code",
+      "kind": "zero-result",
+      "answerAssertions": [],
+      "text": "NeutrinoNebulaOperator",
+      "expected": []
+    },
+    {
+      "queryId": "q17-installation-overview",
+      "language": "en",
+      "kind": "global",
+      "answerAssertions": [
+        "BuildLore runs locally without a Docker server",
+        "system architecture map connects compilation",
+        "한글 엔그램 어휘 검색은 Unicode text를 찾고",
+        "invalidateSessionCache removes stale session tokens",
+        "비밀 탐지는 저장과 외부 컴파일 전에 실패 폐쇄"
+      ],
+      "text": "local system installation architecture",
+      "expected": [
+        { "pageId": "guides/deployment", "sectionId": "no-server", "sourceIds": ["source-deployment"], "citationIds": ["citation-deployment"], "relevance": 3 },
+        { "pageId": "overview/system", "sectionId": "architecture-map", "sourceIds": ["source-overview"], "citationIds": ["citation-overview"], "relevance": 3 },
+        { "pageId": "concepts/retrieval", "sectionId": "lexical-graph", "sourceIds": ["source-retrieval"], "citationIds": ["citation-retrieval"], "relevance": 2 },
+        { "pageId": "concepts/cache-invalidation", "sectionId": "invalidate-session-cache", "sourceIds": ["source-cache"], "citationIds": ["citation-cache"], "relevance": 1 },
+        { "pageId": "concepts/security", "sectionId": "fail-closed", "sourceIds": ["source-security"], "citationIds": ["citation-security"], "relevance": 1 }
+      ]
+    }
+  ]
+}

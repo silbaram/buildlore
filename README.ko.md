@@ -270,7 +270,7 @@ node dist/cli/bin.js compile apply \
 
 `compile plan`은 정제된 소스 본문, 결정론적인 작업과 병합 후보, 원본 파일의 정확한
 인용 위치, plan digest를 반환합니다. BuildLore는 이 plan을 저장하지 않으며 Claude나
-Codex 실행 파일, agent SDK, 백그라운드 작업자 또는 하위 프로세스를 실행하지
+Codex 실행 파일, agent SDK, 백그라운드 agent 또는 agent/provider 하위 프로세스를 실행하지
 않습니다. 현재 호출 세션이 기존 skill과 subagent를 사용해 정규
 `buildlore.compile-proposal.v1` 파일을 작성합니다. `compile apply`는 현재 plan을
 다시 생성하고 모든 제안을 한 배치로 검증하며 생성 내용도 다시 검사한 뒤, public
@@ -299,6 +299,164 @@ Kind별 조건과 필드 상한의 정본은 `compile-proposal.schema.json`이�
 `wiki/` 아래의 생성 페이지, `.llmwiki/` 아래의 컴파일러 상태와 적용된 언어
 중립적 생명주기 프로필이 저장됩니다.
 
+#### 권장 계층형 CLI 흐름
+
+현재 Codex 또는 Claude 세션이 계층형 위키를 작성할 때는 CLI가 권장 제품
+흐름입니다. 모든 handoff 경로는 BuildLore 허브 기준 상대 경로이며, digest 인자는
+직전 명령의 결과에서 정확히 복사해야 합니다.
+
+```sh
+# 정제된 프로젝트 corpus를 갱신한 뒤 로컬 run을 만들고 상태를 확인합니다.
+node dist/cli/bin.js sync --project example
+node dist/cli/bin.js compile hierarchy start \
+  --project example \
+  --purpose handoffs/wiki-purpose.json \
+  --json
+node dist/cli/bin.js compile hierarchy status \
+  --project example \
+  --run run-<소문자-16진수-64자리> \
+  --json
+
+# 반환된 exchange를 이미 실행 중인 agent 세션에 전달하고 그 JSON 응답을 제출합니다.
+node dist/cli/bin.js compile hierarchy submit \
+  --project example \
+  --run run-<소문자-16진수-64자리> \
+  --input handoffs/page-submission.json \
+  --expect-exchange sha256:<exchange-digest> \
+  --json
+
+# child synthesis를 명시적으로 검토한 뒤 통합 콘텐츠 diff와 품질을 검토합니다.
+node dist/cli/bin.js compile hierarchy child-review \
+  --project example \
+  --run run-<소문자-16진수-64자리> \
+  --input handoffs/child-review.json \
+  --expect-review sha256:<child-review-digest> \
+  --json
+node dist/cli/bin.js compile hierarchy review \
+  --project example \
+  --run run-<소문자-16진수-64자리> \
+  --json
+
+# 검토된 surface를 최종화하고 별도의 명시적 사람 승인을 기록합니다.
+node dist/cli/bin.js compile hierarchy finalize \
+  --project example \
+  --run run-<소문자-16진수-64자리> \
+  --input handoffs/final-review.json \
+  --expect-review sha256:<integrated-review-digest> \
+  --json
+node dist/cli/bin.js compile hierarchy approve \
+  --project example \
+  --run run-<소문자-16진수-64자리> \
+  --expect-ledger sha256:<ledger-digest> \
+  --confirm-approval \
+  --json
+
+# 승인은 활성화가 아닙니다. approve가 반환한 bundle 경로와 digest를 별도 명령에 제시합니다.
+node dist/cli/bin.js compile activate \
+  --project example \
+  --input .buildlore/hierarchy-runs/example/run-<소문자-16진수-64자리>/approved-wiki.json \
+  --confirm-approval sha256:<approval-digest> \
+  --json
+node dist/cli/bin.js compile hierarchy status \
+  --project example \
+  --run run-<소문자-16진수-64자리> \
+  --json
+
+# clean/active 상태가 되면 일반 위키 및 검색 명령으로 읽습니다.
+node dist/cli/bin.js wiki list --project example --json
+node dist/cli/bin.js wiki curate --project example --json
+node dist/cli/bin.js wiki read --project example --page page-<소문자-16진수-64자리> --json
+node dist/cli/bin.js wiki citations --project example --page page-<소문자-16진수-64자리> --json
+node dist/cli/bin.js search --project example --query "검토된 활성화 계보" --mode graph
+```
+
+각 명령은 서로 다른 OS process에서 실행해도 됩니다. BuildLore는 프로젝트에 격리된
+run을 Git에서 제외된 로컬 `.buildlore/hierarchy-runs/`에 보관하고, 다음 단계로
+진행하기 전에 정제된 입력, exchange, generation receipt, review 및 ledger binding을
+결정론적으로 재생합니다. `review` 결과는 통합 콘텐츠 diff와 결정론적 품질 보고서를
+보여줄 뿐 candidate를 승인하지 않습니다. `approve`는 명시적인 사람의 결정을
+기록하지만 활성화, Git 게시 또는 암묵적 승인을 수행하지 않습니다.
+
+이 흐름에서 BuildLore는 Codex, Claude, 모델 provider, agent SDK 또는 agent/provider
+하위 process를 실행하지 않습니다. Proposal을 직접 작성하거나 review를 자동 수락하거나 암묵적으로
+활성화하거나 Git에 자동 게시하지도 않습니다. 이미 실행 중인 호출 세션이 proposal
+작성을 소유하고 선언된 JSON handoff만 BuildLore에 돌려줍니다.
+
+#### 라이브러리 API
+
+제품 수준 라이브러리 경계는
+`createHierarchicalWorkflowService({ hubRoot, knowledgeRoot })`입니다.
+`start/status/submit/childReview/review/finalize/approve` 메서드는 CLI와 같은 흐름을
+제공하면서 Git에서 제외된 프로젝트 격리 로컬 run을 저장하고 재생합니다. `approve`는
+정확한 `activationBundlePath`, approval digest와 `activationArgs`를 반환합니다. 사람이
+검토된 generation을 활성화하려는 경우에만 이 값을 별도 activation service에
+전달합니다.
+
+하위 수준에서 계층형 위키는 이미 실행 중인 agent 세션을 import 가능한
+`createCurrentSessionGenerationService({ knowledgeRoot })` API로 연결할 수 있습니다.
+`prepare(...)`는 작성 목적, 정제된 evidence, 검토된 하위 문서 요약, 작성 지침과
+정확한 proposal 계약을 하나의 bounded JSON exchange로 반환합니다. 현재 agent에는
+이 exchange만 전달하고, agent가 반환한 versioned
+`buildlore.current-session-proposal-submission.v1` 응답을 `session.submit(...)`에
+전달합니다. `prepare(...)`에는 같은 process에서 `createEvidencePack(...)`이 반환한
+원본 `EvidencePackV1`만 사용할 수 있으며, prepare 전에 pack을 JSON round-trip하면
+거부됩니다. Leaf부터 parent까지 하나의 service instance를 재사용해야 검증된 하위
+문서 증명이 parent 합성에 유지됩니다. BuildLore는 프로젝트·페이지·exchange·요청·
+snapshot·현재 sanitizer 정책 binding을 다시 검사하고 생성 문장도 재검사한 뒤
+claim/proposal digest를 직접 계산합니다. 결과는
+게시 문서가 아니라 검토할 candidate와 generation receipt입니다. 공개 JSON 계약은
+`schemas/hierarchical-current-session.schema.json`입니다.
+
+`createIntegratedWikiReviewSurface(...)`는 검증된 `{ exchange, result }` handoff만
+실제 outline, planning inventory, 링크 reconciliation, 결정론적 의미 품질 보고서,
+정확한 citation anchor 및 section 단위 콘텐츠 diff와 결합합니다. 생성 순서의
+연속된 prefix까지만 완료된 실행은 누락 상태가 보이는 승인 불가 surface로 반환하고,
+중복·교환·중간 순서 건너뛰기는 실패로 처리합니다. `baselineGenerationDigest`가
+`null`이면 이전 baseline이 없으므로 baseline proposal 목록도 비어 있어야 합니다.
+null이 아닌 값은 이전 authoritative generation의 식별자이며, 전체 baseline 본문은
+surface digest에 결속됩니다. 승인 단계는 이 식별자를 실제 활성 state와 재생
+비교하고 baseline page/proposal 집합의 정확한 일치를 요구합니다. 새 outline에서
+사라진 baseline page도 정제된 proposal 전체를 삭제 검토용으로 유지하며, 명시적인
+삭제 결정이 생기기 전에는 승인을 막습니다.
+
+승인 review는 `createIntegratedWikiReviewSurface(...)`가 방금 생성했거나
+`verifyIntegratedWikiReviewSurface(...)`가 원본 입력에서 다시 만든 surface에만
+발급됩니다. JSON에서 자체 digest만 다시 계산해 만든 surface는 승인 권한을 얻지
+못합니다.
+
+이 경로에서 BuildLore는 provider, agent SDK, 실행 파일, 네트워크 client 또는 하위
+프로세스를 새로 실행하지 않습니다. `buildloreInitiatedEgress: "none"`은 이 경계를
+뜻하며, exchange를 받은 현재 agent 세션에 정제된 evidence가 공개되지 않았다는
+뜻은 아닙니다. 검토, 품질 승인, 최종화, 활성화와 Git 게시는 계속 별도 단계입니다.
+`finalizeCompileRun`은 이제 모든 generation handoff를 재생하고 정확한 receipt 집합,
+통합 review surface, 승인된 page review와 검토된 child-summary 집합을 필수로
+요구합니다. 이들의 canonical digest는 integrity report, 최종 ledger, ownership
+graph, 사람의 활성화 승인, active state와 authoritative check까지 이어집니다.
+자체 digest만 다시 계산한 receipt, review, approval 또는 오래된 baseline은 원본
+입력을 대신할 수 없습니다.
+
+`createHumanActivationApproval(...)`은 최종 ledger, ownership graph, receipt/review
+digest와 이전 활성 generation에 결속된 명시적 로컬 확인을 기록합니다. 이 객체는
+암호학적인 사람 신원을 증명한다고 주장하지 않으며, 승인 불가능한 ledger에는
+발급되지 않습니다. 활성화할 때는 BuildLore가 live source를 읽거나 승인 projection을
+바꾸기 전에 호출자가 같은 approval digest를 다시 제시해야 합니다.
+
+```sh
+node dist/cli/bin.js compile activate \
+  --project example \
+  --confirm-approval sha256:<approval-digest> \
+  --json
+```
+
+승인 확인이 없거나, 일치하지 않거나, 이전 generation이 오래된 경우 기존 projection은
+그대로 유지됩니다. 성공한 활성화는 사람이 읽고 Git으로 검토할 결정적 파생 문서도
+`knowledge/projects/<project-id>/wiki/buildlore-hierarchy/` 아래에 생성합니다. 여기에는
+하나의 `index.md`, active page마다 안정된 `page-<소문자-16진수-64자리>.md`, 그리고
+`manifest.json`이 있습니다. 승인 JSON만 유일한 정본이며 Markdown 직접 수정은
+materialization drift로만 보고되고 검색이나 semantic index 입력으로 채택되지 않습니다.
+활성화는 LLM 호출, embedding 실행, index 재구축, Git commit/push 또는 knowledge
+submodule pin을 수행하지 않습니다.
+
 ## 지식 검색 및 활용
 
 Lexical 검색은 결정론적으로 동작하며 자격증명이 필요하지 않습니다.
@@ -310,12 +468,27 @@ node dist/cli/bin.js search \
   --mode lexical
 ```
 
-Semantic 및 hybrid 검색은 설정된 임베딩 제공자를 사용할 수 있습니다. 호환되는
-임베딩 상태나 제공자 접근이 없다면 자동으로 인덱스를 재구축하지 않고 lexical
-fallback 또는 복구 작업을 결과에 명시합니다.
+`wiki curate --project <project-id>`도 모델 없이 완전히 동작합니다. clean/active로
+승인된 Wiki만 읽어 중복 가능성, 근거 없는 claim, 끊어진 link, 약한 연결에 대한 제한된
+검토 제안을 반환합니다. 제안 identity와 evidence locator는 결정론적이며 경로를 포함하지
+않습니다. 이 명령은 page를 수정·병합·승인·삭제하지 않고, stale 또는 유효하지 않은
+저장 authority에서는 닫힌 상태로 실패합니다. Curate는 활성 projection 범위에서만
+동작하며 source checkout을 독립적으로 다시 스캔하지 않습니다. source drift는 sync와
+compile authority check로 확인한 뒤 새 결과를 명시적으로 활성화해야 합니다.
+
+`index status`는 승인 projection, Markdown materialization과 semantic generation을
+서로 구분해 표시합니다. Semantic 및 hybrid 검색은 설정된 로컬 임베딩 제공자를 사용할
+수 있습니다. 호환되는 임베딩 상태나 제공자 접근이 없다면 자동으로 인덱스를 재구축하지
+않고 lexical fallback 또는 복구 작업을 결과에 명시합니다. 명시적 rebuild도 semantic
+active pointer를 바꾸기 직전에 authority, corpus generation, sanitizer policy, chunker와
+embedding identity를 다시 검사합니다. build 중 drift가 생기면 이전 정상 index를
+유지합니다.
 
 ```sh
-node dist/cli/bin.js search --project example --query "authentication decision" --mode hybrid
+node dist/cli/bin.js index status --project example --json
+node dist/cli/bin.js index rebuild --project example --json
+node dist/cli/bin.js search --project example --query "관련 결정" --mode graph
+node dist/cli/bin.js search --project example --query "인증 결정" --mode hybrid
 node dist/cli/bin.js query --project example --question "Why was this design selected?"
 node dist/cli/bin.js context --project example --prompt "Prepare an implementation plan"
 ```

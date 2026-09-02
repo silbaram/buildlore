@@ -37,11 +37,140 @@ const approvedDevDependencies = {
 } as const;
 
 const approvedRuntimeDependencies = {
+  '@huggingface/transformers': '4.2.0',
   'llm-wiki-compiler': '1.1.0',
   yaml: '2.9.0',
 } as const;
 
 describe('package contract', () => {
+  it('publishes closed v0.2 profile and bounded metadata schema contracts', async () => {
+    const profile = JSON.parse(await readFile(
+      new URL('../schemas/profile-binding.schema.json', import.meta.url),
+      'utf8',
+    )) as { readonly oneOf?: readonly unknown[] };
+    const metadata = JSON.parse(await readFile(
+      new URL('../schemas/source-metadata.schema.json', import.meta.url),
+      'utf8',
+    )) as Readonly<Record<string, unknown>>;
+    const manifest = JSON.parse(await readFile(
+      new URL('../schemas/source-collection-manifest-v2.schema.json', import.meta.url),
+      'utf8',
+    )) as Readonly<Record<string, unknown>>;
+    const descriptor = JSON.parse(await readFile(
+      new URL('../schemas/source-descriptor.schema.json', import.meta.url),
+      'utf8',
+    )) as Readonly<Record<string, unknown>>;
+    const sourceDocument = JSON.parse(await readFile(
+      new URL('../schemas/source-document-v2.schema.json', import.meta.url),
+      'utf8',
+    )) as Readonly<Record<string, unknown>>;
+    const wikiExport = JSON.parse(await readFile(
+      new URL('../schemas/wiki-export.schema.json', import.meta.url),
+      'utf8',
+    )) as Readonly<Record<string, unknown>>;
+
+    expect(profile.oneOf).toHaveLength(2);
+    expect(metadata).toMatchObject({
+      'x-buildlore-maxAggregateKeys': 64,
+      'x-buildlore-maxDepth': 8,
+      'x-buildlore-maxUtf8Bytes': 16_384,
+    });
+    expect(JSON.stringify(manifest)).toContain('source-metadata.schema.json');
+    expect(JSON.stringify(descriptor)).toContain('source-metadata.schema.json');
+
+    const descriptorContract = descriptor as unknown as {
+      readonly properties: {
+        readonly kind: { readonly enum: readonly string[] };
+      };
+      readonly $defs: {
+        readonly relativePath: {
+          readonly pattern: string;
+          readonly 'x-buildlore-maxSegments': number;
+          readonly 'x-buildlore-normalization': string;
+        };
+      };
+    };
+    expect(descriptorContract.properties.kind.enum).toEqual([
+      'code',
+      'execution',
+      'markdown',
+      'planning',
+      'text',
+    ]);
+    const wikiContract = wikiExport as unknown as {
+      readonly $id: string;
+      readonly $defs: {
+        readonly sourceRef: {
+          readonly pattern: string;
+          readonly 'x-buildlore-maxSegments': number;
+          readonly 'x-buildlore-normalization': string;
+        };
+      };
+      readonly 'x-buildlore-canonicalOrderBy': string;
+      readonly 'x-buildlore-uniqueBy': string;
+    };
+    expect(wikiContract.$id).toBe('https://buildlore.local/schemas/wiki-export.schema.json');
+    for (const contract of [
+      descriptorContract.$defs.relativePath,
+      wikiContract.$defs.sourceRef,
+    ]) {
+      const pattern = new RegExp(contract.pattern, 'u');
+      expect(contract['x-buildlore-maxSegments']).toBe(64);
+      expect(contract['x-buildlore-normalization']).toBe('NFC');
+      expect(pattern.test('docs/guide.md')).toBe(true);
+      expect(pattern.test('.buildlore/sources.json')).toBe(false);
+      expect(pattern.test('.llmwiki/index.json')).toBe(false);
+      expect(pattern.test('knowledge/projects/alpha.md')).toBe(false);
+      expect(pattern.test('projects/alpha/wiki.md')).toBe(false);
+      expect(pattern.test('sources/generated.md')).toBe(false);
+      expect(pattern.test('wiki/generated.md')).toBe(false);
+      expect(pattern.test('export/wiki.json')).toBe(false);
+      expect(pattern.test('exports/wiki.json')).toBe(false);
+      expect(pattern.test('docs/access-token/value.md')).toBe(false);
+      expect(pattern.test('docs/guide\u2060.md')).toBe(false);
+      expect(pattern.test(`${'a/'.repeat(64)}guide.md`)).toBe(false);
+    }
+
+    const sourceDocumentContract = sourceDocument as unknown as {
+      readonly dependentRequired: Readonly<Record<string, readonly string[]>>;
+      readonly properties: {
+        readonly body: {
+          readonly maxLength: number;
+          readonly 'x-buildlore-contentHash': string;
+          readonly 'x-buildlore-truncatedPayloadLength': number;
+        };
+        readonly buildlore: {
+          readonly properties: {
+            readonly originMappings: { readonly 'x-buildlore-boundedBy': string };
+          };
+        };
+      };
+      readonly $defs: {
+        readonly range: { readonly 'x-buildlore-orderedRange': boolean };
+        readonly rangeMapping: {
+          readonly 'x-buildlore-equalLineSpan': readonly string[];
+        };
+      };
+    };
+    expect(sourceDocumentContract.dependentRequired).toEqual({
+      originalChars: ['truncated'],
+      truncated: ['originalChars'],
+    });
+    expect(sourceDocumentContract.properties.body).toMatchObject({
+      maxLength: 100_001,
+      'x-buildlore-contentHash': 'buildlore.contentHash',
+      'x-buildlore-truncatedPayloadLength': 100_000,
+    });
+    expect(sourceDocumentContract.$defs.range['x-buildlore-orderedRange']).toBe(true);
+    expect(sourceDocumentContract.$defs.rangeMapping['x-buildlore-equalLineSpan'])
+      .toEqual(['canonical', 'origin']);
+    expect(sourceDocumentContract.properties.buildlore.properties.originMappings[
+      'x-buildlore-boundedBy'
+    ]).toBe('body');
+    expect(wikiContract['x-buildlore-canonicalOrderBy']).toBe('pages.pageRef');
+    expect(wikiContract['x-buildlore-uniqueBy']).toBe('pages.pageRef');
+  });
+
   it('ignores only repository-root generated test residue in the lint configuration', async () => {
     const eslintConfig = await readFile(
       new URL('../eslint.config.mjs', import.meta.url),
@@ -97,6 +226,12 @@ describe('package contract', () => {
       'knowledge-parent-pin-result.schema.json',
       'local-project-registry.schema.json',
       'source-collection-manifest.schema.json',
+      'source-collection-manifest-v2.schema.json',
+      'source-descriptor.schema.json',
+      'source-document-v2.schema.json',
+      'source-metadata.schema.json',
+      'profile-binding.schema.json',
+      'wiki-export.schema.json',
       'compile-plan.schema.json',
       'compile-proposal.schema.json',
       'compile-apply-result.schema.json',
@@ -105,6 +240,15 @@ describe('package contract', () => {
       'session-candidate-list.schema.json',
       'session-candidate-approval.schema.json',
       'session-promotion-proof.schema.json',
+      'hierarchical-corpus.schema.json',
+      'hierarchical-current-session.schema.json',
+      'hierarchical-workflow.schema.json',
+      'hierarchical-wiki-activation.schema.json',
+      'hierarchical-markdown-materialization.schema.json',
+      'hierarchical-retrieval.schema.json',
+      'local-embedding.schema.json',
+      'semantic-index.schema.json',
+      'retrieval-result-v2.schema.json',
     ]) {
       expect(packageJson.exports[`./schemas/${schema}`]).toBe(`./schemas/${schema}`);
     }
@@ -133,6 +277,15 @@ describe('package contract', () => {
     expect(packageLock.packages['node_modules/llm-wiki-compiler']).toMatchObject({
       version: '1.1.0',
     });
+    expect(packageLock.packages['node_modules/@huggingface/transformers']).toMatchObject({
+      version: '4.2.0',
+    });
+    expect(packageLock.packages['node_modules/@huggingface/transformers']?.dependencies)
+      .toMatchObject({ 'onnxruntime-node': '1.24.3' });
+    expect(packageLock.packages['node_modules/onnxruntime-node']).toMatchObject({
+      version: '1.24.3',
+    });
+    expect(packageLock).not.toHaveProperty('overrides');
     expect(packageLock.packages['node_modules/llm-wiki-compiler']?.integrity).toBe(
       compilerIntegrity,
     );
@@ -289,6 +442,12 @@ describe('package contract', () => {
       'knowledge-parent-pin-result.schema.json',
       'local-project-registry.schema.json',
       'source-collection-manifest.schema.json',
+      'source-collection-manifest-v2.schema.json',
+      'source-descriptor.schema.json',
+      'source-document-v2.schema.json',
+      'source-metadata.schema.json',
+      'profile-binding.schema.json',
+      'wiki-export.schema.json',
       'compile-plan.schema.json',
       'compile-proposal.schema.json',
       'compile-apply-result.schema.json',
@@ -297,6 +456,14 @@ describe('package contract', () => {
       'session-candidate-list.schema.json',
       'session-candidate-approval.schema.json',
       'session-promotion-proof.schema.json',
+      'hierarchical-corpus.schema.json',
+      'hierarchical-current-session.schema.json',
+      'hierarchical-workflow.schema.json',
+      'hierarchical-wiki-activation.schema.json',
+      'hierarchical-retrieval.schema.json',
+      'local-embedding.schema.json',
+      'semantic-index.schema.json',
+      'retrieval-result-v2.schema.json',
     ]) {
       const subpath = `./schemas/${schema}`;
       expect(packageJson.exports[subpath]).toBe(subpath);

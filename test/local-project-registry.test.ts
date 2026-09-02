@@ -44,13 +44,17 @@ async function createFixture(): Promise<Fixture> {
   return { hubRoot, root };
 }
 
-async function createCheckout(root: string, name: string): Promise<string> {
-  const checkout = join(root, name);
-  await mkdir(checkout);
+async function initializeCheckout(checkout: string): Promise<void> {
   await execFileAsync('git', ['init', '--initial-branch=main'], {
     cwd: checkout,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' },
   });
+}
+
+async function createCheckout(root: string, name: string): Promise<string> {
+  const checkout = join(root, name);
+  await mkdir(checkout);
+  await initializeCheckout(checkout);
   return checkout;
 }
 
@@ -67,6 +71,56 @@ afterEach(async () => {
 });
 
 describe('hub-local project registry', () => {
+  it('binds one project to the canonical hub checkout itself', async () => {
+    const { hubRoot } = await createFixture();
+    await initializeCheckout(hubRoot);
+    const input = {
+      projectId: 'alpha',
+      sourceRepository: 'https://example.test/alpha.git',
+      sourceRoot: hubRoot,
+    } as const;
+
+    await expect(bindLocalProject(hubRoot, input)).resolves.toMatchObject({
+      outcome: 'created',
+      projectId: 'alpha',
+    });
+    await expect(bindLocalProject(hubRoot, input)).resolves.toMatchObject({
+      outcome: 'unchanged',
+      projectId: 'alpha',
+    });
+    const resolved = await resolveLocalProjectBinding(
+      hubRoot,
+      'alpha',
+      input.sourceRepository,
+    );
+    expect(resolved.checkout.resolveRootForInternalUse()).toBe(hubRoot);
+    expect(JSON.stringify(resolved)).not.toContain(hubRoot);
+    await expect(bindLocalProject(hubRoot, {
+      projectId: 'beta',
+      sourceRepository: 'https://example.test/beta.git',
+      sourceRoot: hubRoot,
+    })).rejects.toMatchObject({ code: 'SOURCE_BINDING_CONFLICT' });
+  });
+
+  it('continues to reject strict ancestry between hub and source roots', async () => {
+    const { hubRoot, root } = await createFixture();
+    const childSource = await createCheckout(hubRoot, 'child-source');
+    await expect(bindLocalProject(hubRoot, {
+      projectId: 'child',
+      sourceRepository: 'https://example.test/child.git',
+      sourceRoot: childSource,
+    })).rejects.toMatchObject({ code: 'SOURCE_BINDING_INVALID' });
+
+    const parentSource = await createCheckout(root, 'parent-source');
+    const childHub = join(parentSource, 'child-hub');
+    await mkdir(childHub);
+    await expect(bindLocalProject(childHub, {
+      projectId: 'parent',
+      sourceRepository: 'https://example.test/parent.git',
+      sourceRoot: parentSource,
+    })).rejects.toMatchObject({ code: 'SOURCE_BINDING_INVALID' });
+  });
+
   it('creates a canonical, sorted, owner-only local registry', async () => {
     const { hubRoot, root } = await createFixture();
     const zuluRoot = await createCheckout(root, 'zulu-source');
@@ -164,6 +218,23 @@ describe('hub-local project registry', () => {
       projectId: 'beta',
       sourceRepository: 'https://example.test/beta.git',
       sourceRoot,
+    })).rejects.toMatchObject({ code: 'SOURCE_BINDING_CONFLICT' });
+  });
+
+  it('rejects nested Git worktrees across project bindings', async () => {
+    const { hubRoot, root } = await createFixture();
+    const alphaRoot = await createCheckout(root, 'alpha-source');
+    const nestedRoot = await createCheckout(alphaRoot, 'nested-beta-source');
+    await bindLocalProject(hubRoot, {
+      projectId: 'alpha',
+      sourceRepository: 'https://example.test/alpha.git',
+      sourceRoot: alphaRoot,
+    });
+
+    await expect(bindLocalProject(hubRoot, {
+      projectId: 'beta',
+      sourceRepository: 'https://example.test/beta.git',
+      sourceRoot: nestedRoot,
     })).rejects.toMatchObject({ code: 'SOURCE_BINDING_CONFLICT' });
   });
 
@@ -385,6 +456,7 @@ describe('hub-local project registry', () => {
     expect(ignoreSource).toContain('/.buildlore/local-projects.json\n');
     expect(ignoreSource).toContain('/.buildlore/local-projects.json.lock\n');
     expect(ignoreSource).toContain('/.buildlore/.local-projects.json.*.tmp\n');
+    expect(ignoreSource).toContain('/.buildlore/hierarchy-runs/\n');
     expect(ignoreSource).not.toContain('/.buildlore/\n');
     expect(ignoreSource).not.toContain('.buildlore/sources.json');
   });

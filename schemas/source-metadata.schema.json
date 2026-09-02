@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/source-metadata.schema.json",
+  "title": "BuildLore Source Metadata v1",
+  "description": "Language-neutral, bounded adapter metadata. The x-buildlore keywords are normative aggregate limits that a schema host must enforce after UTF-8 canonical JSON serialization.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["namespace", "schemaVersion", "values"],
+  "x-buildlore-maxUtf8Bytes": 16384,
+  "x-buildlore-maxDepth": 8,
+  "x-buildlore-maxAggregateKeys": 64,
+  "properties": {
+    "namespace": { "$ref": "#/$defs/adapterId" },
+    "schemaVersion": { "$ref": "#/$defs/adapterId" },
+    "values": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "$ref": "#/$defs/safeKey" },
+      "additionalProperties": { "$ref": "#/$defs/valueAtDepth2" }
+    }
+  },
+  "$defs": {
+    "adapterId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+    },
+    "safeKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+      "x-buildlore-normalization": "NFC",
+      "x-buildlore-disallowedUnicodeCategory": "Cf"
+    },
+    "primitive": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string", "maxLength": 16384 }
+      ]
+    },
+    "valueAtDepth2": {
+      "oneOf": [
+        { "$ref": "#/$defs/primitive" },
+        { "type": "array", "items": { "$ref": "#/$defs/valueAtDepth3" } },
+        {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "$ref": "#/$defs/safeKey" },
+          "additionalProperties": { "$ref": "#/$defs/valueAtDepth3" }
+        }
+      ]
+    },
+    "valueAtDepth3": {
+      "oneOf": [
+        { "$ref": "#/$defs/primitive" },
+        { "type": "array", "items": { "$ref": "#/$defs/valueAtDepth4" } },
+        {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "$ref": "#/$defs/safeKey" },
+          "additionalProperties": { "$ref": "#/$defs/valueAtDepth4" }
+        }
+      ]
+    },
+    "valueAtDepth4": {
+      "oneOf": [
+        { "$ref": "#/$defs/primitive" },
+        { "type": "array", "items": { "$ref": "#/$defs/valueAtDepth5" } },
+        {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "$ref": "#/$defs/safeKey" },
+          "additionalProperties": { "$ref": "#/$defs/valueAtDepth5" }
+        }
+      ]
+    },
+    "valueAtDepth5": {
+      "oneOf": [
+        { "$ref": "#/$defs/primitive" },
+        { "type": "array", "items": { "$ref": "#/$defs/valueAtDepth6" } },
+        {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "$ref": "#/$defs/safeKey" },
+          "additionalProperties": { "$ref": "#/$defs/valueAtDepth6" }
+        }
+      ]
+    },
+    "valueAtDepth6": {
+      "oneOf": [
+        { "$ref": "#/$defs/primitive" },
+        { "type": "array", "items": { "$ref": "#/$defs/valueAtDepth7" } },
+        {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "$ref": "#/$defs/safeKey" },
+          "additionalProperties": { "$ref": "#/$defs/valueAtDepth7" }
+        }
+      ]
+    },
+    "valueAtDepth7": {
+      "oneOf": [
+        { "$ref": "#/$defs/primitive" },
+        { "type": "array", "items": { "$ref": "#/$defs/valueAtDepth8" } },
+        {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "$ref": "#/$defs/safeKey" },
+          "additionalProperties": { "$ref": "#/$defs/valueAtDepth8" }
+        }
+      ]
+    },
+    "valueAtDepth8": {
+      "oneOf": [
+        { "$ref": "#/$defs/primitive" },
+        { "type": "array", "maxItems": 0 },
+        { "type": "object", "maxProperties": 0 }
+      ]
+    }
+  }
+}

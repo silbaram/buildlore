@@ -17,8 +17,22 @@ import {
   type SourceSelectionErrorCode,
   type SourceSelectionField,
 } from './errors.js';
+import {
+  createBuiltInSourceAdapterRegistry,
+  GENERIC_SOURCE_ADAPTER_ID,
+  mediaTypeForGenericKind,
+  P2A_SOURCE_ADAPTER_ID,
+} from './source-adapter-registry.js';
+import {
+  parseRegisteredSourceKind,
+  parseSourceMetadata,
+  type RegisteredMediaType,
+  type RegisteredSourceKind,
+  type SourceMetadataV1,
+} from './source-contracts.js';
 
 export const SOURCE_COLLECTION_MANIFEST_SCHEMA_VERSION = 'buildlore.sources.v1' as const;
+export const SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION = 'buildlore.sources.v2' as const;
 export const MAX_SOURCE_MANIFEST_BYTES = 64 * 1024;
 export const MAX_SOURCE_DECLARATIONS = 128;
 export const MAX_SOURCE_PATH_LENGTH = 512;
@@ -31,11 +45,13 @@ const SOURCE_MANIFEST_RELATIVE_PATH = '.buildlore/sources.json';
 const SOURCE_DECLARATION_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const WINDOWS_DRIVE_PREFIX_PATTERN = /^[A-Za-z]:/u;
 const MARKDOWN_EXTENSION_PATTERN = /\.(?:md|markdown)$/u;
+const TEXT_EXTENSION_PATTERN = /\.(?:text|txt)$/u;
+const CODE_EXTENSION_PATTERN = /\.(?:bash|c|cc|cjs|cpp|cs|css|cxx|fish|go|h|hpp|htm|html|java|js|jsx|kt|kts|less|mjs|php|py|rb|rs|sass|scala|scss|sh|sql|svelte|swift|ts|tsx|vue|xml|zsh)$/u;
 const P2A_PLANNING_EXTENSION_PATTERN = /\.(?:json|jsonl|md|markdown)$/u;
 const CREDENTIAL_PATH_PATTERN =
   /(?:^|[/_.-])(?:api[-_]?key|authorization|bearer|credentials?|password|private[-_]?key|refresh[-_]?token|secrets?|tokens?|access[-_]?token)(?:$|[/_.-])/iu;
 
-export type SourceDocumentKind = 'markdown' | 'p2a-planning';
+export type SourceDocumentKind = 'code' | 'markdown' | 'p2a-planning' | 'text';
 
 interface SourceDeclarationBase {
   readonly documentKind: SourceDocumentKind;
@@ -54,6 +70,27 @@ export interface SourceDirectoryDeclaration extends SourceDeclarationBase {
 
 export type SourceDeclaration = SourceDirectoryDeclaration | SourceFileDeclaration;
 
+interface SourceDeclarationV2Base {
+  readonly adapterId: string;
+  readonly adapterVersion: number;
+  readonly id: string;
+  readonly kind: RegisteredSourceKind;
+  readonly metadata?: SourceMetadataV1;
+  readonly path: string;
+}
+
+export interface SourceFileDeclarationV2 extends SourceDeclarationV2Base {
+  readonly pathType: 'file';
+}
+
+export interface SourceDirectoryDeclarationV2 extends SourceDeclarationV2Base {
+  readonly pathType: 'directory';
+  readonly recursive?: boolean;
+}
+
+export type SourceDeclarationV2 = SourceDirectoryDeclarationV2 | SourceFileDeclarationV2;
+export type AnySourceDeclaration = SourceDeclaration | SourceDeclarationV2;
+
 export interface SourceCollectionManifestV1 {
   readonly projectId: string;
   readonly schemaVersion: typeof SOURCE_COLLECTION_MANIFEST_SCHEMA_VERSION;
@@ -61,8 +98,17 @@ export interface SourceCollectionManifestV1 {
   readonly sources: readonly SourceDeclaration[];
 }
 
+export interface SourceCollectionManifestV2 {
+  readonly projectId: string;
+  readonly schemaVersion: typeof SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION;
+  readonly sourceRepository: string;
+  readonly sources: readonly SourceDeclarationV2[];
+}
+
+export type SourceCollectionManifest = SourceCollectionManifestV1 | SourceCollectionManifestV2;
+
 export interface LoadedSourceCollectionManifest {
-  readonly manifest: SourceCollectionManifestV1;
+  readonly manifest: SourceCollectionManifest;
   readonly manifestDigest: Sha256Digest;
 }
 
@@ -70,15 +116,21 @@ export interface SourceFileIdentity {
   readonly ctimeNs: string;
   readonly device: string;
   readonly inode: string;
+  readonly linkCount: string;
   readonly size: number;
 }
 
 export interface SelectedSourceFile {
+  readonly adapterId?: string;
+  readonly adapterVersion?: number;
   readonly byteLength: number;
   readonly contentDigest: Sha256Digest;
   readonly declarationId: string;
   readonly documentKind: SourceDocumentKind;
   readonly identity: SourceFileIdentity;
+  readonly kind?: RegisteredSourceKind;
+  readonly mediaType?: RegisteredMediaType;
+  readonly metadata?: SourceMetadataV1;
   readonly sourceRef: string;
 }
 
@@ -194,9 +246,10 @@ function validateDeclarationId(value: unknown): string {
   return id;
 }
 
-function validateSourcePath(value: unknown): string {
+export function validateSourceSelectionPath(value: unknown): string {
   const path = requireString(value, 'path');
   const segments = path.split('/');
+  const generatedRoot = segments[0];
   if (
     path.length < 1 ||
     path.length > MAX_SOURCE_PATH_LENGTH ||
@@ -210,7 +263,18 @@ function validateSourcePath(value: unknown): string {
     posix.normalize(path) !== path ||
     segments.length > MAX_SOURCE_SELECTION_DEPTH ||
     segments.some((segment) =>
-      segment === '' || segment === '.' || segment === '..' || segment === '.git') ||
+      segment === '' ||
+      segment === '.' ||
+      segment === '..' ||
+      segment === '.git' ||
+      segment === '.buildlore' ||
+      segment === '.llmwiki') ||
+    generatedRoot === 'knowledge' ||
+    generatedRoot === 'projects' ||
+    generatedRoot === 'sources' ||
+    generatedRoot === 'wiki' ||
+    generatedRoot === 'export' ||
+    generatedRoot === 'exports' ||
     hasUnsafeCharacter(path) ||
     CREDENTIAL_PATH_PATTERN.test(path)
   ) {
@@ -236,7 +300,7 @@ function parseDeclaration(value: unknown): SourceDeclaration {
     return Object.freeze({
       documentKind: parseDocumentKind(value.documentKind),
       id: validateDeclarationId(value.id),
-      path: validateSourcePath(value.path),
+      path: validateSourceSelectionPath(value.path),
       pathType: 'file',
     });
   }
@@ -252,12 +316,59 @@ function parseDeclaration(value: unknown): SourceDeclaration {
     return Object.freeze({
       documentKind: parseDocumentKind(value.documentKind),
       id: validateDeclarationId(value.id),
-      path: validateSourcePath(value.path),
+      path: validateSourceSelectionPath(value.path),
       pathType: 'directory',
       ...(value.recursive === undefined ? {} : { recursive: value.recursive }),
     });
   }
   return fail('SOURCE_MANIFEST_INVALID', 'pathType', 'Source declaration pathType is invalid.');
+}
+
+function parseV2Declaration(value: unknown): SourceDeclarationV2 {
+  if (!isRecord(value)) {
+    return fail('SOURCE_MANIFEST_INVALID', 'sources', 'Source declaration is invalid.');
+  }
+  const pathType = value.pathType;
+  const optional = ['metadata'];
+  if (pathType === 'directory') optional.push('recursive');
+  requireExactKeys(
+    value,
+    ['adapterId', 'adapterVersion', 'id', 'kind', 'path', 'pathType'],
+    optional,
+  );
+  if (pathType !== 'file' && pathType !== 'directory') {
+    return fail('SOURCE_MANIFEST_INVALID', 'pathType', 'Source declaration pathType is invalid.');
+  }
+  if (pathType === 'directory' && value.recursive !== undefined &&
+      typeof value.recursive !== 'boolean') {
+    return fail('SOURCE_MANIFEST_INVALID', 'recursive', 'recursive must be a boolean.');
+  }
+  let kind: RegisteredSourceKind;
+  let metadata: SourceMetadataV1 | undefined;
+  try {
+    kind = parseRegisteredSourceKind(value.kind);
+    metadata = value.metadata === undefined ? undefined : parseSourceMetadata(value.metadata);
+    createBuiltInSourceAdapterRegistry().resolve({
+      adapterId: requireString(value.adapterId, 'manifest'),
+      adapterVersion: typeof value.adapterVersion === 'number' ? value.adapterVersion : 0,
+      kind,
+      ...(metadata === undefined ? {} : { metadata }),
+    });
+  } catch {
+    return fail('SOURCE_KIND_UNSUPPORTED', 'manifest', 'Source adapter binding is unsupported.');
+  }
+  return Object.freeze({
+    adapterId: requireString(value.adapterId, 'manifest'),
+    adapterVersion: value.adapterVersion as number,
+    id: validateDeclarationId(value.id),
+    kind,
+    ...(metadata === undefined ? {} : { metadata }),
+    path: validateSourceSelectionPath(value.path),
+    pathType,
+    ...(pathType === 'directory' && value.recursive !== undefined
+      ? { recursive: value.recursive }
+      : {}),
+  }) as SourceDeclarationV2;
 }
 
 export function parseSourceCollectionManifest(value: unknown): SourceCollectionManifestV1 {
@@ -311,9 +422,64 @@ export function parseSourceCollectionManifest(value: unknown): SourceCollectionM
   });
 }
 
+export function parseSourceCollectionManifestV2(value: unknown): SourceCollectionManifestV2 {
+  if (!isRecord(value)) {
+    return fail('SOURCE_MANIFEST_INVALID', 'manifest', 'Source manifest is invalid.');
+  }
+  requireExactKeys(value, ['projectId', 'schemaVersion', 'sourceRepository', 'sources']);
+  if (value.schemaVersion !== SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION) {
+    return fail('SOURCE_MANIFEST_INVALID', 'manifest', 'Source manifest schema is unsupported.');
+  }
+  let projectId: string;
+  try {
+    projectId = validateProjectId(requireString(value.projectId, 'projectId'));
+  } catch {
+    return fail('SOURCE_MANIFEST_INVALID', 'projectId', 'Source manifest projectId is invalid.');
+  }
+  let sourceRepository: string;
+  try {
+    sourceRepository = validateRepositoryLocator(
+      requireString(value.sourceRepository, 'sourceRepository'),
+    );
+  } catch {
+    return fail(
+      'SOURCE_MANIFEST_INVALID',
+      'sourceRepository',
+      'Source manifest repository identity is invalid.',
+    );
+  }
+  if (!Array.isArray(value.sources) || value.sources.length > MAX_SOURCE_DECLARATIONS) {
+    return fail('SOURCE_MANIFEST_INVALID', 'sources', 'Source declarations are out of bounds.');
+  }
+  const sources = value.sources.map(parseV2Declaration);
+  const ids = new Set<string>();
+  for (const source of sources) {
+    if (ids.has(source.id)) {
+      return fail('SOURCE_MANIFEST_INVALID', 'id', 'Source declaration id is duplicated.');
+    }
+    ids.add(source.id);
+  }
+  return Object.freeze({
+    projectId,
+    schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+    sourceRepository,
+    sources: Object.freeze(
+      [...sources].sort((left, right) => compareText(left.id, right.id)),
+    ),
+  });
+}
+
+export function parseAnySourceCollectionManifest(value: unknown): SourceCollectionManifest {
+  if (isRecord(value) && value.schemaVersion === SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION) {
+    return parseSourceCollectionManifestV2(value);
+  }
+  return parseSourceCollectionManifest(value);
+}
+
 function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
   return left.dev === right.dev &&
     left.ino === right.ino &&
+    left.nlink === right.nlink &&
     left.size === right.size &&
     left.ctimeNs === right.ctimeNs;
 }
@@ -323,8 +489,20 @@ function fileIdentity(status: BigIntStats): SourceFileIdentity {
     ctimeNs: status.ctimeNs.toString(10),
     device: status.dev.toString(10),
     inode: status.ino.toString(10),
+    linkCount: status.nlink.toString(10),
     size: Number(status.size),
   });
+}
+
+function matchesRecordedIdentity(
+  status: BigIntStats,
+  identity: SourceFileIdentity,
+): boolean {
+  return status.ctimeNs.toString(10) === identity.ctimeNs &&
+    status.dev.toString(10) === identity.device &&
+    status.ino.toString(10) === identity.inode &&
+    status.nlink.toString(10) === identity.linkCount &&
+    Number(status.size) === identity.size;
 }
 
 function isContained(root: string, candidate: string): boolean {
@@ -425,7 +603,7 @@ export async function readSourceCollectionManifest(
     }
     return fail('SOURCE_MANIFEST_INVALID', 'manifest', 'Source manifest is unreadable.');
   }
-  if (!expected.isFile() || expected.isSymbolicLink()) {
+  if (!expected.isFile() || expected.isSymbolicLink() || expected.nlink !== 1n) {
     return fail('SOURCE_SELECTION_PATH_UNSAFE', 'manifest', 'Source manifest path is unsafe.');
   }
   if (expected.size > BigInt(MAX_SOURCE_MANIFEST_BYTES)) {
@@ -464,10 +642,10 @@ export async function readSourceCollectionManifest(
   }
 
   let decoded: string;
-  let manifest: SourceCollectionManifestV1;
+  let manifest: SourceCollectionManifest;
   try {
     decoded = decodeUtf8Strict(bytes);
-    manifest = parseSourceCollectionManifest(parseJsonStrict(decoded));
+    manifest = parseAnySourceCollectionManifest(parseJsonStrict(decoded));
   } catch (error) {
     if (error instanceof SourceSelectionError) throw error;
     return fail('SOURCE_MANIFEST_INVALID', 'manifest', 'Source manifest JSON is invalid.');
@@ -528,8 +706,63 @@ function isExecutionSelectionPath(sourceRef: string): boolean {
 }
 
 function matchesDocumentKind(documentKind: SourceDocumentKind, sourceRef: string): boolean {
-  if (documentKind === 'markdown') return MARKDOWN_EXTENSION_PATTERN.test(sourceRef);
-  return !isExecutionSelectionPath(sourceRef) && P2A_PLANNING_EXTENSION_PATTERN.test(sourceRef);
+  switch (documentKind) {
+    case 'code':
+      return CODE_EXTENSION_PATTERN.test(sourceRef);
+    case 'markdown':
+      return MARKDOWN_EXTENSION_PATTERN.test(sourceRef);
+    case 'text':
+      return TEXT_EXTENSION_PATTERN.test(sourceRef);
+    case 'p2a-planning':
+      return !isExecutionSelectionPath(sourceRef) && P2A_PLANNING_EXTENSION_PATTERN.test(sourceRef);
+  }
+}
+
+export function sourceDeclarationDocumentKind(
+  declaration: AnySourceDeclaration,
+): SourceDocumentKind {
+  if ('documentKind' in declaration) return declaration.documentKind;
+  if (
+    declaration.adapterId === P2A_SOURCE_ADAPTER_ID &&
+    declaration.adapterVersion === 1 &&
+    declaration.kind === 'planning'
+  ) return 'p2a-planning';
+  if (
+    declaration.adapterId === GENERIC_SOURCE_ADAPTER_ID &&
+    declaration.adapterVersion === 1 &&
+    (declaration.kind === 'markdown' || declaration.kind === 'text' || declaration.kind === 'code')
+  ) return declaration.kind;
+  return fail('SOURCE_KIND_UNSUPPORTED', 'manifest', 'Source adapter binding is unsupported.');
+}
+
+function declarationAdapterId(declaration: AnySourceDeclaration): string {
+  if ('adapterId' in declaration) return declaration.adapterId;
+  return declaration.documentKind === 'p2a-planning'
+    ? P2A_SOURCE_ADAPTER_ID
+    : GENERIC_SOURCE_ADAPTER_ID;
+}
+
+function declarationKind(declaration: AnySourceDeclaration): RegisteredSourceKind {
+  if ('kind' in declaration) return declaration.kind;
+  return declaration.documentKind === 'p2a-planning' ? 'planning' : declaration.documentKind;
+}
+
+export function sourceDeclarationMediaType(
+  declaration: AnySourceDeclaration,
+  sourceRef: string,
+): RegisteredMediaType {
+  const kind = declarationKind(declaration);
+  if (kind === 'planning') {
+    if (sourceRef.endsWith('.jsonl')) return 'application/x-ndjson';
+    if (sourceRef.endsWith('.md') || sourceRef.endsWith('.markdown')) {
+      return 'text/markdown';
+    }
+    return 'application/json';
+  }
+  if (kind === 'execution') {
+    return fail('SOURCE_KIND_UNSUPPORTED', 'manifest', 'Execution sources use P2A root discovery.');
+  }
+  return mediaTypeForGenericKind(kind);
 }
 
 function assertSelectionPath(sourceRef: string, maximumDepth: number): void {
@@ -540,7 +773,7 @@ function assertSelectionPath(sourceRef: string, maximumDepth: number): void {
     fail('SOURCE_SELECTION_LIMIT_EXCEEDED', 'path', 'Source selection path limit exceeded.');
   }
   try {
-    validateSourcePath(sourceRef);
+    validateSourceSelectionPath(sourceRef);
   } catch (error) {
     if (error instanceof SourceSelectionError) {
       fail('SOURCE_SELECTION_PATH_UNSAFE', 'path', 'Source selection path is unsafe.');
@@ -552,8 +785,8 @@ function assertSelectionPath(sourceRef: string, maximumDepth: number): void {
 function assertManifestBinding(
   checkout: SourceCheckoutHandle,
   loaded: LoadedSourceCollectionManifest,
-): SourceCollectionManifestV1 {
-  const manifest = parseSourceCollectionManifest(loaded.manifest);
+): SourceCollectionManifest {
+  const manifest = parseAnySourceCollectionManifest(loaded.manifest);
   if (
     sha256(serializeCanonicalJson(manifest)) !== loaded.manifestDigest
   ) {
@@ -574,7 +807,7 @@ function assertManifestBinding(
 
 async function readSelectedFile(
   root: string,
-  declaration: SourceDeclaration,
+  declaration: AnySourceDeclaration,
   sourceRef: string,
   limits: SourceSelectionLimits,
   remainingAggregateBytes: number,
@@ -595,6 +828,7 @@ async function readSelectedFile(
   if (
     !expected.isFile() ||
     expected.isSymbolicLink() ||
+    expected.nlink !== 1n ||
     canonical !== path ||
     !isContained(root, canonical)
   ) {
@@ -639,11 +873,18 @@ async function readSelectedFile(
       );
     }
     return Object.freeze({
+      adapterId: declarationAdapterId(declaration),
+      adapterVersion: 'adapterVersion' in declaration ? declaration.adapterVersion : 1,
       byteLength: bytes.byteLength,
       contentDigest: sha256(bytes),
       declarationId: declaration.id,
-      documentKind: declaration.documentKind,
+      documentKind: sourceDeclarationDocumentKind(declaration),
       identity: fileIdentity(after),
+      kind: declarationKind(declaration),
+      mediaType: sourceDeclarationMediaType(declaration, sourceRef),
+      ...('metadata' in declaration && declaration.metadata !== undefined
+        ? { metadata: declaration.metadata }
+        : {}),
       sourceRef,
     });
   } catch (error) {
@@ -671,7 +912,7 @@ export async function selectDeclaredSourceFiles(
   let totalBytes = 0;
 
   const selectFile = async (
-    declaration: SourceDeclaration,
+    declaration: AnySourceDeclaration,
     sourceRef: string,
   ): Promise<void> => {
     if (files.length >= limits.maxFileCount) {
@@ -694,7 +935,7 @@ export async function selectDeclaredSourceFiles(
   };
 
   const visitDirectory = async (
-    declaration: SourceDirectoryDeclaration,
+    declaration: SourceDirectoryDeclaration | SourceDirectoryDeclarationV2,
     sourceRef: string,
   ): Promise<void> => {
     assertSelectionPath(sourceRef, limits.maxDepth);
@@ -742,7 +983,8 @@ export async function selectDeclaredSourceFiles(
         return fail('SOURCE_SELECTION_PATH_UNSAFE', 'path', 'Selected source tree contains a symlink.');
       }
       if (entry.isDirectory()) {
-        if (declaration.documentKind === 'p2a-planning' && entry.name === 'runs') continue;
+        if (sourceDeclarationDocumentKind(declaration) === 'p2a-planning' &&
+            entry.name === 'runs') continue;
         if (declaration.recursive === true) await visitDirectory(declaration, childRef);
         continue;
       }
@@ -753,7 +995,7 @@ export async function selectDeclaredSourceFiles(
           'Selected source tree contains an unsafe file type.',
         );
       }
-      if (matchesDocumentKind(declaration.documentKind, childRef)) {
+      if (matchesDocumentKind(sourceDeclarationDocumentKind(declaration), childRef)) {
         await selectFile(declaration, childRef);
       }
     }
@@ -762,7 +1004,7 @@ export async function selectDeclaredSourceFiles(
   for (const declaration of manifest.sources) {
     assertSelectionPath(declaration.path, limits.maxDepth);
     if (
-      declaration.documentKind === 'p2a-planning' &&
+      sourceDeclarationDocumentKind(declaration) === 'p2a-planning' &&
       isExecutionSelectionPath(declaration.path)
     ) {
       return fail(
@@ -772,7 +1014,7 @@ export async function selectDeclaredSourceFiles(
       );
     }
     if (declaration.pathType === 'file') {
-      if (!matchesDocumentKind(declaration.documentKind, declaration.path)) {
+      if (!matchesDocumentKind(sourceDeclarationDocumentKind(declaration), declaration.path)) {
         return fail(
           'SOURCE_SELECTION_KIND_MISMATCH',
           'path',
@@ -782,6 +1024,42 @@ export async function selectDeclaredSourceFiles(
       await selectFile(declaration, declaration.path);
     } else {
       await visitDirectory(declaration, declaration.path);
+    }
+  }
+
+  for (const directory of directories) {
+    const path = join(root, ...directory.sourceRef.split('/'));
+    let current: BigIntStats;
+    let canonical: string;
+    try {
+      [current, canonical] = await Promise.all([
+        lstat(path, { bigint: true }),
+        realpath(path),
+      ]);
+    } catch {
+      return fail('SOURCE_SELECTION_CHANGED', 'path', 'Selected source directory changed.');
+    }
+    if (!current.isDirectory() || current.isSymbolicLink() || canonical !== path ||
+        !isContained(root, canonical) || !matchesRecordedIdentity(current, directory.identity)) {
+      return fail('SOURCE_SELECTION_CHANGED', 'path', 'Selected source directory changed.');
+    }
+  }
+  for (const file of files) {
+    const path = join(root, ...file.sourceRef.split('/'));
+    let current: BigIntStats;
+    let canonical: string;
+    try {
+      [current, canonical] = await Promise.all([
+        lstat(path, { bigint: true }),
+        realpath(path),
+      ]);
+    } catch {
+      return fail('SOURCE_SELECTION_CHANGED', 'path', 'Selected source file changed.');
+    }
+    if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1n ||
+        canonical !== path || !isContained(root, canonical) ||
+        !matchesRecordedIdentity(current, file.identity)) {
+      return fail('SOURCE_SELECTION_CHANGED', 'path', 'Selected source file changed.');
     }
   }
 
@@ -816,6 +1094,20 @@ export async function readSelectedSourceBytes(
   const root = await canonicalCheckoutRoot(checkout);
   assertSelectionPath(selected.sourceRef, MAX_SOURCE_SELECTION_DEPTH);
   if (
+    !Number.isSafeInteger(selected.byteLength) ||
+    selected.byteLength < 0 ||
+    selected.byteLength > MAX_SELECTED_SOURCE_FILE_BYTES ||
+    selected.identity.linkCount !== '1' ||
+    selected.identity.size !== selected.byteLength ||
+    !/^sha256:[a-f0-9]{64}$/u.test(selected.contentDigest)
+  ) {
+    return fail(
+      'SOURCE_SELECTION_CHANGED',
+      'path',
+      'Selected source identity is invalid.',
+    );
+  }
+  if (
     !matchesDocumentKind(selected.documentKind, selected.sourceRef) ||
     (selected.documentKind === 'p2a-planning' && isExecutionSelectionPath(selected.sourceRef))
   ) {
@@ -840,11 +1132,14 @@ export async function readSelectedSourceBytes(
   if (
     !expected.isFile() ||
     expected.isSymbolicLink() ||
+    expected.nlink !== 1n ||
+    expected.size > BigInt(MAX_SELECTED_SOURCE_FILE_BYTES) ||
     canonical !== path ||
     !isContained(root, canonical) ||
     expectedIdentity.ctimeNs !== selected.identity.ctimeNs ||
     expectedIdentity.device !== selected.identity.device ||
     expectedIdentity.inode !== selected.identity.inode ||
+    expectedIdentity.linkCount !== selected.identity.linkCount ||
     expectedIdentity.size !== selected.identity.size ||
     Number(expected.size) !== selected.byteLength
   ) {

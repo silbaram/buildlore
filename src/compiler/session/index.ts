@@ -25,6 +25,7 @@ export {
   type SessionCitationAnchor,
   type SessionCompileApplyRequest,
   type SessionCompileApplyResultV1,
+  type SessionCompileApplyResultV2,
   type SessionCompileApproveRequest,
   type SessionCompileApproveResultV1,
   type SessionCompileCandidatesRequest,

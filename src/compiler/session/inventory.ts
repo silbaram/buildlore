@@ -21,12 +21,15 @@ const PAGE_DIRECTORIES = new Set([
   'queries',
   'verifications',
 ]);
-const NON_PAGE_DIRECTORIES = new Set(['graph', 'outputs']);
+// Authority-derived Markdown is intentionally excluded from session planning and link authority.
+const NON_PAGE_DIRECTORIES = new Set(['buildlore-hierarchy', 'graph', 'outputs']);
 
 export interface SessionKnowledgeInventory {
   readonly allowedLinkTargets: readonly SessionAllowedLinkTarget[];
+  readonly candidateInventoryDigest: SessionSha256Digest;
   readonly digest: SessionSha256Digest;
   readonly pendingSlugs: ReadonlySet<string>;
+  readonly wikiDigest: SessionSha256Digest;
 }
 
 async function listPendingCandidateFiles(
@@ -138,7 +141,14 @@ export async function readSessionKnowledgeInventory(
       targets.push(Object.freeze({ pageId: directory + '/' + slug, slug }));
     }
   }
+  if (entries.length > MAX_INVENTORY_ENTRIES) return denied(projectId);
+  entries.sort((left, right) => compareSessionText(left.path, right.path));
+  const wikiDigest = digestSessionValue({ entries, projectId });
   const pendingSlugs = new Set<string>();
+  const candidateEntries: Array<Readonly<{
+    readonly digest: SessionSha256Digest;
+    readonly path: string;
+  }>> = [];
   const compilerState = join(workspace, '.llmwiki');
   const candidates = join(compilerState, 'candidates');
   if (await confinedSessionDirectoryExists(compilerState, workspace, projectId) &&
@@ -155,7 +165,9 @@ export async function readSessionKnowledgeInventory(
         SESSION_COMPILE_LIMITS.maxSourceBytes,
         projectId,
       );
-      entries.push(Object.freeze({ digest: sessionSha256(body), path }));
+      const entry = Object.freeze({ digest: sessionSha256(body), path });
+      entries.push(entry);
+      candidateEntries.push(entry);
       let parsed: unknown;
       try {
         parsed = JSON.parse(body) as unknown;
@@ -171,13 +183,16 @@ export async function readSessionKnowledgeInventory(
   }
   targets.sort((left, right) => compareSessionText(left.pageId, right.pageId));
   entries.sort((left, right) => compareSessionText(left.path, right.path));
-  if (entries.length > MAX_INVENTORY_ENTRIES ||
+  candidateEntries.sort((left, right) => compareSessionText(left.path, right.path));
+  if (candidateEntries.length > MAX_INVENTORY_ENTRIES ||
       new Set(targets.map((target) => target.slug)).size !== targets.length) {
     return denied(projectId);
   }
   return Object.freeze({
     allowedLinkTargets: Object.freeze(targets),
+    candidateInventoryDigest: digestSessionValue({ entries: candidateEntries, projectId }),
     digest: digestSessionValue({ entries, projectId }),
     pendingSlugs: Object.freeze(pendingSlugs),
+    wikiDigest,
   });
 }

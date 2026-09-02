@@ -5,9 +5,11 @@ import { describe, expect, it } from 'vitest';
 import {
   createSourceDocument,
   MAX_SOURCE_BODY_CHARS,
+  parseSourceDescriptor,
   parseSourceDocument,
   renderSourceDocument,
   SourceDocumentError,
+  validatePortableSourceRef,
   validateSourceDocument,
 } from '../src/projector/index.js';
 
@@ -28,6 +30,19 @@ function fixture(body = '승인된 제품 명세입니다.'): ReturnType<typeof 
 }
 
 describe('SourceDocument', () => {
+  it('bounds portable source references by Unicode scalars and path segments', () => {
+    const maximumScalars = `docs/${'😀'.repeat(504)}.md`;
+    expect([...maximumScalars]).toHaveLength(512);
+    expect(validatePortableSourceRef(maximumScalars)).toBe(maximumScalars);
+    expect(() => validatePortableSourceRef(`docs/${'😀'.repeat(505)}.md`)).toThrow();
+
+    const maximumSegments = Array.from({ length: 64 }, (_, index) => `s${String(index)}`)
+      .join('/');
+    expect(validatePortableSourceRef(maximumSegments)).toBe(maximumSegments);
+    expect(() => validatePortableSourceRef(`${maximumSegments}/overflow`)).toThrow();
+    expect(() => validatePortableSourceRef('docs/e\u0301.md')).toThrow();
+  });
+
   it('renders fixed-order byte-identical Markdown and round-trips it', () => {
     const document = fixture();
     const contentHash = `sha256:${createHash('sha256').update(document.body).digest('hex')}`;
@@ -52,7 +67,7 @@ buildlore:
     expect(renderSourceDocument(parseSourceDocument(expected))).toBe(expected);
   });
 
-  it('normalizes line endings and applies the upstream UTF-16 truncation boundary', () => {
+  it('normalizes line endings and applies a Unicode-scalar truncation boundary', () => {
     const document = fixture(`${'가'.repeat(MAX_SOURCE_BODY_CHARS)}\r\n끝`);
     expect(document.truncated).toBe(true);
     expect(document.originalChars).toBe(MAX_SOURCE_BODY_CHARS + 2);
@@ -60,7 +75,7 @@ buildlore:
     expect(parseSourceDocument(renderSourceDocument(document))).toEqual(document);
   });
 
-  it('omits truncation metadata at exactly 100000 code units', () => {
+  it('omits truncation metadata at exactly 100000 Unicode scalar values', () => {
     const document = fixture('x'.repeat(MAX_SOURCE_BODY_CHARS));
     expect(document.truncated).toBeUndefined();
     expect(document.originalChars).toBeUndefined();
@@ -82,11 +97,55 @@ buildlore:
     })).toThrowError(SourceDocumentError);
   });
 
-  it('matches JavaScript slicing when truncation splits an astral character', () => {
+  it('keeps astral characters intact at the language-neutral truncation boundary', () => {
     const document = fixture(`${'x'.repeat(MAX_SOURCE_BODY_CHARS - 1)}😀Z`);
-    expect(document.originalChars).toBe(MAX_SOURCE_BODY_CHARS + 2);
+    expect(document.originalChars).toBe(MAX_SOURCE_BODY_CHARS + 1);
     expect(document.truncated).toBe(true);
-    expect(document.body).toBe(`${'x'.repeat(MAX_SOURCE_BODY_CHARS - 1)}�\n`);
+    expect(document.body).toBe(`${'x'.repeat(MAX_SOURCE_BODY_CHARS - 1)}😀\n`);
+  });
+
+  it('measures origin-map columns in Unicode scalar values', () => {
+    const source = 'buildlore+source:/https%3A%2F%2Fexample.test%2Falpha.git/alpha/text/emoji/docs%2Femoji.txt';
+    const descriptor = {
+      adapterId: 'buildlore.generic',
+      adapterVersion: 1,
+      contentHash: revision,
+      declarationId: 'emoji',
+      kind: 'text' as const,
+      mediaType: 'text/plain' as const,
+      projectId: 'alpha',
+      schemaVersion: 'buildlore.source-descriptor.v1' as const,
+      sourceRef: 'docs/emoji.txt',
+      sourceRevision: revision,
+      sourceUri: source,
+    };
+    const document = createSourceDocument({
+      body: '😀',
+      descriptor,
+      ingestedAt: '2026-08-30T00:00:00.000Z',
+      originMappings: [{
+        canonical: { endColumn: 2, endLine: 1, startColumn: 1, startLine: 1 },
+        origin: { endColumn: 2, endLine: 1, startColumn: 1, startLine: 1 },
+      }],
+      producer: 'buildlore',
+      projectId: 'alpha',
+      source,
+      sourceKind: 'text',
+      sourceRevision: revision,
+      sourceType: 'file',
+      title: 'emoji',
+    });
+    expect(document.buildlore.originMappings?.[0]?.canonical.endColumn).toBe(2);
+    expect(() => validateSourceDocument({
+      ...document,
+      buildlore: {
+        ...document.buildlore,
+        originMappings: [{
+          canonical: { endColumn: 3, endLine: 1, startColumn: 1, startLine: 1 },
+          origin: { endColumn: 3, endLine: 1, startColumn: 1, startLine: 1 },
+        }],
+      },
+    })).toThrowError(SourceDocumentError);
   });
 
   it('rejects duplicate YAML keys, aliases, invalid hashes, and unsafe bodies safely', () => {
@@ -177,5 +236,131 @@ buildlore:
     } catch (error) {
       expect(JSON.stringify(error)).not.toContain(sentinel);
     }
+  });
+
+  it('round-trips the registered v2 descriptor and bounded origin map', () => {
+    const source = 'buildlore+source:/https%3A%2F%2Fexample.test%2Falpha.git/alpha/code/tool/src%2Ftool.ts';
+    const document = createSourceDocument({
+      body: '```typescript\nexport const value = 1;\n```',
+      descriptor: {
+        adapterId: 'buildlore.generic',
+        adapterVersion: 1,
+        contentHash: revision,
+        declarationId: 'tool',
+        kind: 'code',
+        mediaType: 'text/x-source-code',
+        projectId: 'alpha',
+        schemaVersion: 'buildlore.source-descriptor.v1',
+        sourceRef: 'src/tool.ts',
+        sourceRevision: revision,
+        sourceUri: source,
+      },
+      ingestedAt: '2026-08-24T00:00:00.000Z',
+      originMappings: [{
+        canonical: { endColumn: 24, endLine: 2, startColumn: 1, startLine: 2 },
+        origin: { endColumn: 24, endLine: 1, startColumn: 1, startLine: 1 },
+      }],
+      producer: 'buildlore',
+      projectId: 'alpha',
+      source,
+      sourceKind: 'code',
+      sourceRevision: revision,
+      sourceType: 'file',
+      title: 'tool',
+    });
+    const rendered = renderSourceDocument(document);
+    expect(document.schemaVersion).toBe('buildlore.source.v2');
+    expect(parseSourceDocument(rendered)).toEqual(document);
+    expect(renderSourceDocument(parseSourceDocument(rendered))).toBe(rendered);
+    expect(() => parseSourceDescriptor({
+      ...document.buildlore.descriptor,
+      adapterVersion: 2,
+    })).toThrow();
+    for (const sourceRef of [
+      '.llmwiki/index.json',
+      'docs/.llmwiki/index.json',
+      'knowledge/projects/alpha.md',
+      'projects/alpha/wiki.md',
+      'sources/generated.md',
+      'wiki/generated.md',
+      'export/wiki.json',
+      'exports/wiki.json',
+      'docs/access-token/value.md',
+    ]) {
+      expect(() => parseSourceDescriptor({
+        ...document.buildlore.descriptor,
+        sourceRef,
+      })).toThrow();
+    }
+    expect(() => validateSourceDocument({
+      ...document,
+      buildlore: {
+        ...document.buildlore,
+        originMappings: [{
+          canonical: { endColumn: 4, endLine: 4, startColumn: 1, startLine: 2 },
+          origin: { endColumn: 4, endLine: 3, startColumn: 1, startLine: 1 },
+        }],
+      },
+    })).toThrowError(SourceDocumentError);
+  });
+
+  it('clips v2 origin mappings to the stored truncation boundary', () => {
+    const source = 'buildlore+source:/https%3A%2F%2Fexample.test%2Falpha.git/alpha/text/notes/docs%2Fnotes.txt';
+    const original = 'x'.repeat(MAX_SOURCE_BODY_CHARS + 25);
+    const document = createSourceDocument({
+      body: original,
+      descriptor: {
+        adapterId: 'buildlore.generic',
+        adapterVersion: 1,
+        contentHash: revision,
+        declarationId: 'notes',
+        kind: 'text',
+        mediaType: 'text/plain',
+        projectId: 'alpha',
+        schemaVersion: 'buildlore.source-descriptor.v1',
+        sourceRef: 'docs/notes.txt',
+        sourceRevision: revision,
+        sourceUri: source,
+      },
+      ingestedAt: '2026-08-24T00:00:00.000Z',
+      originMappings: [{
+        canonical: {
+          endColumn: original.length + 1,
+          endLine: 1,
+          startColumn: 1,
+          startLine: 1,
+        },
+        origin: {
+          endColumn: original.length + 1,
+          endLine: 1,
+          startColumn: 1,
+          startLine: 1,
+        },
+      }],
+      producer: 'buildlore',
+      projectId: 'alpha',
+      source,
+      sourceKind: 'text',
+      sourceRevision: revision,
+      sourceType: 'file',
+      title: 'notes',
+    });
+
+    expect(document.truncated).toBe(true);
+    expect(document.buildlore.originMappings).toEqual([{
+      canonical: {
+        endColumn: MAX_SOURCE_BODY_CHARS + 1,
+        endLine: 1,
+        startColumn: 1,
+        startLine: 1,
+      },
+      origin: {
+        endColumn: MAX_SOURCE_BODY_CHARS + 1,
+        endLine: 1,
+        startColumn: 1,
+        startLine: 1,
+      },
+    }]);
+    expect(parseSourceDocument(renderSourceDocument(document))).toEqual(document);
   });
 });

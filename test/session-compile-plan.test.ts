@@ -107,6 +107,31 @@ function source(idCharacter: string, sourceRef: string, body: string): SessionPl
   });
 }
 
+function numberedSource(index: number, body: string): SessionPlannedSource {
+  const identity = createHash('sha256').update(`session-source-${String(index)}`).digest('hex');
+  const sourceId = `source-${identity}`;
+  const contentDigest = sessionSha256(body);
+  const sourceRef = `docs/source-${String(index).padStart(3, '0')}.md`;
+  return Object.freeze({
+    citationAnchors: createSessionCitationAnchors({
+      originalBody: body,
+      sanitizedBody: body,
+      sourceId,
+      sourceRef,
+    }),
+    compilerSourceContentDigest: contentDigest,
+    compilerSourceId: `planning--${identity}.md`,
+    originalContentDigest: contentDigest,
+    revision: contentDigest,
+    sanitizedBody: body,
+    sanitizedContentDigest: contentDigest,
+    sourceId,
+    sourceKind: 'planning',
+    sourceRef,
+    title: `Session source ${String(index)}`,
+  });
+}
+
 describe('session compile deterministic plan', () => {
   it('anchors only unchanged original lines and preserves original line numbers', () => {
     const anchors = createSessionCitationAnchors({
@@ -180,6 +205,33 @@ describe('session compile deterministic plan', () => {
     });
   });
 
+  it('plans a 117-source repeated-heading corpus with a bounded sparse relation graph', () => {
+    const body = [
+      '# Overview',
+      'Project overview evidence.',
+      '# Architecture',
+      'Architecture boundary evidence.',
+      '# Workflow',
+      'Workflow evidence.',
+      '# Recovery',
+      'Recovery evidence.',
+    ].join('\n');
+    const sources = Array.from({ length: 117 }, (_value, index) =>
+      numberedSource(index, body));
+
+    const forward = createSessionTasksAndMerges(sources, 'default', 'alpha');
+    const reverse = createSessionTasksAndMerges([...sources].reverse(), 'default', 'alpha');
+
+    expect(reverse).toEqual(forward);
+    expect(forward.tasks).toHaveLength(468);
+    expect(forward.mergeCandidates.length).toBeGreaterThan(512);
+    expect(new Set(forward.mergeCandidates.map((candidate) => candidate.candidateId)).size)
+      .toBe(forward.mergeCandidates.length);
+    expect(forward.tasks.every((task) =>
+      task.mergeCandidateIds.length <= SESSION_COMPILE_LIMITS.maxRelationCandidatesPerTask))
+      .toBe(true);
+  });
+
   it('enforces cross-source two-token Jaccard threshold and deterministic tie ordering', () => {
     const accepted = createSessionTasksAndMerges([
       source('b', 'docs/accepted-left.md', '# Alpha Beta Gamma\nLeft.'),
@@ -250,7 +302,7 @@ describe('session compile deterministic plan', () => {
     ], 'default', 'alpha')).toThrowError(SessionCompileError);
   });
 
-  it('fails instead of truncating merge candidates at the public contract limit', () => {
+  it('preserves repeated-heading relations beyond the former global candidate limit', () => {
     const sources = Array.from({ length: 33 }, (_, index) => {
       const item = source('a', `docs/source-${String(index)}.md`, '# Shared Heading\nEvidence.');
       const sourceId = `source-${index.toString(16).padStart(64, '0')}`;
@@ -266,8 +318,9 @@ describe('session compile deterministic plan', () => {
       });
     });
 
-    expect(() => createSessionTasksAndMerges(sources, 'default', 'alpha'))
-      .toThrowError(SessionCompileError);
+    const planned = createSessionTasksAndMerges(sources, 'default', 'alpha');
+    expect(planned.mergeCandidates).toHaveLength(528);
+    expect(planned.tasks.every((task) => task.mergeCandidateIds.length === 32)).toBe(true);
   });
 
   it('does not hide a real heading after an indented code-literal fence marker', () => {
@@ -433,7 +486,7 @@ describe('session compile deterministic plan', () => {
         checkout: checkout.checkout,
         inventory: selected,
         loadedManifest,
-        markdownIngestedAt: '1970-01-01T00:00:00.000Z',
+        ingestedAt: '1970-01-01T00:00:00.000Z',
       });
       const candidate = collected.candidates[0];
       if (candidate === undefined) throw new Error('missing collection fixture');
@@ -796,7 +849,7 @@ describe('session compile deterministic plan', () => {
         checkout: checkout.checkout,
         inventory: unsafeSelection,
         loadedManifest: unsafeManifest,
-        markdownIngestedAt: '1970-01-01T00:00:00.000Z',
+        ingestedAt: '1970-01-01T00:00:00.000Z',
       });
       const unsafeCandidate = unsafeCollection.candidates[0];
       if (unsafeCandidate === undefined) throw new Error('missing unsafe runtime fixture');

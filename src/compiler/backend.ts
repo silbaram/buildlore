@@ -7,11 +7,22 @@ import {
 import { isAbsolute, relative } from 'node:path';
 
 import { CompilerBackendError } from './errors.js';
-import type { CompilerBackend, CompilerCorpusBackend, CompilerRequest } from './types.js';
+import { normalizeLlmWikiCompilerExport } from './export-normalizer.js';
+import type {
+  CompilerBackend,
+  CompilerCorpusBackend,
+  CompilerRequest,
+  CompilerWikiBackend,
+} from './types.js';
 
 interface CompilerSdk {
   compile(options?: { readonly review?: boolean }): Promise<unknown>;
   exportJson?(options?: { readonly projectId?: string }): Promise<unknown>;
+  exportOkf?(options?: { readonly out?: string }): Promise<unknown>;
+  getPage?(page: {
+    readonly pageDirectory: 'concepts' | 'queries';
+    readonly slug: string;
+  }): Promise<unknown>;
   getContextPack(options: {
     readonly budget?: number;
     readonly depth?: number;
@@ -20,6 +31,15 @@ interface CompilerSdk {
     readonly topPages?: number;
   }): Promise<unknown>;
   lint(): Promise<unknown>;
+  listPages?(options?: {
+    readonly cursor?: string;
+    readonly includeBody?: boolean;
+    readonly includeArchived?: boolean;
+    readonly includeOrphaned?: boolean;
+    readonly limit?: number;
+    readonly problemCursor?: string;
+    readonly profileCursor?: string;
+  }): Promise<unknown>;
   query(question: string, options: { readonly debug: false; readonly save: false }): Promise<unknown>;
   runEval(options: {
     readonly mode: 'fast' | 'full';
@@ -140,7 +160,7 @@ function normalizeLintPaths(result: unknown, workspaceRoot: string): unknown {
 
 export function createLlmWikiCompilerBackend(
   wikiFactory: WikiFactory = defaultWikiFactory,
-): CompilerBackend & CompilerCorpusBackend {
+): CompilerBackend & CompilerCorpusBackend & CompilerWikiBackend {
   return {
     async run(workspaceRoot, request) {
       try {
@@ -162,11 +182,45 @@ export function createLlmWikiCompilerBackend(
         if (wiki.exportJson === undefined) {
           throw new CompilerBackendError('failed');
         }
-        return await wiki.exportJson({ projectId });
+        return normalizeLlmWikiCompilerExport(await wiki.exportJson({ projectId }));
       } catch (error) {
         if (error instanceof CompilerBackendError) {
           throw error;
         }
+        throw classifyBackendError(error);
+      }
+    },
+    async exportProjectOkf(workspaceRoot, outputRoot) {
+      try {
+        const wiki = wikiFactory(workspaceRoot);
+        if (wiki.exportOkf === undefined) throw new CompilerBackendError('failed');
+        return await wiki.exportOkf({ out: outputRoot });
+      } catch (error) {
+        if (error instanceof CompilerBackendError) throw error;
+        throw classifyBackendError(error);
+      }
+    },
+    async getProjectPage(workspaceRoot, page) {
+      try {
+        const wiki = wikiFactory(workspaceRoot);
+        if (wiki.getPage === undefined) throw new CompilerBackendError('failed');
+        return await wiki.getPage(page);
+      } catch (error) {
+        if (error instanceof CompilerBackendError) throw error;
+        throw classifyBackendError(error);
+      }
+    },
+    async listProjectPages(workspaceRoot, options) {
+      try {
+        const wiki = wikiFactory(workspaceRoot);
+        if (wiki.listPages === undefined) throw new CompilerBackendError('failed');
+        return await wiki.listPages({
+          ...options,
+          includeArchived: false,
+          includeOrphaned: false,
+        });
+      } catch (error) {
+        if (error instanceof CompilerBackendError) throw error;
         throw classifyBackendError(error);
       }
     },

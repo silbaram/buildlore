@@ -6,6 +6,49 @@ export {
 } from './error-map.js';
 export { HELP_TEXT } from './help.js';
 export {
+  DEFAULT_HIERARCHICAL_WIKI_ACTIVATION_INPUT,
+  HIERARCHICAL_WIKI_ACTIVATION_INPUT_SCHEMA_VERSION,
+  HIERARCHICAL_WIKI_ACTIVATION_RESULT_SCHEMA_VERSION,
+  HierarchicalWikiActivationError,
+  createHierarchicalWikiActivationService,
+  type HierarchicalWikiActivationErrorCode,
+  type HierarchicalWikiActivationPort,
+  type HierarchicalWikiActivationResultV2,
+  type HierarchicalWikiLiveSnapshotVerifierPort,
+} from './hierarchical-activation.js';
+export {
+  HIERARCHICAL_WORKFLOW_APPROVE_RESULT_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_CHILD_REVIEW_INPUT_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_CHILD_REVIEW_RESULT_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_CHILD_REVIEW_VIEW_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_FINALIZE_INPUT_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_FINALIZE_RESULT_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_PURPOSE_INPUT_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_REVIEW_VIEW_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_START_RESULT_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_STATUS_SCHEMA_VERSION,
+  HIERARCHICAL_WORKFLOW_SUBMIT_RESULT_SCHEMA_VERSION,
+  HierarchicalWorkflowError,
+  createHierarchicalWorkflowService,
+  type CreateHierarchicalWorkflowServiceOptions,
+  type HierarchicalWorkflowApproveResultV1,
+  type HierarchicalWorkflowChildReviewInputV1,
+  type HierarchicalWorkflowChildReviewResultV1,
+  type HierarchicalWorkflowChildReviewViewV1,
+  type HierarchicalWorkflowErrorCode,
+  type HierarchicalWorkflowFinalizeInputV1,
+  type HierarchicalWorkflowFinalizeResultV1,
+  type HierarchicalWorkflowIntegratedDecisionInputV1,
+  type HierarchicalWorkflowNextActionV1,
+  type HierarchicalWorkflowPurposeInputV1,
+  type HierarchicalWorkflowRelationDecisionInputV1,
+  type HierarchicalWorkflowReviewViewV1,
+  type HierarchicalWorkflowServicePort,
+  type HierarchicalWorkflowStartResultV1,
+  type HierarchicalWorkflowStatusV1,
+  type HierarchicalWorkflowSubmitResultV1,
+} from './hierarchical-workflow.js';
+export {
   CliUsageError,
   inferCliCommand,
   parseCliArguments,
@@ -21,6 +64,7 @@ export {
   type CliIo,
   type CliPublicationLineage,
   type CliPublicationLineagePort,
+  type CliQuickstartPort,
   type CliRuntime,
 } from './run-cli.js';
 export {

@@ -13,6 +13,7 @@ import { sessionSha256 } from '../src/compiler/session/canonical.js';
 import {
   createSessionReviewCandidate,
   createSessionReviewStore,
+  parseSessionReviewCandidate,
   type SessionReviewStore,
 } from '../src/compiler/session/review-store.js';
 import {
@@ -242,6 +243,44 @@ afterEach(async () => {
 });
 
 describe('session review service', () => {
+  it('persists and round-trips high-entropy structural page identity through the typed candidate boundary', async () => {
+    const workspace = await mkdtemp(join(process.cwd(), '.test-tmp-session-review-entropy-'));
+    temporaryRoots.push(workspace);
+    const validated = batch();
+    const page = validated.pages[0];
+    if (page === undefined) throw new Error('missing test page');
+    const slug = 'q7w6e5r4t3y2u1i0o9p8-asdfghjklzxcvbnm1234567890';
+    const highEntropyPage = Object.freeze({
+      ...page,
+      proposal: Object.freeze({
+        ...page.proposal,
+        pageId: `concepts/${slug}`,
+        slug,
+      }),
+    });
+    const highEntropyBatch = Object.freeze({
+      ...validated,
+      pages: Object.freeze([highEntropyPage]),
+    });
+    const candidate = createSessionReviewCandidate({
+      batch: highEntropyBatch,
+      page: highEntropyPage,
+      profileMode: 'default',
+      renderedPage: renderSessionOkfPage(highEntropyPage),
+    });
+
+    expect(parseSessionReviewCandidate(
+      JSON.parse(JSON.stringify(candidate)) as unknown,
+      'alpha',
+    )).toEqual(candidate);
+    const store = createSessionReviewStore(workspace, 'alpha');
+    await store.stage([candidate]);
+    await expect(store.list()).resolves.toEqual([{
+      candidate,
+      lifecycle: 'pending',
+    }]);
+  });
+
   it('creates a deterministic candidate once under concurrent staging', async () => {
     const workspace = await mkdtemp(join(process.cwd(), '.test-tmp-session-review-race-'));
     temporaryRoots.push(workspace);

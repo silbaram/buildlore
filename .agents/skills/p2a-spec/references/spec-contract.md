@@ -47,7 +47,7 @@ For `full + current_iteration`, invoke `p2a-visual-experience` and keep Gate B d
 - `edge_cases`
 - `verification`
 
-The implementation plan conforms to the approved constitution. Architecture and stack are durable constraints; style guides implementation. Validator prohibitions are hard failures, while review and advisory prohibitions remain judgment guidance. A required constitution change returns to focused Gate ② amendment rather than silently overriding it.
+When an approved constitution exists, the implementation plan conforms to it. Validator prohibitions are hard failures, while review and advisory prohibitions remain judgment guidance. Without one, repository architecture, stack, and style conventions are advisory inputs. A material hard prohibition or difficult-to-reverse project-shape choice returns to focused Gate ② approval rather than being silently assumed.
 
 ## Clarifying-question disposition
 
@@ -65,7 +65,7 @@ Route every answered high-impact decision to the exact `product.*` or `implement
 ## Approval
 
 - Gate A must be `ready_for_spec` with a valid approval audit.
-- A new project requires an approved constitution; only legacy projects retain the no-constitution fallback.
+- An approved constitution is required only when Gate A contains a material hard prohibition or difficult-to-reverse project-shape choice; otherwise its absence is valid.
 - Keep `approval: draft` until every `CQ-n` is disposed, all promoted decisions are resolved, `open_decisions` is empty, and required visual approval exists.
 - The authoring pass never fabricates approval fields. After explicit approval, the harness owner records the exact quote through `p2a decide`.
 - Do not advance to task breakdown while the spec is draft.

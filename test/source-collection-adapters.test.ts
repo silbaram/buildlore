@@ -1,23 +1,47 @@
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
+import { addProject } from '../src/knowledge/index.js';
 import {
+  bindLocalProject,
   SourceCheckoutHandle,
   sourceRepositoryDigestFor,
 } from '../src/knowledge/local-project-registry.js';
-import { createSourceCollectionAdapter } from '../src/projector/source-adapters.js';
-import type { P2aArtifactAdapter } from '../src/projector/p2a-artifacts.js';
+import { createProjectSessionCompiler } from '../src/compiler/index.js';
+import {
+  createBuildLoreLifecycleProfile,
+  createProjectLifecycleProfile,
+  renderLifecycleProfile,
+} from '../src/profile/index.js';
+import {
+  createSourceCollectionAdapter,
+  genericSourceAdapter,
+} from '../src/projector/source-adapters.js';
+import {
+  createP2aArtifactAdapter,
+  type P2aArtifactAdapter,
+} from '../src/projector/p2a-artifacts.js';
+import {
+  createP2aPlanningProjector,
+  createProjectSyncService,
+} from '../src/projector/index.js';
 import {
   parseSourceCollectionManifest,
+  parseSourceCollectionManifestV2,
   readSourceCollectionManifest,
   selectDeclaredSourceFiles,
   SOURCE_COLLECTION_MANIFEST_SCHEMA_VERSION,
+  SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
 } from '../src/projector/source-manifest.js';
+import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
+const execFileAsync = promisify(execFile);
 const temporaryRoots: string[] = [];
 const repository = 'https://example.test/alpha.git';
 
@@ -27,6 +51,40 @@ function sha256(value: string): string {
 
 function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+async function git(cwd: string, args: readonly string[]): Promise<void> {
+  await execFileAsync('git', [...args], {
+    cwd,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' },
+  });
+}
+
+async function prepareP2aKnowledgeHub(
+  root: string,
+  sourceRoot: string,
+): Promise<Readonly<{ readonly hubRoot: string; readonly knowledgeRoot: string }>> {
+  const hubRoot = join(root, `hub-${createHash('sha256').update(root).digest('hex').slice(0, 8)}`);
+  const knowledgeRoot = join(hubRoot, 'knowledge');
+  await mkdir(knowledgeRoot, { recursive: true });
+  await addProject(knowledgeRoot, {
+    displayName: 'Alpha',
+    projectId: 'alpha',
+    sourceRepository: repository,
+  });
+  await bindLocalProject(hubRoot, {
+    projectId: 'alpha',
+    sourceRepository: repository,
+    sourceRoot,
+  });
+  await writeSecurityPolicy(knowledgeRoot, 'alpha', { capabilities: ['compile'] });
+  await writeFile(
+    join(knowledgeRoot, 'projects/alpha/profile.json'),
+    renderLifecycleProfile(createBuildLoreLifecycleProfile('en')),
+  );
+  const profiles = createProjectLifecycleProfile({ knowledgeRoot });
+  await profiles.apply(await profiles.plan('alpha'));
+  return Object.freeze({ hubRoot, knowledgeRoot });
 }
 
 async function fixture(): Promise<{
@@ -176,6 +234,11 @@ afterEach(async () => {
 
 describe('selected source collection adapters', () => {
   it('creates deterministic canonical Markdown candidates with portable metadata', async () => {
+    expect(genericSourceAdapter().registration.limits).toEqual({
+      maxMetadataBytes: 16_384,
+      maxMetadataDepth: 8,
+      maxMetadataKeys: 64,
+    });
     const current = await fixture();
     await mkdir(join(current.sourceRoot, 'docs'), { recursive: true });
     await writeFile(
@@ -192,7 +255,7 @@ describe('selected source collection adapters', () => {
     const input = {
       checkout: current.checkout,
       ...selected,
-      markdownIngestedAt: '2026-08-24T00:00:00.000Z',
+      ingestedAt: '2026-08-24T00:00:00.000Z',
     } as const;
     const first = await adapter.collect(input);
     const second = await adapter.collect(input);
@@ -234,7 +297,7 @@ describe('selected source collection adapters', () => {
       checkout: current.checkout,
       ...selected,
     });
-    expect(result.candidates.map((candidate) => candidate.planningDocumentKind)).toEqual([
+    expect(result.candidates.map((candidate) => candidate.adapterDocumentKind)).toEqual([
       'intake',
       'implementation-plan',
       'product-spec',
@@ -248,6 +311,99 @@ describe('selected source collection adapters', () => {
       join(current.sourceRoot, '.plan2agent/runs/attempt/p2a.run.json'),
       'utf8',
     )).toBe('{changed');
+  });
+
+  it('[GLW-V-02][GLW-V-05] preserves legacy P2A source and citation identities via the registry', async () => {
+    const current = await fixture();
+    await writePlanningFixture(current.sourceRoot);
+    await rm(join(current.sourceRoot, '.plan2agent/runs'), { force: true, recursive: true });
+    const selected = await select(current.sourceRoot, current.checkout, [{
+      documentKind: 'p2a-planning',
+      id: 'planning',
+      path: '.plan2agent',
+      pathType: 'directory',
+      recursive: true,
+    }]);
+    await git(current.sourceRoot, ['init', '--initial-branch=main']);
+    await git(current.sourceRoot, ['config', 'user.email', 'buildlore@example.invalid']);
+    await git(current.sourceRoot, ['config', 'user.name', 'BuildLore Test']);
+    await git(current.sourceRoot, ['add', '.']);
+    await git(current.sourceRoot, ['commit', '-m', 'seed P2A compatibility corpus']);
+
+    const legacy = await prepareP2aKnowledgeHub(join(current.root, 'legacy'), current.sourceRoot);
+    const registered = await prepareP2aKnowledgeHub(
+      join(current.root, 'registered'),
+      current.sourceRoot,
+    );
+    const artifactRoot = join(current.sourceRoot, '.plan2agent');
+    const legacyProjector = createP2aPlanningProjector();
+    await legacyProjector.apply(await legacyProjector.plan({
+      artifactRoot,
+      knowledgeRoot: legacy.knowledgeRoot,
+      projectId: 'alpha',
+    }));
+    const synchronized = await createProjectSyncService().sync({
+      dryRun: false,
+      hubRoot: registered.hubRoot,
+      projectId: 'alpha',
+    });
+    expect(synchronized.collection?.counts.include).toBe(3);
+    expect(synchronized.writes.every((write) => write.sourceKind === 'planning')).toBe(true);
+
+    const legacyAdapter = await createP2aArtifactAdapter().read({
+      artifactRoot,
+      projectId: 'alpha',
+    }, repository, {
+      selectedFiles: selected.inventory.files.map((file) =>
+        file.sourceRef.slice('.plan2agent/'.length)),
+    });
+    const registeredAdapter = await createSourceCollectionAdapter().collect({
+      checkout: current.checkout,
+      ...selected,
+    });
+    const sortCandidates = <T extends { readonly documentKind: string }>(
+      candidates: readonly T[],
+    ): readonly T[] => [...candidates].sort((left, right) =>
+      left.documentKind < right.documentKind ? -1 : left.documentKind > right.documentKind ? 1 : 0);
+    expect(sortCandidates(registeredAdapter.candidates.map((candidate) => ({
+      body: candidate.body,
+      documentKind: candidate.adapterDocumentKind ?? 'missing',
+      ingestedAt: candidate.ingestedAt,
+      sourceRevision: candidate.sourceRevision,
+      sourceUri: candidate.sourceUri,
+      target: candidate.target,
+      title: candidate.title,
+    })))).toEqual(sortCandidates(
+      legacyAdapter.candidates.map((candidate) => ({
+        body: candidate.body,
+        documentKind: candidate.documentKind,
+        ingestedAt: candidate.ingestedAt,
+        sourceRevision: candidate.sourceRevision,
+        sourceUri: candidate.sourceUri,
+        target: candidate.target,
+        title: candidate.title,
+      })),
+    ));
+
+    const legacyPlan = await createProjectSessionCompiler({
+      hubRoot: legacy.hubRoot,
+      knowledgeRoot: legacy.knowledgeRoot,
+    }).plan({ projectId: 'alpha' });
+    const registeredPlan = await createProjectSessionCompiler({
+      hubRoot: registered.hubRoot,
+      knowledgeRoot: registered.knowledgeRoot,
+    }).plan({ projectId: 'alpha' });
+    const compatibilityProjection = (plan: typeof legacyPlan): string => serializeCanonicalJson(
+      plan.sources.map((source) => ({
+        citationAnchors: source.citationAnchors,
+        compilerSourceId: source.compilerSourceId,
+        revision: source.revision,
+        sourceId: source.sourceId,
+        sourceKind: source.sourceKind,
+        sourceRef: source.sourceRef,
+      })),
+    );
+    expect(compatibilityProjection(registeredPlan)).toBe(compatibilityProjection(legacyPlan));
   });
 
   it('rejects duplicate selected identities before producing candidates', async () => {
@@ -270,8 +426,32 @@ describe('selected source collection adapters', () => {
         files: [...selected.inventory.files, only],
       },
       loadedManifest: selected.loadedManifest,
-      markdownIngestedAt: '2026-08-24T00:00:00.000Z',
+      ingestedAt: '2026-08-24T00:00:00.000Z',
     })).rejects.toMatchObject({ code: 'PROJECTION_SOURCE_COLLISION' });
+  });
+
+  it('rejects selected adapter fields that do not match their declaration', async () => {
+    const current = await fixture();
+    await mkdir(join(current.sourceRoot, 'docs'), { recursive: true });
+    await writeFile(join(current.sourceRoot, 'docs/guide.md'), '# Guide\n');
+    const selected = await select(current.sourceRoot, current.checkout, [{
+      documentKind: 'markdown',
+      id: 'docs',
+      path: 'docs/guide.md',
+      pathType: 'file',
+    }]);
+    const only = selected.inventory.files[0];
+    if (only === undefined) throw new Error('fixture selection is empty');
+
+    await expect(createSourceCollectionAdapter().collect({
+      checkout: current.checkout,
+      inventory: {
+        ...selected.inventory,
+        files: [{ ...only, kind: 'text', mediaType: 'text/plain' }],
+      },
+      loadedManifest: selected.loadedManifest,
+      ingestedAt: '2026-08-24T00:00:00.000Z',
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
   });
 
   it('rejects duplicate target identities returned by producer adapters', async () => {
@@ -352,5 +532,74 @@ describe('selected source collection adapters', () => {
       checkout: current.checkout,
       ...selected,
     })).rejects.toMatchObject({ code: 'PROJECTION_SOURCE_COLLISION' });
+  });
+
+  it('collects registered text and code without the optional P2A adapter', async () => {
+    const current = await fixture();
+    await mkdir(join(current.sourceRoot, 'portable'));
+    await Promise.all([
+      writeFile(join(current.sourceRoot, 'portable/readme.txt'), 'portable text\r\nsecond line\r\n'),
+      writeFile(join(current.sourceRoot, 'portable/tool.ts'), 'const fence = "```";\r\n'),
+    ]);
+    const manifest = parseSourceCollectionManifestV2({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository: repository,
+      sources: [
+        {
+          adapterId: 'buildlore.generic',
+          adapterVersion: 1,
+          id: 'code',
+          kind: 'code',
+          path: 'portable/tool.ts',
+          pathType: 'file',
+        },
+        {
+          adapterId: 'buildlore.generic',
+          adapterVersion: 1,
+          id: 'text',
+          kind: 'text',
+          path: 'portable/readme.txt',
+          pathType: 'file',
+        },
+      ],
+    });
+    await writeFile(
+      join(current.sourceRoot, '.buildlore/sources.json'),
+      serializeCanonicalJson(manifest),
+    );
+    const loadedManifest = await readSourceCollectionManifest(current.checkout, 'alpha');
+    const inventory = await selectDeclaredSourceFiles(current.checkout, loadedManifest);
+    const result = await createSourceCollectionAdapter({ includeP2a: false }).collect({
+      checkout: current.checkout,
+      inventory,
+      loadedManifest,
+      ingestedAt: '2026-08-24T00:00:00.000Z',
+    });
+    expect(result.candidates.map((candidate) => candidate.sourceKind)).toEqual(['code', 'text']);
+    const code = result.candidates[0];
+    expect(code?.body).toBe('````typescript\nconst fence = "```";\n````');
+    expect(code?.canonicalDocument.schemaVersion).toBe('buildlore.source.v2');
+    expect(code?.rangeMappings).toEqual([{
+      canonical: { endColumn: 21, endLine: 2, startColumn: 1, startLine: 2 },
+      origin: { endColumn: 21, endLine: 1, startColumn: 1, startLine: 1 },
+    }]);
+    expect(JSON.stringify(result)).not.toContain(current.sourceRoot);
+  });
+
+  it('rejects P2A declarations when the optional adapter is disabled', async () => {
+    const current = await fixture();
+    await writePlanningFixture(current.sourceRoot);
+    const selected = await select(current.sourceRoot, current.checkout, [{
+      documentKind: 'p2a-planning',
+      id: 'planning',
+      path: '.plan2agent',
+      pathType: 'directory',
+      recursive: true,
+    }]);
+    await expect(createSourceCollectionAdapter({ includeP2a: false }).collect({
+      checkout: current.checkout,
+      ...selected,
+    })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
   });
 });

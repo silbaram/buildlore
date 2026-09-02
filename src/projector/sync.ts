@@ -104,7 +104,7 @@ export interface ProjectSyncPlanEntrySummary {
   readonly decision: 'blocked' | 'error' | 'exclude' | 'include' | 'quarantine';
   readonly reasonCode: string;
   readonly security?: SanitizationReport;
-  readonly sourceKind: 'execution' | 'markdown' | 'planning';
+  readonly sourceKind: 'code' | 'execution' | 'markdown' | 'planning' | 'text';
   readonly sourceRef: string | null;
   readonly sourceRevision: `sha256:${string}` | null;
   readonly target: string | null;
@@ -118,7 +118,7 @@ export interface ProjectSyncPlanSummary {
 }
 
 export interface ProjectSyncWriteSummary {
-  readonly sourceKind: 'execution' | 'markdown' | 'planning';
+  readonly sourceKind: 'code' | 'execution' | 'markdown' | 'planning' | 'text';
   readonly sourceRevision: `sha256:${string}`;
   readonly target: string;
   readonly writeStatus: 'create' | 'unchanged' | 'update';
@@ -620,6 +620,7 @@ export function createProjectSyncService(
     async sync(input): Promise<ProjectSyncSummary> {
       if ('hubRoot' in input) {
         return runHubProjectSync(input, {
+          executionProjector,
           failure: {
             fail: (code, phase, failureOptions = {}) =>
               fail(code, phase, failureOptions),

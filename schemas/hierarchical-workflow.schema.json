@@ -1,0 +1,585 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/hierarchical-workflow.schema.json",
+  "title": "BuildLore Restart-safe Hierarchical Wiki Workflow Contracts v1",
+  "oneOf": [
+    { "$ref": "#/$defs/purposeInput" },
+    { "$ref": "#/$defs/childReviewInput" },
+    { "$ref": "#/$defs/finalizeInput" },
+    { "$ref": "#/$defs/runRecord" },
+    { "$ref": "#/$defs/status" },
+    { "$ref": "#/$defs/startResult" },
+    { "$ref": "#/$defs/submitResult" },
+    { "$ref": "#/$defs/childReviewResult" },
+    { "$ref": "#/$defs/childReviewView" },
+    { "$ref": "#/$defs/reviewView" },
+    { "$ref": "#/$defs/finalizeResult" },
+    { "$ref": "#/$defs/approveResult" }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "projectId": { "$ref": "hierarchical-corpus.schema.json#/$defs/projectId" },
+    "runId": { "type": "string", "pattern": "^run-[a-f0-9]{64}$" },
+    "pageId": { "type": "string", "pattern": "^page-[a-f0-9]{64}$" },
+    "relationId": { "type": "string", "pattern": "^relation-[a-f0-9]{64}$" },
+    "reasonCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+    },
+    "reasonCodes": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "x-buildlore-canonicalOrder": "lexicographic-ascending",
+      "items": { "$ref": "#/$defs/reasonCode" }
+    },
+    "purposeInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "audience", "goals", "keyQuestions",
+        "scopeHints", "excludedTopics", "outputLanguage", "requestedPageRoles"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-purpose-input.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "audience": {
+          "allOf": [
+            { "$ref": "hierarchical-corpus.schema.json#/$defs/purposeTextList" },
+            { "minItems": 1 }
+          ]
+        },
+        "goals": {
+          "allOf": [
+            { "$ref": "hierarchical-corpus.schema.json#/$defs/purposeTextList" },
+            { "minItems": 1 }
+          ]
+        },
+        "keyQuestions": {
+          "allOf": [
+            { "$ref": "hierarchical-corpus.schema.json#/$defs/purposeTextList" },
+            { "minItems": 1 }
+          ]
+        },
+        "scopeHints": { "$ref": "hierarchical-corpus.schema.json#/$defs/purposeTextList" },
+        "excludedTopics": { "$ref": "hierarchical-corpus.schema.json#/$defs/purposeTextList" },
+        "outputLanguage": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 35,
+          "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+        },
+        "requestedPageRoles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "hierarchical-corpus.schema.json#/$defs/portableIdentifier" }
+        }
+      },
+      "x-buildlore-maxUtf8Bytes": 262144
+    },
+    "childReviewInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "pageId", "reviewViewDigest",
+        "decision", "reasonCodes"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-child-review-input.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "reviewViewDigest": { "$ref": "#/$defs/digest" },
+        "decision": { "enum": ["accepted", "rejected"] },
+        "reasonCodes": { "$ref": "#/$defs/reasonCodes" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "decision": { "const": "accepted" } } },
+          "then": { "properties": { "reasonCodes": { "maxItems": 0 } } },
+          "else": { "properties": { "reasonCodes": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "integratedDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "pageId", "reasonCodes"],
+      "properties": {
+        "decision": { "enum": ["accepted", "rejected"] },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "reasonCodes": { "$ref": "#/$defs/reasonCodes" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "decision": { "const": "accepted" } } },
+          "then": { "properties": { "reasonCodes": { "maxItems": 0 } } },
+          "else": { "properties": { "reasonCodes": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "relationDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "relationId"],
+      "properties": {
+        "decision": { "enum": ["accepted", "rejected"] },
+        "relationId": { "$ref": "#/$defs/relationId" }
+      }
+    },
+    "finalizeInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "reviewDigest", "surfaceDigest",
+        "candidateDecisions", "relationDecisions"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-finalize-input.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "reviewDigest": { "$ref": "#/$defs/digest" },
+        "surfaceDigest": { "$ref": "#/$defs/digest" },
+        "candidateDecisions": {
+          "type": "array",
+          "maxItems": 97,
+          "uniqueItems": true,
+          "x-buildlore-canonicalOrder": "pageId-ascending",
+          "items": { "$ref": "#/$defs/integratedDecision" }
+        },
+        "relationDecisions": {
+          "type": "array",
+          "maxItems": 131072,
+          "uniqueItems": true,
+          "x-buildlore-canonicalOrder": "relationId-ascending",
+          "items": { "$ref": "#/$defs/relationDecision" }
+        }
+      }
+    },
+    "storedSubmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expectedExchangeDigest", "generationOrder", "pageId", "proposalDigest",
+        "receiptDigest", "submission"
+      ],
+      "properties": {
+        "expectedExchangeDigest": { "$ref": "#/$defs/digest" },
+        "generationOrder": { "type": "integer", "minimum": 0, "maximum": 96 },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "receiptDigest": { "$ref": "#/$defs/digest" },
+        "submission": {
+          "$ref": "hierarchical-current-session.schema.json#/$defs/proposalSubmission"
+        }
+      }
+    },
+    "storedChildDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision", "generationOrder", "pageId", "reasonCodes", "reviewDigest",
+        "reviewViewDigest"
+      ],
+      "properties": {
+        "decision": { "enum": ["accepted", "rejected"] },
+        "generationOrder": { "type": "integer", "minimum": 0, "maximum": 95 },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "reasonCodes": { "$ref": "#/$defs/reasonCodes" },
+        "reviewDigest": { "$ref": "#/$defs/digest" },
+        "reviewViewDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "storedIntegratedDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "pageId", "reasonCodes", "reviewDigest"],
+      "properties": {
+        "decision": { "enum": ["accepted", "rejected"] },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "reasonCodes": { "$ref": "#/$defs/reasonCodes" },
+        "reviewDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "storedRelationDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "relationId", "reviewDigest"],
+      "properties": {
+        "decision": { "enum": ["accepted", "rejected"] },
+        "relationId": { "$ref": "#/$defs/relationId" },
+        "reviewDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "startDigests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baselineGenerationDigest", "graphDigest", "outlineDigest", "planDigest",
+        "planningInventoryDigest", "sanitizerPolicyDigest", "snapshotDigest"
+      ],
+      "properties": {
+        "baselineGenerationDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "graphDigest": { "$ref": "#/$defs/digest" },
+        "outlineDigest": { "$ref": "#/$defs/digest" },
+        "planDigest": { "$ref": "#/$defs/digest" },
+        "planningInventoryDigest": { "$ref": "#/$defs/digest" },
+        "sanitizerPolicyDigest": { "$ref": "#/$defs/digest" },
+        "snapshotDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "rejection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reasonCodes", "reviewDigest", "surfaceDigest"],
+      "properties": {
+        "kind": { "enum": ["child-review-rejected", "hard-quality-failed"] },
+        "reasonCodes": { "$ref": "#/$defs/reasonCodes" },
+        "reviewDigest": { "$ref": "#/$defs/digest" },
+        "surfaceDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        }
+      }
+    },
+    "approvalDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activationBundleDigest", "approvalDigest", "explicitConfirmation"],
+      "properties": {
+        "activationBundleDigest": { "$ref": "#/$defs/digest" },
+        "approvalDigest": { "$ref": "#/$defs/digest" },
+        "explicitConfirmation": { "const": true }
+      }
+    },
+    "runRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "revision", "phase", "purpose",
+        "baselineAuthorityDigest", "baselineState", "baselineProposals", "startDigests",
+        "submissions", "childDecisions", "integratedDecisions", "relationDecisions",
+        "rejection", "approvalDecision", "pendingExchangeDigest",
+        "pendingChildReviewDigest", "pendingReviewDigest", "pendingLedgerDigest",
+        "recordDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-run-record.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "phase": {
+          "enum": [
+            "awaiting-proposal", "awaiting-child-review", "review-ready", "finalized",
+            "rejected", "approved"
+          ]
+        },
+        "purpose": { "$ref": "hierarchical-corpus.schema.json#/$defs/compilationPurpose" },
+        "baselineAuthorityDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "baselineState": {
+          "oneOf": [
+            { "$ref": "hierarchical-corpus.schema.json#/$defs/authoritativeWikiState" },
+            { "type": "null" }
+          ]
+        },
+        "baselineProposals": {
+          "type": "array",
+          "maxItems": 97,
+          "uniqueItems": true,
+          "x-buildlore-canonicalOrder": "pageId-ascending",
+          "items": { "$ref": "hierarchical-corpus.schema.json#/$defs/hierarchicalWikiProposal" }
+        },
+        "startDigests": { "$ref": "#/$defs/startDigests" },
+        "submissions": {
+          "type": "array",
+          "maxItems": 97,
+          "x-buildlore-canonicalOrder": "generationOrder-ascending-contiguous",
+          "items": { "$ref": "#/$defs/storedSubmission" }
+        },
+        "childDecisions": {
+          "type": "array",
+          "maxItems": 96,
+          "x-buildlore-canonicalOrder": "generationOrder-ascending",
+          "items": { "$ref": "#/$defs/storedChildDecision" }
+        },
+        "integratedDecisions": {
+          "type": "array",
+          "maxItems": 97,
+          "x-buildlore-canonicalOrder": "pageId-ascending",
+          "items": { "$ref": "#/$defs/storedIntegratedDecision" }
+        },
+        "relationDecisions": {
+          "type": "array",
+          "maxItems": 131072,
+          "x-buildlore-canonicalOrder": "relationId-ascending",
+          "items": { "$ref": "#/$defs/storedRelationDecision" }
+        },
+        "rejection": { "oneOf": [{ "$ref": "#/$defs/rejection" }, { "type": "null" }] },
+        "approvalDecision": {
+          "oneOf": [{ "$ref": "#/$defs/approvalDecision" }, { "type": "null" }]
+        },
+        "pendingExchangeDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "pendingChildReviewDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "pendingReviewDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "pendingLedgerDigest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "recordDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-maxUtf8Bytes": 67108864,
+      "x-buildlore-digestExcludes": ["recordDigest"]
+    },
+    "childReviewView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "pageId", "exchange", "result",
+        "allowedDecisions", "reviewViewDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-child-review-view.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "exchange": {
+          "$ref": "hierarchical-current-session.schema.json#/$defs/generationExchange"
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["proposal", "receipt"],
+          "properties": {
+            "proposal": {
+              "$ref": "hierarchical-corpus.schema.json#/$defs/hierarchicalWikiProposal"
+            },
+            "receipt": {
+              "$ref": "hierarchical-current-session.schema.json#/$defs/generationReceipt"
+            }
+          }
+        },
+        "allowedDecisions": {
+          "type": "array",
+          "prefixItems": [{ "const": "accepted" }, { "const": "rejected" }],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "reviewViewDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["reviewViewDigest"]
+    },
+    "reviewView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "surface", "relationCandidates",
+        "reviewDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-review-view.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "surface": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/integratedWikiReviewSurface"
+        },
+        "relationCandidates": {
+          "type": "array",
+          "maxItems": 131072,
+          "items": { "$ref": "hierarchical-corpus.schema.json#/$defs/sparseRelationCandidate" }
+        },
+        "reviewDigest": { "$ref": "#/$defs/digest" }
+      },
+      "x-buildlore-digestExcludes": ["reviewDigest"]
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "revision", "phase", "purpose",
+        "nextAction", "currentExchange", "childReview", "review", "ledger", "rejection",
+        "activationState", "authorityCheckStatus", "authorityCheck", "egress",
+        "providerUsed", "processSpawned"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-status.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "phase": {
+          "enum": [
+            "awaiting-proposal", "awaiting-child-review", "review-ready", "finalized",
+            "rejected", "approved"
+          ]
+        },
+        "purpose": { "$ref": "hierarchical-corpus.schema.json#/$defs/compilationPurpose" },
+        "nextAction": {
+          "enum": [
+            "submit-proposal", "review-child", "review-integrated-wiki",
+            "approve-activation", "activate-approved-wiki", "none"
+          ]
+        },
+        "currentExchange": {
+          "oneOf": [
+            { "$ref": "hierarchical-current-session.schema.json#/$defs/generationExchange" },
+            { "type": "null" }
+          ]
+        },
+        "childReview": {
+          "oneOf": [{ "$ref": "#/$defs/childReviewView" }, { "type": "null" }]
+        },
+        "review": { "oneOf": [{ "$ref": "#/$defs/reviewView" }, { "type": "null" }] },
+        "ledger": {
+          "oneOf": [
+            { "$ref": "hierarchical-corpus.schema.json#/$defs/compileRunLedger" },
+            { "type": "null" }
+          ]
+        },
+        "rejection": { "oneOf": [{ "$ref": "#/$defs/rejection" }, { "type": "null" }] },
+        "activationState": { "enum": ["not-approved", "awaiting-activation", "active"] },
+        "authorityCheckStatus": { "enum": ["clean", null] },
+        "authorityCheck": {
+          "oneOf": [
+            { "$ref": "hierarchical-corpus.schema.json#/$defs/authoritativeWikiCheck" },
+            { "type": "null" }
+          ]
+        },
+        "egress": { "const": "none" },
+        "providerUsed": { "type": "null" },
+        "processSpawned": { "const": false }
+      }
+    },
+    "startResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "projectId", "runId", "purpose", "status"],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-start-result.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "purpose": { "$ref": "hierarchical-corpus.schema.json#/$defs/compilationPurpose" },
+        "status": { "$ref": "#/$defs/status" }
+      }
+    },
+    "submitResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "pageId", "proposalDigest",
+        "receiptDigest", "status"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-submit-result.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "receiptDigest": { "$ref": "#/$defs/digest" },
+        "status": { "$ref": "#/$defs/status" }
+      }
+    },
+    "childReviewResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "pageId", "decision", "reviewDigest",
+        "status"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.hierarchical-workflow-child-review-result.v1"
+        },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "decision": { "enum": ["accepted", "rejected"] },
+        "reviewDigest": { "$ref": "#/$defs/digest" },
+        "status": { "$ref": "#/$defs/status" }
+      }
+    },
+    "finalizeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "phase", "surface", "ledger", "rejection"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-finalize-result.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "phase": { "enum": ["finalized", "rejected"] },
+        "surface": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/integratedWikiReviewSurface"
+        },
+        "ledger": {
+          "oneOf": [
+            { "$ref": "hierarchical-corpus.schema.json#/$defs/compileRunLedger" },
+            { "type": "null" }
+          ]
+        },
+        "rejection": { "oneOf": [{ "$ref": "#/$defs/rejection" }, { "type": "null" }] }
+      }
+    },
+    "approveResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "runId", "approvalDigest", "generationDigest",
+        "activationBundlePath", "activationBundleDigest", "activationArgs", "egress",
+        "providerUsed", "processSpawned"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-approve-result.v1" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "approvalDigest": { "$ref": "#/$defs/digest" },
+        "generationDigest": { "$ref": "#/$defs/digest" },
+        "activationBundlePath": { "$ref": "#/$defs/activationBundlePath" },
+        "activationBundleDigest": { "$ref": "#/$defs/digest" },
+        "activationArgs": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "compile" },
+            { "const": "activate" },
+            { "const": "--project" },
+            { "$ref": "#/$defs/projectId" },
+            { "const": "--input" },
+            { "$ref": "#/$defs/activationBundlePath" },
+            { "const": "--confirm-approval" },
+            { "$ref": "#/$defs/digest" }
+          ],
+          "items": false,
+          "minItems": 8,
+          "maxItems": 8
+        },
+        "egress": { "const": "none" },
+        "providerUsed": { "type": "null" },
+        "processSpawned": { "const": false }
+      }
+    },
+    "activationBundlePath": {
+          "type": "string",
+          "pattern": "^\\.buildlore/hierarchy-runs/[a-z0-9]+(?:-[a-z0-9]+)*/run-[a-f0-9]{64}/approved-wiki\\.json$"
+    }
+  }
+}

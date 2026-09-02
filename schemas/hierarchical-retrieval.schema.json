@@ -1,0 +1,373 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/hierarchical-retrieval.schema.json",
+  "title": "BuildLore approved hierarchical retrieval contracts v1",
+  "oneOf": [
+    { "$ref": "#/$defs/corpus" },
+    { "$ref": "#/$defs/gold" },
+    { "$ref": "#/$defs/searchResult" },
+    { "$ref": "#/$defs/curateResult" },
+    { "$ref": "#/$defs/evaluation" }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "safeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1048576,
+      "pattern": "^(?![\\s\\S]*[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F])[\\s\\S]+$",
+      "x-buildlore-normalization": "NFC"
+    },
+    "citationLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["citationId", "sourceId"],
+      "properties": {
+        "citationId": { "$ref": "#/$defs/id" },
+        "sourceId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body", "citationLocators", "sectionId"],
+      "properties": {
+        "body": { "$ref": "#/$defs/safeText" },
+        "citationLocators": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/citationLocator" }
+        },
+        "sectionId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "childPageIds", "pageId", "parentPageId", "proposalDigest", "relationPageIds",
+        "sections", "status", "summary", "title"
+      ],
+      "properties": {
+        "childPageIds": {
+          "type": "array", "maxItems": 4096, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "pageId": { "$ref": "#/$defs/id" },
+        "parentPageId": {
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "relationPageIds": {
+          "type": "array", "maxItems": 4096, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "sections": {
+          "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/section" }
+        },
+        "status": { "const": "active" },
+        "summary": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "maxLength": 4000 }] },
+        "title": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "maxLength": 512 }] }
+      }
+    },
+    "corpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpusDigest", "generationDigest", "pages", "projectId", "schemaVersion"],
+      "properties": {
+        "corpusDigest": { "$ref": "#/$defs/digest" },
+        "generationDigest": { "$ref": "#/$defs/digest" },
+        "pages": {
+          "type": "array", "minItems": 1, "maxItems": 4096, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/page" }
+        },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "schemaVersion": { "const": "buildlore.approved-wiki-retrieval-corpus.v1" }
+      },
+      "x-buildlore-digestExcludes": ["corpusDigest"]
+    },
+    "goldLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["citationIds", "pageId", "relevance", "sectionId", "sourceIds"],
+      "properties": {
+        "citationIds": {
+          "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "pageId": { "$ref": "#/$defs/id" },
+        "relevance": { "enum": [1, 2, 3] },
+        "sectionId": { "$ref": "#/$defs/id" },
+        "sourceIds": {
+          "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "goldQuestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["answerAssertions", "expected", "kind", "language", "queryId", "text"],
+      "properties": {
+        "answerAssertions": {
+          "type": "array", "maxItems": 20, "uniqueItems": true,
+          "items": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "maxLength": 512 }] }
+        },
+        "expected": {
+          "type": "array", "maxItems": 100, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/goldLocator" }
+        },
+        "kind": { "enum": ["global", "local", "multi-hop", "zero-result"] },
+        "language": { "enum": ["code", "en", "ko"] },
+        "queryId": { "$ref": "#/$defs/id" },
+        "text": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "maxLength": 8192 }] }
+      }
+    },
+    "gold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpus", "fixtureId", "questions", "schemaVersion"],
+      "properties": {
+        "corpus": { "$ref": "#/$defs/corpus" },
+        "fixtureId": { "$ref": "#/$defs/id" },
+        "questions": {
+          "type": "array", "minItems": 15, "maxItems": 500, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/goldQuestion" }
+        },
+        "schemaVersion": { "const": "buildlore.hierarchical-retrieval-gold.v2" }
+      }
+    },
+    "resultLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["citationIds", "pageId", "projectId", "sectionId", "sourceIds"],
+      "properties": {
+        "citationIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+        "pageId": { "$ref": "#/$defs/id" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "sectionId": { "$ref": "#/$defs/id" },
+        "sourceIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "rank", "score"],
+      "properties": {
+        "channel": { "enum": ["graph", "lexical"] },
+        "rank": { "type": "integer", "minimum": 1 },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "searchHit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channels", "locator", "matchedEvidence", "rank", "score", "scoreComponents",
+        "scoreKind", "title"
+      ],
+      "properties": {
+        "channels": { "type": "array", "minItems": 1, "maxItems": 2, "items": { "$ref": "#/$defs/channel" } },
+        "locator": { "$ref": "#/$defs/resultLocator" },
+        "matchedEvidence": { "type": "array", "maxItems": 9, "items": { "type": "object" } },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "scoreComponents": { "type": "object" },
+        "scoreKind": { "enum": ["lexical-graph-rrf", "lexical-weighted-coverage"] },
+        "title": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "maxLength": 512 }] }
+      }
+    },
+    "searchResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effectiveMode", "fallback", "hits", "modelUsed", "projectId", "providerUsed",
+        "requestedMode", "schemaVersion"
+      ],
+      "properties": {
+        "effectiveMode": { "enum": ["graph", "lexical"] },
+        "fallback": { "type": "null" },
+        "hits": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/searchHit" } },
+        "modelUsed": { "const": false },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "providerUsed": { "const": false },
+        "requestedMode": { "enum": ["graph", "lexical"] },
+        "schemaVersion": { "const": "buildlore.hierarchical-retrieval-result.v1" }
+      }
+    },
+    "curateEvidenceLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["citationIds", "claimId", "pageId", "relatedPageId", "sectionId"],
+      "properties": {
+        "citationIds": {
+          "type": "array", "maxItems": 100, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "claimId": {
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "pageId": { "$ref": "#/$defs/id" },
+        "relatedPageId": {
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "sectionId": {
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        }
+      }
+    },
+    "curateSuggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automaticMutation", "evidenceLocators", "pageIds", "reasonCode",
+        "reviewAction", "suggestionId"
+      ],
+      "properties": {
+        "automaticMutation": { "const": false },
+        "evidenceLocators": {
+          "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/curateEvidenceLocator" }
+        },
+        "pageIds": {
+          "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "reasonCode": {
+          "enum": [
+            "broken-link", "possible-duplicate", "unsupported-claim",
+            "weakly-connected-page"
+          ]
+        },
+        "reviewAction": {
+          "enum": [
+            "review-claim-support", "review-link-target", "review-page-connection",
+            "review-possible-duplicate"
+          ]
+        },
+        "suggestionId": {
+          "type": "string", "pattern": "^suggestion-[a-f0-9]{64}$"
+        }
+      }
+    },
+    "curateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorityCheckDigest", "candidateCount", "corpusDigest", "egress",
+        "generationDigest", "modelUsed", "mutationApplied", "projectId",
+        "projectionDigest", "providerUsed", "readOnly", "resultDigest",
+        "sanitizerPolicyDigest", "schemaVersion", "suggestionCount", "suggestions",
+        "truncated"
+      ],
+      "properties": {
+        "authorityCheckDigest": { "$ref": "#/$defs/digest" },
+        "candidateCount": { "type": "integer", "minimum": 0, "maximum": 24576 },
+        "corpusDigest": { "$ref": "#/$defs/digest" },
+        "egress": { "const": "none" },
+        "generationDigest": { "$ref": "#/$defs/digest" },
+        "modelUsed": { "const": "none" },
+        "mutationApplied": { "const": false },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "projectionDigest": { "$ref": "#/$defs/digest" },
+        "providerUsed": { "const": "none" },
+        "readOnly": { "const": true },
+        "resultDigest": { "$ref": "#/$defs/digest" },
+        "sanitizerPolicyDigest": { "$ref": "#/$defs/digest" },
+        "schemaVersion": { "const": "buildlore.model-free-wiki-curate-result.v1" },
+        "suggestionCount": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "suggestions": {
+          "type": "array", "maxItems": 256, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/curateSuggestion" }
+        },
+        "truncated": { "type": "boolean" }
+      },
+      "x-buildlore-digestExcludes": ["resultDigest"],
+      "x-buildlore-readOnly": true
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "answerEvidenceCompleteness", "answerEvidenceCorrectness", "citationPrecision",
+        "citationRecall", "channelPassed", "mrr", "nDcgAt10", "positiveQueryCount", "recallAt5",
+        "requestedMode", "zeroResultPassed", "zeroResultQueryCount"
+      ],
+      "properties": {
+        "answerEvidenceCompleteness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "answerEvidenceCorrectness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "citationPrecision": { "type": "number", "minimum": 0, "maximum": 1 },
+        "citationRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "channelPassed": { "type": "boolean" },
+        "mrr": { "type": "number", "minimum": 0, "maximum": 1 },
+        "nDcgAt10": { "type": "number", "minimum": 0, "maximum": 1 },
+        "positiveQueryCount": { "type": "integer", "minimum": 0 },
+        "recallAt5": { "type": "number", "minimum": 0, "maximum": 1 },
+        "requestedMode": { "enum": ["all", "graph", "lexical"] },
+        "zeroResultPassed": { "type": "integer", "minimum": 0 },
+        "zeroResultQueryCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "queryEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected", "locators", "queryId", "requestedMode", "zeroResultPassed"],
+      "properties": {
+        "expected": { "type": "array", "items": { "$ref": "#/$defs/goldLocator" } },
+        "locators": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/resultLocator" } },
+        "queryId": { "$ref": "#/$defs/id" },
+        "requestedMode": { "enum": ["graph", "lexical"] },
+        "zeroResultPassed": { "type": ["boolean", "null"] }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixtureId", "inputCorpusDigest", "metrics", "modeExecutionCount", "overallPassed", "queryCount",
+        "queryResults", "schemaVersion", "thresholds"
+      ],
+      "properties": {
+        "fixtureId": { "$ref": "#/$defs/id" },
+        "inputCorpusDigest": { "$ref": "#/$defs/digest" },
+        "metrics": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/metric" } },
+        "modeExecutionCount": { "type": "integer", "minimum": 30, "maximum": 1000 },
+        "overallPassed": { "type": "boolean" },
+        "queryCount": { "type": "integer", "minimum": 15, "maximum": 500 },
+        "queryResults": { "type": "array", "minItems": 30, "maxItems": 1000, "items": { "$ref": "#/$defs/queryEvaluation" } },
+        "schemaVersion": { "const": "buildlore.hierarchical-retrieval-eval.v2" },
+        "thresholds": {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "minimumAnswerEvidenceCompleteness", "minimumAnswerEvidenceCorrectness",
+            "minimumCitationPrecision", "minimumCitationRecall", "minimumMrr",
+            "minimumRecallAt5"
+          ],
+          "properties": {
+            "minimumAnswerEvidenceCompleteness": { "const": 0.85 },
+            "minimumAnswerEvidenceCorrectness": { "const": 0.8 },
+            "minimumCitationPrecision": { "const": 0.8 },
+            "minimumCitationRecall": { "const": 0.8 },
+            "minimumMrr": { "const": 0.7 },
+            "minimumRecallAt5": { "const": 0.85 }
+          }
+        }
+      }
+    }
+  }
+}

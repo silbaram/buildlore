@@ -7,6 +7,7 @@ import {
   type ProjectCheckPort,
   type ProjectCompilerPort,
   type ProjectSessionCompilerPort,
+  type HierarchySha256Digest,
 } from '../compiler/index.js';
 import { KnowledgeError, type KnowledgeErrorCode } from '../knowledge/errors.js';
 import { cloneKnowledge, initKnowledge } from '../knowledge/git.js';
@@ -18,6 +19,7 @@ import {
   inspectLocalProjectBindingCandidate,
   type LocalProjectRegistryHooks,
 } from '../knowledge/local-project-registry.js';
+import { createRepositoryWriterLease } from '../knowledge/repository-writer-lease.js';
 import { getKnowledgeStatus } from '../knowledge/status.js';
 import type {
   CompilerStatusPort,
@@ -27,9 +29,14 @@ import type {
 import { addProject, listProjects, showProject, validateProjectRegistry } from '../knowledge/workspace.js';
 import {
   createProjectSyncService,
+  createSourceManagement,
+  initializeSingleProjectQuickstart,
   inspectLocalSourceStatus,
+  type GenericSourceKind,
   type LocalSourceStatus,
   type ProjectSyncPort,
+  type QuickstartInput,
+  type SourceManagementPort,
 } from '../projector/index.js';
 import { SECURITY_RULES } from '../sanitizer/index.js';
 import { readSourceCollectionManifest } from '../projector/source-manifest.js';
@@ -50,14 +57,36 @@ import {
   type PublicationDigest,
 } from '../knowledge/index.js';
 import {
+  createLocalWikiOperator,
   createProjectRetrieval,
+  LocalWikiRetrievalError,
+  type LocalWikiOperatorPort,
+  type LocalWikiRetrievalMode,
   type ProjectRetrievalPort,
-  type RetrievalMode,
 } from '../retrieval/index.js';
+import {
+  createLocalModelBindingService,
+  type LocalModelBindingPort,
+} from '../retrieval/embedding/index.js';
+import {
+  createWikiExportService,
+  createWikiReadService,
+  type WikiExportFormat,
+  type WikiExportPort,
+  type WikiReadPort,
+} from '../wiki/index.js';
 import {
   CliQualityGateError,
   mapCliError,
 } from './error-map.js';
+import {
+  createHierarchicalWikiActivationService,
+  type HierarchicalWikiActivationPort,
+} from './hierarchical-activation.js';
+import {
+  createHierarchicalWorkflowService,
+  type HierarchicalWorkflowServicePort,
+} from './hierarchical-workflow.js';
 import { HELP_TEXT } from './help.js';
 import { CliUsageError, inferCliCommand, parseCliArguments } from './parser.js';
 import { renderCliResult, writeRenderedCliResult } from './presentation.js';
@@ -83,6 +112,10 @@ export interface CliPublicationLineagePort {
   resolve(projectId: string): Promise<CliPublicationLineage>;
 }
 
+export interface CliQuickstartPort {
+  initialize(input: QuickstartInput): Promise<unknown>;
+}
+
 export interface CliIo {
   stdout(message: string): void;
   stderr(message: string): void;
@@ -93,15 +126,23 @@ export interface CliRuntime {
   readonly check?: ProjectCheckPort;
   readonly cwd: string;
   readonly compiler?: CompilerStatusPort;
+  readonly hierarchyActivation?: HierarchicalWikiActivationPort;
+  readonly hierarchyWorkflow?: HierarchicalWorkflowServicePort;
   /** @internal Fault seam for local registry integration tests. */
   readonly localProjectRegistryHooks?: LocalProjectRegistryHooks;
+  readonly localModels?: LocalModelBindingPort;
+  readonly localWiki?: LocalWikiOperatorPort;
   readonly projectCompiler?: ProjectCompilerPort;
   readonly parentPin?: ParentKnowledgePinPort;
   readonly publication?: KnowledgePublicationPort;
   readonly publicationLineage?: CliPublicationLineagePort;
+  readonly quickstart?: CliQuickstartPort;
   readonly retrieval?: ProjectRetrievalPort;
   readonly sessionCompiler?: ProjectSessionCompilerPort;
+  readonly sourceManagement?: SourceManagementPort;
   readonly sync?: ProjectSyncPort;
+  readonly wikiExport?: WikiExportPort;
+  readonly wikiRead?: WikiReadPort;
 }
 
 async function publicationInput(
@@ -218,8 +259,10 @@ async function assertPublicationPushReady(
   await showProject(join(runtime.cwd, 'knowledge'), projectId);
 }
 
-function retrievalMode(command: ParsedCliCommand): RetrievalMode {
+function retrievalMode(command: ParsedCliCommand): LocalWikiRetrievalMode {
   switch (stringOption(command, '--mode')) {
+    case 'graph':
+      return 'graph';
     case 'lexical':
       return 'lexical';
     case 'semantic':
@@ -232,13 +275,178 @@ function retrievalMode(command: ParsedCliCommand): RetrievalMode {
   }
 }
 
+function createDefaultLocalWiki(runtime: CliRuntime): LocalWikiOperatorPort {
+  return createLocalWikiOperator({
+    hubRoot: runtime.cwd,
+    knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    repositoryLease: createRepositoryWriterLease(),
+  });
+}
+
+function createDefaultHierarchyWorkflow(runtime: CliRuntime): HierarchicalWorkflowServicePort {
+  return createHierarchicalWorkflowService({
+    hubRoot: runtime.cwd,
+    knowledgeRoot: join(runtime.cwd, 'knowledge'),
+  });
+}
+
+function isRawHierarchyPageId(value: string): boolean {
+  return /^page-[0-9a-f]{64}$/u.test(value);
+}
+
+function isApprovedWikiUnavailable(error: unknown): boolean {
+  return error instanceof LocalWikiRetrievalError &&
+    error.code === 'LOCAL_WIKI_PROJECTION_UNAVAILABLE';
+}
+
+async function listWikiPages(
+  command: ParsedCliCommand,
+  runtime: CliRuntime,
+  projectId: string,
+): Promise<unknown> {
+  const cursor = stringOption(command, '--cursor');
+  const limit = stringOption(command, '--limit');
+  const input = {
+    ...(cursor === undefined ? {} : { cursor }),
+    ...(limit === undefined ? {} : { limit: Number(limit) }),
+    projectId,
+  };
+  if (runtime.localWiki !== undefined) return runtime.localWiki.listPages(input);
+  if (runtime.wikiRead !== undefined) return runtime.wikiRead.list(input);
+  try {
+    return await createDefaultLocalWiki(runtime).listPages(input);
+  } catch (error) {
+    if (!isApprovedWikiUnavailable(error)) throw error;
+    return createWikiReadService({
+      knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    }).list(input);
+  }
+}
+
+async function readWikiPage(
+  command: ParsedCliCommand,
+  runtime: CliRuntime,
+  projectId: string,
+): Promise<unknown> {
+  const pageRef = requiredStringOption(command, '--page');
+  if (isRawHierarchyPageId(pageRef)) {
+    return (runtime.localWiki ?? createDefaultLocalWiki(runtime)).readPage({
+      pageId: pageRef,
+      projectId,
+    });
+  }
+  return (runtime.wikiRead ?? createWikiReadService({
+    knowledgeRoot: join(runtime.cwd, 'knowledge'),
+  })).read({ pageRef, projectId });
+}
+
+async function readWikiCitations(
+  command: ParsedCliCommand,
+  runtime: CliRuntime,
+  projectId: string,
+): Promise<unknown> {
+  const pageRef = requiredStringOption(command, '--page');
+  if (isRawHierarchyPageId(pageRef)) {
+    return (runtime.localWiki ?? createDefaultLocalWiki(runtime)).pageCitations({
+      pageId: pageRef,
+      projectId,
+    });
+  }
+  return (runtime.wikiRead ?? createWikiReadService({
+    knowledgeRoot: join(runtime.cwd, 'knowledge'),
+  })).citations({ pageRef, projectId });
+}
+
+async function searchWithApprovedWiki(
+  command: ParsedCliCommand,
+  runtime: CliRuntime,
+  projectId: string,
+): Promise<unknown> {
+  const mode = retrievalMode(command);
+  const query = requiredStringOption(command, '--query');
+  if (runtime.retrieval !== undefined && mode !== 'graph') {
+    return runtime.retrieval.search({ mode, projectId, query });
+  }
+  try {
+    return await (runtime.localWiki ?? createDefaultLocalWiki(runtime)).search({
+      mode,
+      projectId,
+      query,
+    });
+  } catch (error) {
+    if (!(error instanceof LocalWikiRetrievalError) ||
+        error.code !== 'LOCAL_WIKI_PROJECTION_UNAVAILABLE' ||
+        (mode !== 'lexical' && mode !== 'hybrid')) throw error;
+    const legacy = await createProjectRetrieval({
+      knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    }).search({ mode: 'lexical', projectId, query });
+    return Object.freeze({
+      ...legacy,
+      effectiveMode: 'lexical',
+      fallback: mode === 'hybrid'
+        ? Object.freeze({
+            fromMode: 'hybrid',
+            reasonCode: 'approved-wiki-projection-unavailable',
+            toMode: 'lexical',
+          })
+        : null,
+      partial: true,
+      recoveryAction: Object.freeze({
+        command: Object.freeze(['compile', 'activate', '--project', projectId] as const),
+        rebuildRequired: true,
+      }),
+      requestedMode: mode,
+      warnings: Object.freeze([
+        ...legacy.warnings,
+        Object.freeze({ code: 'approved-wiki-projection-unavailable' }),
+      ]),
+    });
+  }
+}
+
 async function executeCommand(
   command: ParsedCliCommand,
   runtime: CliRuntime,
 ): Promise<unknown> {
   switch (command.operation) {
+    case 'model.bind': {
+      const localModels = runtime.localModels ?? createLocalModelBindingService(runtime.cwd);
+      const directory = stringOption(command, '--directory');
+      return localModels.bind({
+        ...(directory === undefined ? {} : { directory }),
+        profileId: requiredStringOption(command, '--profile'),
+      });
+    }
+    case 'model.inspect': {
+      const localModels = runtime.localModels ?? createLocalModelBindingService(runtime.cwd);
+      return localModels.inspect(requiredStringOption(command, '--profile'));
+    }
+    case 'model.verify': {
+      const localModels = runtime.localModels ?? createLocalModelBindingService(runtime.cwd);
+      return localModels.verify(requiredStringOption(command, '--profile'));
+    }
     case 'init': {
       const branch = stringOption(command, '--branch');
+      const projectId = stringOption(command, '--project');
+      if (projectId !== undefined) {
+        const knowledgeRepository = stringOption(command, '--knowledge-repo');
+        const input: QuickstartInput = {
+          ...(branch === undefined ? {} : { branch }),
+          ...(stringOption(command, '--name') === undefined
+            ? {}
+            : { displayName: stringOption(command, '--name') as string }),
+          ...(knowledgeRepository === undefined ? {} : { knowledgeRepository }),
+          projectId,
+          sourceRepository: requiredStringOption(command, '--source-repo'),
+          sourceRoot: requiredStringOption(command, '--source-root'),
+        };
+        if (runtime.quickstart !== undefined) return runtime.quickstart.initialize(input);
+        return initializeSingleProjectQuickstart(runtime.cwd, input, {
+          ...(runtime.localProjectRegistryHooks === undefined
+            ? {}
+            : { localProjectRegistryHooks: runtime.localProjectRegistryHooks }),
+        });
+      }
       const workspace = await initializeModeAWorkspace(runtime.cwd, {
         ...(branch === undefined ? {} : { branch }),
         repository: requiredStringOption(command, '--knowledge-repo'),
@@ -357,6 +565,69 @@ async function executeCommand(
         join(runtime.cwd, 'knowledge'),
         command.projectId ?? undefined,
       );
+    case 'source.add': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const sourceManagement = runtime.sourceManagement ?? createSourceManagement({
+        hubRoot: runtime.cwd,
+      });
+      return sourceManagement.add({
+        id: requiredStringOption(command, '--id'),
+        kind: requiredStringOption(command, '--kind') as GenericSourceKind,
+        path: requiredStringOption(command, '--path'),
+        projectId,
+        ...(command.options['--recursive'] === true ? { recursive: true } : {}),
+      });
+    }
+    case 'source.list': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const sourceManagement = runtime.sourceManagement ?? createSourceManagement({
+        hubRoot: runtime.cwd,
+      });
+      return sourceManagement.list(projectId);
+    }
+    case 'source.diff': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const sourceManagement = runtime.sourceManagement ?? createSourceManagement({
+        hubRoot: runtime.cwd,
+      });
+      return sourceManagement.diff(projectId);
+    }
+    case 'wiki.list': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return listWikiPages(command, runtime, projectId);
+    }
+    case 'wiki.curate': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return (runtime.localWiki ?? createDefaultLocalWiki(runtime)).curate({ projectId });
+    }
+    case 'wiki.read': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return readWikiPage(command, runtime, projectId);
+    }
+    case 'wiki.citations': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return readWikiCitations(command, runtime, projectId);
+    }
+    case 'export': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const service = runtime.wikiExport ?? createWikiExportService({
+        hubRoot: runtime.cwd,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      return service.export({
+        format: requiredStringOption(command, '--format') as WikiExportFormat,
+        outputRoot: requiredStringOption(command, '--output'),
+        projectId,
+      });
+    }
     case 'sync': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
@@ -421,6 +692,88 @@ async function executeCommand(
         projectId,
       });
     }
+    case 'compile.hierarchy.start': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).start(
+        projectId,
+        requiredStringOption(command, '--purpose'),
+      );
+    }
+    case 'compile.hierarchy.status': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).status(
+        projectId,
+        requiredStringOption(command, '--run'),
+      );
+    }
+    case 'compile.hierarchy.submit': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).submit(
+        projectId,
+        requiredStringOption(command, '--run'),
+        requiredStringOption(command, '--input'),
+        requiredStringOption(command, '--expect-exchange') as HierarchySha256Digest,
+      );
+    }
+    case 'compile.hierarchy.child-review': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).childReview(
+        projectId,
+        requiredStringOption(command, '--run'),
+        requiredStringOption(command, '--input'),
+        requiredStringOption(command, '--expect-review') as HierarchySha256Digest,
+      );
+    }
+    case 'compile.hierarchy.review': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).review(
+        projectId,
+        requiredStringOption(command, '--run'),
+      );
+    }
+    case 'compile.hierarchy.finalize': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).finalize(
+        projectId,
+        requiredStringOption(command, '--run'),
+        requiredStringOption(command, '--input'),
+        requiredStringOption(command, '--expect-review') as HierarchySha256Digest,
+      );
+    }
+    case 'compile.hierarchy.approve': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      if (command.options['--confirm-approval'] !== true) {
+        throw new CliUsageError('CLI_OPTION_MISSING');
+      }
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).approve(
+        projectId,
+        requiredStringOption(command, '--run'),
+        requiredStringOption(command, '--expect-ledger') as HierarchySha256Digest,
+        true,
+      );
+    }
+    case 'compile.activate': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const activation = runtime.hierarchyActivation ?? createHierarchicalWikiActivationService({
+        hubRoot: runtime.cwd,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      });
+      const inputFile = stringOption(command, '--input');
+      return activation.activate({
+        confirmationDigest: requiredStringOption(command, '--confirm-approval') as
+          `sha256:${string}`,
+        ...(inputFile === undefined ? {} : { inputFile }),
+        projectId,
+      });
+    }
     case 'check': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
@@ -430,17 +783,25 @@ async function executeCommand(
       const check = runtime.check ?? createProjectCheck(compiler);
       return check.check(projectId);
     }
+    case 'index.status': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const localWiki = runtime.localWiki ?? createDefaultLocalWiki(runtime);
+      return localWiki.indexStatus(projectId);
+    }
+    case 'index.rebuild': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const localWiki = runtime.localWiki ?? createDefaultLocalWiki(runtime);
+      return localWiki.rebuildIndex({
+        ...(command.options['--full'] === true ? { full: true } : {}),
+        projectId,
+      });
+    }
     case 'search': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
-      const retrieval = runtime.retrieval ?? createProjectRetrieval({
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
-      });
-      return retrieval.search({
-        mode: retrievalMode(command),
-        projectId,
-        query: requiredStringOption(command, '--query'),
-      });
+      return searchWithApprovedWiki(command, runtime, projectId);
     }
     case 'query': {
       const projectId = requiredStringOption(command, '--project');

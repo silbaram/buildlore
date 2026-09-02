@@ -1,4 +1,6 @@
 import { isGeneratedIdentifier } from '../sanitizer/index.js';
+import { SESSION_COMPILE_LIMITS } from '../compiler/session/contracts.js';
+import { validateSourceSelectionPath } from '../projector/source-manifest.js';
 import type {
   CliCommandId,
   CliOperation,
@@ -41,12 +43,23 @@ const COMMON_FLAGS = ['--json'] as const;
 const MAX_RETRIEVAL_TEXT_LENGTH = 8_192;
 const FULL_OID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const PLAN_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const HIERARCHY_RUN_ID_PATTERN = /^run-[0-9a-f]{64}$/u;
 const ITERATION_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const PROJECT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const RESERVED_PROJECT_IDS = new Set(['knowledge', 'manifest', 'projects', 'shared']);
+const LOCAL_MODEL_PROFILE_ID = 'multilingual-e5-small';
 
 const COMMAND_SPECS: readonly CommandSpec[] = [
-  command(['init'], 'init', 'init', ['--knowledge-repo', '--branch'], ['--knowledge-repo']),
+  command(
+    ['init'],
+    'init',
+    'init',
+    ['--knowledge-repo', '--branch', '--project', '--source-repo', '--source-root', '--name'],
+    [],
+    [],
+    {},
+    '--project',
+  ),
   command(
     ['project', 'add'],
     'project.add',
@@ -80,6 +93,86 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     ['--project'],
     [],
     { '--project-id': '--project' },
+    '--project',
+  ),
+  command(
+    ['source', 'add'],
+    'source.add',
+    'source.add',
+    ['--project', '--id', '--kind', '--path'],
+    ['--project', '--id', '--kind', '--path'],
+    ['--recursive'],
+    {},
+    '--project',
+  ),
+  command(
+    ['source', 'list'],
+    'source.list',
+    'source.list',
+    ['--project'],
+    ['--project'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['source', 'diff'],
+    'source.diff',
+    'source.diff',
+    ['--project'],
+    ['--project'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['wiki', 'list'],
+    'wiki.list',
+    'wiki.list',
+    ['--project', '--cursor', '--limit'],
+    ['--project'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['wiki', 'curate'],
+    'wiki.curate',
+    'wiki.curate',
+    ['--project'],
+    ['--project'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['wiki', 'read'],
+    'wiki.read',
+    'wiki.read',
+    ['--project', '--page'],
+    ['--project', '--page'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['wiki', 'citations'],
+    'wiki.citations',
+    'wiki.citations',
+    ['--project', '--page'],
+    ['--project', '--page'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['export'],
+    'export',
+    'export',
+    ['--project', '--format', '--output'],
+    ['--project', '--format', '--output'],
+    [],
+    {},
     '--project',
   ),
   command(['sync'], 'sync', 'sync', ['--project'], ['--project'], ['--dry-run'], {}, '--project'),
@@ -124,8 +217,108 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     {},
     '--project',
   ),
+  command(
+    ['compile', 'activate'],
+    'compile.activate',
+    'compile.activate',
+    ['--project', '--input', '--confirm-approval'],
+    ['--project', '--confirm-approval'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'hierarchy', 'start'],
+    'compile.hierarchy.start',
+    'compile.hierarchy.start',
+    ['--project', '--purpose'],
+    ['--project', '--purpose'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'hierarchy', 'status'],
+    'compile.hierarchy.status',
+    'compile.hierarchy.status',
+    ['--project', '--run'],
+    ['--project', '--run'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'hierarchy', 'submit'],
+    'compile.hierarchy.submit',
+    'compile.hierarchy.submit',
+    ['--project', '--run', '--input', '--expect-exchange'],
+    ['--project', '--run', '--input', '--expect-exchange'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'hierarchy', 'child-review'],
+    'compile.hierarchy.child-review',
+    'compile.hierarchy.child-review',
+    ['--project', '--run', '--input', '--expect-review'],
+    ['--project', '--run', '--input', '--expect-review'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'hierarchy', 'review'],
+    'compile.hierarchy.review',
+    'compile.hierarchy.review',
+    ['--project', '--run'],
+    ['--project', '--run'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'hierarchy', 'finalize'],
+    'compile.hierarchy.finalize',
+    'compile.hierarchy.finalize',
+    ['--project', '--run', '--input', '--expect-review'],
+    ['--project', '--run', '--input', '--expect-review'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'hierarchy', 'approve'],
+    'compile.hierarchy.approve',
+    'compile.hierarchy.approve',
+    ['--project', '--run', '--expect-ledger'],
+    ['--project', '--run', '--expect-ledger', '--confirm-approval'],
+    ['--confirm-approval'],
+    {},
+    '--project',
+  ),
   command(['compile'], 'compile', 'compile', ['--project'], ['--project'], ['--review'], {}, '--project'),
   command(['check'], 'check', 'check', ['--project'], ['--project'], [], {}, '--project'),
+  command(
+    ['index', 'status'],
+    'index.status',
+    'index.status',
+    ['--project'],
+    ['--project'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['index', 'rebuild'],
+    'index.rebuild',
+    'index.rebuild',
+    ['--project'],
+    ['--project'],
+    ['--full'],
+    {},
+    '--project',
+  ),
   command(
     ['search'],
     'search',
@@ -230,6 +423,27 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     { '--project-id': '--project' },
     '--project',
   ),
+  command(
+    ['model', 'bind'],
+    'model.bind',
+    'model.bind',
+    ['--profile', '--directory'],
+    ['--profile'],
+  ),
+  command(
+    ['model', 'inspect'],
+    'model.inspect',
+    'model.inspect',
+    ['--profile'],
+    ['--profile'],
+  ),
+  command(
+    ['model', 'verify'],
+    'model.verify',
+    'model.verify',
+    ['--profile'],
+    ['--profile'],
+  ),
 ];
 
 function command(
@@ -333,7 +547,9 @@ function parseOptions(
       const repeated = existing === undefined
         ? [value]
         : [...(Array.isArray(existing) ? existing as readonly string[] : [String(existing)]), value];
-      if (repeated.length > 50) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      if (repeated.length > SESSION_COMPILE_LIMITS.maxApplyProposals) {
+        throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      }
       values[option] = Object.freeze(repeated);
     } else {
       values[option] = value;
@@ -342,6 +558,7 @@ function parseOptions(
   }
   if (spec.requiredOptions.some((option) => {
     const value = values[option];
+    if (spec.flagOptions.includes(option)) return value !== true;
     return typeof value !== 'string' && !(Array.isArray(value) && value.length > 0);
   })) {
     throw new CliUsageError('CLI_OPTION_MISSING');
@@ -349,14 +566,106 @@ function parseOptions(
   if (
     spec.command === 'search' &&
     values['--mode'] !== undefined &&
-    !['hybrid', 'lexical', 'semantic'].includes(String(values['--mode']))
+    !['graph', 'hybrid', 'lexical', 'semantic'].includes(String(values['--mode']))
   ) {
     throw new CliUsageError('CLI_ARGUMENT_INVALID');
   }
   validateRetrievalTextOptions(spec.command, values);
   validatePublicationOptions(spec.command, values);
   validateSessionCompileOptions(spec.command, values);
+  validateSourceOptions(spec.operation, values);
+  validateWikiOptions(spec.command, values);
+  validateLocalModelOptions(spec.command, values);
   return Object.freeze(values);
+}
+
+function validateLocalModelOptions(
+  commandId: CliCommandId,
+  values: Readonly<Record<string, CliOptionValue>>,
+): void {
+  if (commandId !== 'model.bind' && commandId !== 'model.inspect' &&
+      commandId !== 'model.verify') return;
+  if (values['--profile'] !== LOCAL_MODEL_PROFILE_ID) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+  const directory = values['--directory'];
+  if (directory !== undefined && (commandId !== 'model.bind' ||
+      typeof directory !== 'string' || directory.length > 4096 ||
+      containsControlCharacter(directory))) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+}
+
+function validateWikiOptions(
+  commandId: CliCommandId,
+  values: Readonly<Record<string, CliOptionValue>>,
+): void {
+  if (commandId === 'wiki.read' || commandId === 'wiki.citations') {
+    const page = values['--page'];
+    if (typeof page !== 'string' || page.length > 320 ||
+        !/^(?:(?:concepts|decisions|failures|queries|verifications)\/[a-z0-9]+(?:-[a-z0-9]+)*|page-[a-f0-9]{64})$/u
+          .test(page)) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+    return;
+  }
+  if (commandId === 'wiki.list') {
+    const cursor = values['--cursor'];
+    const limit = values['--limit'];
+    if ((cursor !== undefined && (typeof cursor !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,1024}$/u.test(cursor))) ||
+        (limit !== undefined && (typeof limit !== 'string' || !/^\d{1,3}$/u.test(limit) ||
+          Number(limit) < 1 || Number(limit) > 100))) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+    return;
+  }
+  if (commandId !== 'export') return;
+  const output = values['--output'];
+  if ((values['--format'] !== 'json' && values['--format'] !== 'okf') ||
+      typeof output !== 'string' || output.length > 4_096 || containsControlCharacter(output)) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+}
+
+function validateSourceOptions(
+  operation: CliOperation,
+  values: Readonly<Record<string, CliOptionValue>>,
+): void {
+  if (operation === 'init') {
+    const project = values['--project'];
+    const quickstartOptions = ['--source-repo', '--source-root', '--name'];
+    if (project === undefined) {
+      if (quickstartOptions.some((option) => values[option] !== undefined)) {
+        throw new CliUsageError('CLI_OPTION_CONFLICT');
+      }
+      if (typeof values['--knowledge-repo'] !== 'string') {
+        throw new CliUsageError('CLI_OPTION_MISSING');
+      }
+      return;
+    }
+    if (typeof values['--source-repo'] !== 'string' ||
+        typeof values['--source-root'] !== 'string') {
+      throw new CliUsageError('CLI_OPTION_MISSING');
+    }
+    return;
+  }
+  if (operation !== 'source.add') return;
+  const id = values['--id'];
+  const kind = values['--kind'];
+  const path = values['--path'];
+  if (
+    typeof id !== 'string' ||
+    id.length > 64 ||
+    !PROJECT_ID_PATTERN.test(id) ||
+    (kind !== 'code' && kind !== 'markdown' && kind !== 'text') ||
+    typeof path !== 'string'
+  ) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  try {
+    validateSourceSelectionPath(path);
+  } catch {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
 }
 
 function validatePublicationOptions(
@@ -388,6 +697,24 @@ function validateSessionCompileOptions(
   commandId: CliCommandId,
   values: Readonly<Record<string, CliOptionValue>>,
 ): void {
+  if (commandId.startsWith('compile.hierarchy.')) {
+    validateHierarchyCompileOptions(commandId, values);
+    return;
+  }
+  if (commandId === 'compile.activate') {
+    const input = values['--input'];
+    if (input !== undefined && (typeof input !== 'string' || input.length > 4_096 ||
+        containsControlCharacter(input) || input.startsWith('/') || input.startsWith('~') ||
+        input.includes('\\') || /^[A-Za-z]:/u.test(input) ||
+        input.split('/').some((part) => part === '' || part === '.' || part === '..'))) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+    const confirmation = values['--confirm-approval'];
+    if (typeof confirmation !== 'string' || !PLAN_DIGEST_PATTERN.test(confirmation)) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+    return;
+  }
   if (commandId === 'compile.approve') {
     const candidateId = values['--candidate'];
     if (typeof candidateId !== 'string' || !isGeneratedIdentifier(candidateId, 'candidate')) {
@@ -397,10 +724,44 @@ function validateSessionCompileOptions(
   }
   if (commandId !== 'compile.apply') return;
   const pages = values['--page'];
-  if (!Array.isArray(pages) || pages.length === 0 || pages.length > 50 ||
+  if (!Array.isArray(pages) || pages.length === 0 ||
+      pages.length > SESSION_COMPILE_LIMITS.maxApplyProposals ||
       pages.some((page: unknown) => typeof page !== 'string' || page.length > 4_096 ||
         page.length === 0 || containsControlCharacter(page))) {
     throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+}
+
+function isConfinedRelativeFilePath(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && Array.from(value).length <= 4_096 &&
+    !containsControlCharacter(value) && !value.startsWith('/') && !value.startsWith('~') &&
+    !value.includes('\\') && !/^[A-Za-z]:/u.test(value) &&
+    value.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
+}
+
+function validateHierarchyCompileOptions(
+  commandId: CliCommandId,
+  values: Readonly<Record<string, CliOptionValue>>,
+): void {
+  const run = values['--run'];
+  if (commandId !== 'compile.hierarchy.start' &&
+      (typeof run !== 'string' || !HIERARCHY_RUN_ID_PATTERN.test(run))) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+  for (const option of ['--expect-exchange', '--expect-review', '--expect-ledger']) {
+    const value = values[option];
+    if (value !== undefined && (typeof value !== 'string' || !PLAN_DIGEST_PATTERN.test(value))) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+  }
+  for (const option of ['--purpose', '--input']) {
+    const value = values[option];
+    if (value !== undefined && !isConfinedRelativeFilePath(value)) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+  }
+  if (commandId === 'compile.hierarchy.approve' && values['--confirm-approval'] !== true) {
+    throw new CliUsageError('CLI_OPTION_MISSING');
   }
 }
 

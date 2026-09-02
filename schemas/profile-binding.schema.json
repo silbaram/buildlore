@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/profile-binding.schema.json",
+  "title": "BuildLore Profile Binding v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["adapters", "outputLanguage", "profileId", "schemaVersion", "upstreamProfile"],
+  "properties": {
+    "adapters": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["adapterId", "adapterVersion"],
+        "properties": {
+          "adapterId": {
+            "enum": ["buildlore.generic", "buildlore.p2a"]
+          },
+          "adapterVersion": { "const": 1 }
+        }
+      }
+    },
+    "outputLanguage": { "enum": ["en", "ko"] },
+    "profileId": { "enum": ["development", "general"] },
+    "schemaVersion": { "const": "buildlore.profile-binding.v1" },
+    "upstreamProfile": { "enum": ["custom", "default"] }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "adapters": {
+          "prefixItems": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["adapterId", "adapterVersion"],
+              "properties": {
+                "adapterId": { "const": "buildlore.generic" },
+                "adapterVersion": { "const": 1 }
+              }
+            }
+          ],
+          "items": false,
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "profileId": { "const": "general" },
+        "upstreamProfile": { "const": "default" }
+      }
+    },
+    {
+      "properties": {
+        "adapters": {
+          "prefixItems": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["adapterId", "adapterVersion"],
+              "properties": {
+                "adapterId": { "const": "buildlore.generic" },
+                "adapterVersion": { "const": 1 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["adapterId", "adapterVersion"],
+              "properties": {
+                "adapterId": { "const": "buildlore.p2a" },
+                "adapterVersion": { "const": 1 }
+              }
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "profileId": { "const": "development" },
+        "upstreamProfile": { "const": "custom" }
+      }
+    }
+  ]
+}

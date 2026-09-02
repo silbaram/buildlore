@@ -18,7 +18,7 @@ import {
 } from './review-store.js';
 import type { ValidatedSessionBatch, ValidatedSessionProposal } from './validator.js';
 import type {
-  SessionCompileApplyResultV1,
+  SessionCompileApplyResultV2,
   SessionRequestedPageKind,
 } from './types.js';
 import { SESSION_COMPILE_APPLY_RESULT_SCHEMA_VERSION } from './types.js';
@@ -50,7 +50,7 @@ export interface SessionCompileAdmission {
     profileMode: 'custom' | 'default',
     batch: ValidatedSessionBatch,
     beforeActual?: () => Promise<void>,
-  ): Promise<SessionCompileApplyResultV1>;
+  ): Promise<SessionCompileApplyResultV2>;
 }
 
 export interface CreateSessionCompileAdmissionOptions {
@@ -106,7 +106,8 @@ function citationBody(page: ValidatedSessionProposal): string {
     const wasInsideFence = fence !== null;
     fence = transition.fence;
     if (wasInsideFence || transition.isFenceLine) return line;
-    return line.replace(/\[\^([a-z0-9][a-z0-9._-]{0,127})\](?!:)/gu, (marker, id: string) => {
+    const escaped = line.replace(/\^\[/gu, '^\\[');
+    return escaped.replace(/\[\^([a-z0-9][a-z0-9._-]{0,127})\](?!:)/gu, (marker, id: string) => {
       const binding = bindings.get(id);
       return binding === undefined
         ? marker
@@ -302,7 +303,7 @@ async function bundleStillMatches(
         directoryPath,
         root,
         projectId,
-        SESSION_COMPILE_LIMITS.maxProposals,
+        SESSION_COMPILE_LIMITS.maxProposalsPerBatch,
       );
       expectedNames.sort(compareSessionText);
       if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) return false;
@@ -454,13 +455,14 @@ export function createSessionCompileAdmission(
       profileMode,
       batch,
       beforeActual,
-    ): Promise<SessionCompileApplyResultV1> {
+    ): Promise<SessionCompileApplyResultV2> {
       const firstPage = batch.pages[0];
-      if (firstPage === undefined) {
+      if (firstPage === undefined ||
+          batch.pages.length > SESSION_COMPILE_LIMITS.maxProposalsPerBatch) {
         throw new SessionCompileError('SESSION_ADMISSION_FAILED', projectId);
       }
       let temporary: Awaited<ReturnType<typeof createBundle>> | undefined;
-      let result: SessionCompileApplyResultV1 | undefined;
+      let result: SessionCompileApplyResultV2 | undefined;
       let failure: SessionCompileError | undefined;
       try {
         temporary = await createBundle(batch, projectId, removeTemporary);
@@ -512,18 +514,27 @@ export function createSessionCompileAdmission(
               });
             } catch {
               throw new SessionCompileError('SESSION_ADMISSION_FAILED', projectId, {
+                candidateRefs: candidates.map((candidate) => candidate.candidateId),
                 recoveryAction: 'status',
                 sideEffectsPossible: existingStagedCount > 0,
               });
             }
             existingStagedCount += 1;
-            candidates.push(createSessionReviewCandidate({
-              batch,
-              page,
-              profileMode,
-              renderedPage,
-              upstreamCandidateId: stagedCandidateId(staged, page, projectId),
-            }));
+            try {
+              candidates.push(createSessionReviewCandidate({
+                batch,
+                page,
+                profileMode,
+                renderedPage,
+                upstreamCandidateId: stagedCandidateId(staged, page, projectId),
+              }));
+            } catch {
+              throw new SessionCompileError('SESSION_ADMISSION_FAILED', projectId, {
+                candidateRefs: candidates.map((candidate) => candidate.candidateId),
+                recoveryAction: 'status',
+                sideEffectsPossible: true,
+              });
+            }
           }
         }
         try {

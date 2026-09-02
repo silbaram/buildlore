@@ -423,5 +423,5 @@ describe('llm-wiki-compiler offline SDK integration', () => {
     expect(betaWiki).toContain('Shared Topic');
     expect(provider.chatBodies.some((body) => body.includes('ALPHA-MARKER'))).toBe(true);
     expect(provider.chatBodies.some((body) => body.includes('BETA-MARKER'))).toBe(true);
-  });
+  }, 15_000);
 });

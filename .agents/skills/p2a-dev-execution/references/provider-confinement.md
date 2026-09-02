@@ -35,4 +35,4 @@ When the target product is the Plan2Agent repository, canonical `.agents/`, scri
 
 ## Constitution and style
 
-Before implementation, check for `.plan2agent/constitution.json`. When present, validate and read the complete approved constitution. Validator prohibitions are hard constraints; review and advisory prohibitions guide implementation judgment. If no constitution exists, use `.plan2agent/style.md` only as the legacy fallback and do not require migration.
+Before implementation, check for `.plan2agent/constitution.json`. When present, validate and read the complete approved constitution. Validator prohibitions are hard constraints; review and advisory prohibitions guide implementation judgment. If no constitution exists, infer ordinary repository conventions from inspected project files and treat them as advisory guidance. A legacy `.plan2agent/style.md` may supplement that guidance, but it is not required and does not trigger migration or a new approval.

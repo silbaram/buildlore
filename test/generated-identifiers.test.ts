@@ -20,13 +20,26 @@ function patterns(value: unknown): readonly string[] {
 
 describe('generated identifier contract', () => {
   it('owns the exact immutable source-kind and identifier-prefix declarations', () => {
-    expect(GENERATED_SOURCE_KINDS).toEqual(['execution', 'markdown', 'planning']);
+    expect(GENERATED_SOURCE_KINDS).toEqual([
+      'code',
+      'execution',
+      'markdown',
+      'planning',
+      'text',
+    ]);
     expect(GENERATED_IDENTIFIER_PREFIXES).toEqual([
       'anchor',
       'candidate',
+      'citation',
+      'claim',
+      'conflict',
+      'gap',
       'merge',
+      'page',
+      'relation',
       'source',
       'task',
+      'unit',
     ]);
     expect(Object.isFrozen(GENERATED_SOURCE_KINDS)).toBe(true);
     expect(Object.isFrozen(GENERATED_IDENTIFIER_PREFIXES)).toBe(true);
@@ -90,10 +103,13 @@ describe('generated identifier contract', () => {
     const schemaNames = [
       'compile-plan.schema.json',
       'compile-proposal.schema.json',
+      'hierarchical-corpus.schema.json',
+      'hierarchical-wiki-activation.schema.json',
       'session-candidate-list.schema.json',
       'session-candidate-approval.schema.json',
       'session-review-candidate.schema.json',
       'session-promotion-proof.schema.json',
+      'wiki-export.schema.json',
     ];
     const schemaPatterns = new Map(await Promise.all(schemaNames.map(async (name) => {
       const schema = JSON.parse(await readFile(
@@ -110,13 +126,28 @@ describe('generated identifier contract', () => {
         'session-review-candidate.schema.json',
         'session-promotion-proof.schema.json',
       ]],
+      ['citation', ['hierarchical-corpus.schema.json', 'wiki-export.schema.json']],
+      ['claim', ['hierarchical-corpus.schema.json']],
+      ['conflict', ['hierarchical-corpus.schema.json']],
+      ['gap', ['hierarchical-corpus.schema.json']],
       ['merge', ['compile-plan.schema.json', 'compile-proposal.schema.json']],
+      ['page', ['hierarchical-corpus.schema.json']],
+      ['relation', [
+        'hierarchical-corpus.schema.json',
+        'hierarchical-wiki-activation.schema.json',
+      ]],
       ['source', [
         'compile-plan.schema.json',
         'compile-proposal.schema.json',
+        'hierarchical-corpus.schema.json',
         'session-review-candidate.schema.json',
       ]],
-      ['task', ['compile-plan.schema.json', 'compile-proposal.schema.json']],
+      ['task', [
+        'compile-plan.schema.json',
+        'compile-proposal.schema.json',
+        'hierarchical-corpus.schema.json',
+      ]],
+      ['unit', ['hierarchical-corpus.schema.json']],
     ] as const);
 
     for (const prefix of GENERATED_IDENTIFIER_PREFIXES) {

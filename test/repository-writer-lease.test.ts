@@ -133,6 +133,21 @@ describe('RepositoryWriterLeaseManager', () => {
     await expect(lstat(leasePath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('records the hierarchy and semantic activation operations in the shared lease', async () => {
+    const { repository } = await createRepository();
+    const commonDirectory = await resolveGitCommonDirectory(repository);
+    const leasePath = join(commonDirectory, LEASE_FILE_NAME);
+    const manager = new RepositoryWriterLeaseManager();
+
+    for (const operation of ['hierarchical-activation', 'semantic-index-activation'] as const) {
+      await manager.withLease(repository, operation, async () => {
+        const acquired = JSON.parse(await readFile(leasePath, 'utf8')) as unknown;
+        expect(acquired).toMatchObject({ operation, phase: 'acquired' });
+      });
+      await expect(lstat(leasePath)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+  });
+
   it('makes worktrees sharing one common directory contend without waiting or mutating', async () => {
     const { container, repository } = await createRepository();
     const worktree = join(container, 'secondary-worktree');

@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/hierarchical-wiki-activation.schema.json",
+  "title": "BuildLore replayable hierarchical Wiki activation contracts",
+  "oneOf": [
+    { "$ref": "#/$defs/activationInput" },
+    { "$ref": "#/$defs/activationResult" }
+  ],
+  "$defs": {
+    "activationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "projectId", "authority"],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.hierarchical-wiki-activation-input.v1"
+        },
+        "projectId": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/projectId"
+        },
+        "authority": {
+          "$ref": "#/$defs/authority"
+        }
+      }
+    },
+    "activationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "corpusDigest", "generationDigest",
+        "projectionDigest", "pageCount", "materialization", "providerUsed", "egress"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.hierarchical-wiki-activation-result.v2" },
+        "projectId": { "$ref": "hierarchical-corpus.schema.json#/$defs/projectId" },
+        "corpusDigest": { "$ref": "hierarchical-corpus.schema.json#/$defs/digest" },
+        "generationDigest": { "$ref": "hierarchical-corpus.schema.json#/$defs/digest" },
+        "projectionDigest": { "$ref": "hierarchical-corpus.schema.json#/$defs/digest" },
+        "pageCount": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "materialization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion", "projectId", "state", "generationDigest",
+            "materializationDigest", "pageCount", "fileCount"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "buildlore.hierarchical-markdown-materialization-status.v1"
+            },
+            "projectId": { "$ref": "hierarchical-corpus.schema.json#/$defs/projectId" },
+            "state": { "const": "ready" },
+            "generationDigest": { "$ref": "hierarchical-corpus.schema.json#/$defs/digest" },
+            "materializationDigest": {
+              "$ref": "hierarchical-corpus.schema.json#/$defs/digest"
+            },
+            "pageCount": { "type": "integer", "minimum": 0, "maximum": 4096 },
+            "fileCount": { "type": "integer", "minimum": 1, "maximum": 4097 }
+          }
+        },
+        "providerUsed": { "const": "none" },
+        "egress": { "const": "none" }
+      }
+    },
+    "generationHandoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exchange", "result"],
+      "properties": {
+        "exchange": {
+          "$ref": "hierarchical-current-session.schema.json#/$defs/generationExchange"
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["proposal", "receipt"],
+          "properties": {
+            "proposal": {
+              "$ref": "hierarchical-corpus.schema.json#/$defs/hierarchicalWikiProposal"
+            },
+            "receipt": {
+              "$ref": "hierarchical-current-session.schema.json#/$defs/generationReceipt"
+            }
+          }
+        }
+      }
+    },
+    "relationReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relationId", "reviewDigest", "decision"],
+      "properties": {
+        "relationId": { "type": "string", "pattern": "^relation-[a-f0-9]{64}$" },
+        "reviewDigest": { "$ref": "hierarchical-corpus.schema.json#/$defs/digest" },
+        "decision": { "enum": ["accepted", "rejected"] }
+      }
+    },
+    "finalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "graph", "outline", "planningInventory", "partitions", "proposals",
+        "evidencePacks", "pageQualityReports", "corpusQualityReport",
+        "reconciliation", "generationHandoffs", "baselineGenerationDigest",
+        "baselineProposals", "integratedReviewSurface", "integratedReviews",
+        "childSynthesisReviews", "relationReviews", "integrityReport"
+      ],
+      "properties": {
+        "graph": { "$ref": "hierarchical-corpus.schema.json#/$defs/sparseRelationGraph" },
+        "outline": { "$ref": "hierarchical-corpus.schema.json#/$defs/wikiOutline" },
+        "planningInventory": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/planningDispositionInventory"
+        },
+        "partitions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8192,
+          "items": { "$ref": "hierarchical-corpus.schema.json#/$defs/compilePartition" }
+        },
+        "proposals": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "items": { "$ref": "hierarchical-corpus.schema.json#/$defs/hierarchicalWikiProposal" }
+        },
+        "evidencePacks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "items": { "$ref": "hierarchical-corpus.schema.json#/$defs/evidencePack" }
+        },
+        "pageQualityReports": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "items": { "$ref": "hierarchical-corpus.schema.json#/$defs/pageQualityReport" }
+        },
+        "corpusQualityReport": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/corpusQualityReport"
+        },
+        "reconciliation": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/wikiLinkReconciliation"
+        },
+        "generationHandoffs": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 97,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/generationHandoff" },
+          "x-buildlore-canonicalOrderBy": "exchange.pageId",
+          "x-buildlore-uniqueBy": "exchange.pageId"
+        },
+        "baselineGenerationDigest": {
+          "oneOf": [
+            { "$ref": "hierarchical-corpus.schema.json#/$defs/digest" },
+            { "type": "null" }
+          ]
+        },
+        "baselineProposals": {
+          "type": "array",
+          "maxItems": 97,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "hierarchical-corpus.schema.json#/$defs/hierarchicalWikiProposal"
+          },
+          "x-buildlore-canonicalOrderBy": "pageId",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "integratedReviewSurface": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/integratedWikiReviewSurface"
+        },
+        "integratedReviews": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 97,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "hierarchical-corpus.schema.json#/$defs/integratedWikiCandidateReview"
+          },
+          "x-buildlore-canonicalOrderBy": "pageId",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "childSynthesisReviews": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 96,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "hierarchical-corpus.schema.json#/$defs/childSynthesisReview"
+          },
+          "x-buildlore-canonicalOrderBy": "pageId",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "relationReviews": {
+          "type": "array",
+          "maxItems": 131072,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/relationReview" },
+          "x-buildlore-canonicalOrderBy": "relationId",
+          "x-buildlore-uniqueBy": "relationId"
+        },
+        "integrityReport": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/compileIntegrityReport"
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "projectId", "currentState", "finalization", "ledger",
+        "liveSnapshot", "ownershipGraph", "humanActivationApproval", "state",
+        "authorityCheck"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.approved-wiki-authority.v1" },
+        "projectId": { "$ref": "hierarchical-corpus.schema.json#/$defs/projectId" },
+        "currentState": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "hierarchical-corpus.schema.json#/$defs/authoritativeWikiState" }
+          ]
+        },
+        "finalization": { "$ref": "#/$defs/finalization" },
+        "ledger": { "$ref": "hierarchical-corpus.schema.json#/$defs/compileRunLedger" },
+        "liveSnapshot": { "$ref": "hierarchical-corpus.schema.json#/$defs/corpusSnapshot" },
+        "ownershipGraph": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/pageOwnershipGraph"
+        },
+        "humanActivationApproval": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/humanActivationApproval"
+        },
+        "state": { "$ref": "hierarchical-corpus.schema.json#/$defs/authoritativeWikiState" },
+        "authorityCheck": {
+          "$ref": "hierarchical-corpus.schema.json#/$defs/authoritativeWikiCheck"
+        }
+      }
+    }
+  },
+  "x-buildlore-projectIsolation": true,
+  "x-buildlore-authority": "replayable-tracked-input",
+  "x-buildlore-providerCalls": 0,
+  "x-buildlore-egress": "none"
+}

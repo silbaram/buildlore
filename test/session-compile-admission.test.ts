@@ -121,6 +121,49 @@ function validatedBatch(
 }
 
 describe('session compile OKF admission', () => {
+  it('rejects an oversized internal admission batch before dry-run or persistence', async () => {
+    const original = validatedBatch('concept');
+    const page = original.pages[0];
+    if (page === undefined) throw new Error('missing fixture page');
+    const oversized: ValidatedSessionBatch = Object.freeze({
+      ...original,
+      pages: Object.freeze(Array.from({ length: 51 }, (_, index) => {
+        const slug = `oversized-${String(index).padStart(2, '0')}`;
+        return Object.freeze({
+          ...page,
+          proposal: Object.freeze({
+            ...page.proposal,
+            pageId: `concepts/${slug}`,
+            proposalId: `proposal-${slug}`,
+            slug,
+          }),
+        });
+      })),
+    });
+    let dryRunCalls = 0;
+    let storeCalls = 0;
+    const admission = createSessionCompileAdmission({
+      port: {
+        importOkf: () => {
+          dryRunCalls += 1;
+          return Promise.reject(new Error('must not run'));
+        },
+      },
+      reviewStoreFactory: () => ({
+        ...memoryReviewStore(),
+        stage: () => {
+          storeCalls += 1;
+          return Promise.reject(new Error('must not run'));
+        },
+      }),
+    });
+
+    await expect(admission.stage('/workspace', 'alpha', 'default', oversized))
+      .rejects.toMatchObject({ code: 'SESSION_ADMISSION_FAILED', sideEffectsPossible: false });
+    expect(dryRunCalls).toBe(0);
+    expect(storeCalls).toBe(0);
+  });
+
   it('stages a provenance-bound default candidate through the exact public SDK with bounded counts, reviewRequired, no live page, and no sibling-project mutation', async () => {
     const workspace = await mkdtemp(join(process.cwd(), '.test-tmp-session-sdk-'));
     const sibling = await mkdtemp(join(process.cwd(), '.test-tmp-session-sdk-sibling-'));
@@ -323,7 +366,14 @@ describe('session compile OKF admission', () => {
     if (citation === undefined) throw new Error('missing fixture citation');
     const proposal = {
       ...page.proposal,
-      body: 'Evidence.[^evidence]\n\n  \n',
+      body: [
+        'Literal ^[example], prefixed \\^[second], and evidence.[^evidence]',
+        '',
+        '```text',
+        'Code ^[literal] and [^evidence] stays byte-identical.',
+        '```',
+        '',
+      ].join('\n'),
       citations: [{
         ...citation,
         file: 'docs/[[source]].md',
@@ -364,7 +414,16 @@ describe('session compile OKF admission', () => {
     await expect(admission.stage('/workspace', 'alpha', 'default', batch))
       .resolves.toMatchObject({ outcome: 'staged' });
     expect(rendered).toContain('originalFile: docs/[[source]].md');
-    expect(rendered).toContain(`Evidence.^[${COMPILER_SOURCE_ID}:4]\n\n  \n`);
+    expect(rendered).toContain(
+      `Literal ^\\[example], prefixed \\^\\[second], and evidence.^[${COMPILER_SOURCE_ID}:4]\n`,
+    );
+    expect(rendered).toContain([
+      '```text',
+      'Code ^[literal] and [^evidence] stays byte-identical.',
+      '```',
+    ].join('\n'));
+    expect(rendered).not.toContain('Literal ^[example]');
+    expect(rendered).not.toContain('\\^[second]');
     expect(rendered).not.toContain('[^evidence]:');
     expect(rendered).not.toContain('See [[unknown-page]]');
   });

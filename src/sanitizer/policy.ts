@@ -29,12 +29,14 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const PREFIXED_SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const RULE_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 const SOURCE_KINDS = new Set<SecuritySourceKind>([
+  'code',
   'compiler-cache',
   'execution',
   'markdown',
   'planning',
   'profile',
   'provider-request',
+  'text',
   'wiki',
 ]);
 const EGRESS_CAPABILITIES = new Set<SecurityEgressCapability>([

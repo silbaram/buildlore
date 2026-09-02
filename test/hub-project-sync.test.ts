@@ -17,6 +17,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import { bindLocalProject } from '../src/knowledge/local-project-registry.js';
 import { addProject } from '../src/knowledge/workspace.js';
+import {
+  createBuildLoreLifecycleProfile,
+  createProjectLifecycleProfile,
+  renderLifecycleProfile,
+} from '../src/profile/index.js';
 import { runHubProjectSync } from '../src/projector/hub-sync.js';
 import { createSourceCollectionAdapter } from '../src/projector/collection-adapters.js';
 import {
@@ -27,6 +32,7 @@ import {
   type ProjectSyncSummary,
 } from '../src/projector/sync.js';
 import { createCollectionSourceIdentity } from '../src/projector/source-identity.js';
+import type { ExecutionKnowledgeProjectorPort } from '../src/projector/execution-types.js';
 import {
   SOURCE_COLLECTION_MANIFEST_SCHEMA_VERSION,
   type SourceDeclaration,
@@ -203,6 +209,105 @@ describe('hub-bound project sync', () => {
       .toMatchObject({ code: 'ENOENT' });
   });
 
+  it('routes P2A executions and rejects incomplete apply results at the hub boundary', async () => {
+    const current = await fixture();
+    const sourceRoot = await registerProject(current, 'alpha', {
+      '.plan2agent/current-spec.json': '{}\n',
+      '.plan2agent/runs/run-index.json': '{}\n',
+      'docs/placeholder.md': '# Placeholder\n',
+    }, [{
+      documentKind: 'p2a-planning',
+      id: 'p2a',
+      path: '.plan2agent',
+      pathType: 'directory',
+      recursive: true,
+    }]);
+    await git(sourceRoot, ['add', '--', '.plan2agent']);
+    await git(sourceRoot, ['commit', '-m', 'add execution artifacts']);
+    await writeFile(
+      join(current.knowledgeRoot, 'projects/alpha/profile.json'),
+      renderLifecycleProfile(createBuildLoreLifecycleProfile('en')),
+    );
+    const profile = createProjectLifecycleProfile({ knowledgeRoot: current.knowledgeRoot });
+    await profile.apply(await profile.plan('alpha'));
+
+    const plan = Object.freeze({
+      counts: Object.freeze({ blocked: 0, exclude: 0, include: 1, quarantine: 0 }),
+      entries: Object.freeze([Object.freeze({
+        attempts: Object.freeze([]),
+        decision: 'include' as const,
+        reasonCode: 'significant_change' as const,
+        sourceRevision: `sha256:${'a'.repeat(64)}` as const,
+        sourceUri: 'buildlore://p2a/execution',
+        target: `execution--${'b'.repeat(64)}.md`,
+        taskStableId: 'c'.repeat(64),
+        writeStatus: 'create' as const,
+      })]),
+      planFingerprint: `sha256:${'d'.repeat(64)}` as const,
+      policyVersion: 'buildlore.execution-inclusion.v1' as const,
+      projectId: 'alpha',
+      schemaVersion: 'buildlore.execution-projection-plan.v1' as const,
+    });
+    const executionRevision = plan.entries[0]?.sourceRevision;
+    if (executionRevision === undefined) throw new Error('execution fixture revision is missing');
+    const applyExecution = vi.fn(() => Promise.resolve({
+      planFingerprint: plan.planFingerprint,
+      projectId: 'alpha',
+      writes: [{
+        sourceRevision: executionRevision,
+        target: `execution--${'b'.repeat(64)}.md`,
+        taskStableId: 'c'.repeat(64),
+        writeStatus: 'create' as const,
+      }],
+    }));
+    const planExecution = vi.fn(() => Promise.resolve(plan));
+    const executionProjector: ExecutionKnowledgeProjectorPort = {
+      apply: applyExecution,
+      plan: planExecution,
+    };
+    const collectionAdapter = {
+      collect: vi.fn(() => Promise.resolve({
+        candidates: Object.freeze([]),
+        entries: Object.freeze([]),
+        notices: Object.freeze([]),
+      })),
+    };
+
+    const result = await runHubProjectSync(input(current.hubRoot), {
+      collectionAdapter,
+      executionProjector,
+      failure: failure(),
+    });
+
+    expect(planExecution).toHaveBeenCalledWith({
+      artifactRoot: join(sourceRoot, '.plan2agent'),
+      knowledgeRoot: current.knowledgeRoot,
+      projectId: 'alpha',
+    });
+    expect(applyExecution).toHaveBeenCalledWith(plan);
+    expect(result.execution.counts.include).toBe(1);
+    expect(result.writes).toEqual([{
+      sourceKind: 'execution',
+      sourceRevision: `sha256:${'a'.repeat(64)}`,
+      target: `execution--${'b'.repeat(64)}.md`,
+      writeStatus: 'create',
+    }]);
+
+    applyExecution.mockResolvedValueOnce({
+      planFingerprint: plan.planFingerprint,
+      projectId: 'alpha',
+      writes: [],
+    });
+    await expect(runHubProjectSync(input(current.hubRoot), {
+      collectionAdapter,
+      executionProjector,
+      failure: failure(),
+    })).rejects.toMatchObject({
+      code: 'SYNC_APPLY_FAILED',
+      failedPhase: 'execution-apply',
+    });
+  });
+
   it('returns a complete deterministic dry-run plan without knowledge or registry writes', async () => {
     const current = await fixture();
     await registerProject(current, 'alpha', {
@@ -338,15 +443,17 @@ describe('hub-bound project sync', () => {
           const collected = await delegate.collect(adapterInput);
           return Object.freeze({
             ...collected,
-            compatibilityWarnings: Object.freeze([
+            notices: Object.freeze([
               {
+                adapterId: 'buildlore.p2a',
                 code: 'p2a-document-compatibility-excluded' as const,
-                sourceArtifact: 'a-source.json',
+                sourceRef: 'a-source.json',
               },
               {
+                adapterId: 'buildlore.p2a',
                 code: 'p2a-additive-field-ignored' as const,
                 fieldName: 'future_summary',
-                sourceArtifact: 'z-source.json',
+                sourceRef: 'z-source.json',
               },
             ]),
           });

@@ -22,7 +22,7 @@
           "phases": [],
           "load": "on-demand",
           "required": true,
-          "condition": "Gate A approval, Gate ② project shape, or Gate B approval must be proposed or recorded.",
+          "condition": "Gate A approval, a material Gate ② project-shape decision, or Gate B approval must be proposed or recorded.",
           "stages": [
             "gate-a",
             "gate-shape",
