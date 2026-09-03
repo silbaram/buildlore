@@ -318,6 +318,16 @@ node dist/cli/bin.js compile hierarchy submit \
   --expect-exchange sha256:<exchange-digest> \
   --json
 
+# A hard page-quality failure keeps the run alive. Correct only that page with the
+# new exchange returned by status; at most three page-local resubmissions are allowed.
+node dist/cli/bin.js compile hierarchy resubmit \
+  --project example \
+  --run run-<64-lowercase-hex> \
+  --page page-<64-lowercase-hex> \
+  --input handoffs/corrected-page-submission.json \
+  --expect-exchange sha256:<new-exchange-digest> \
+  --json
+
 # Explicitly review child synthesis before reviewing the combined content diff and quality.
 node dist/cli/bin.js compile hierarchy child-review \
   --project example \
@@ -369,6 +379,9 @@ replays sanitized inputs, exchanges, generation receipts, reviews, and ledger bi
 before advancing it. The `review` result presents the combined content diff and
 deterministic quality report; it does not accept the candidates. `approve` records the
 explicit human decision but does not activate, publish Git, or silently accept anything.
+An unfinished run created under an older hierarchy contract is never upgraded in place:
+`status` reports `policy-outdated` with the `start-new-run` recovery action. Authority that
+was already activated by the prior contract remains readable and can be rematerialized.
 
 BuildLore never launches Codex, Claude, a model provider, an agent SDK, or an
 agent/provider child process for this workflow. It never authors proposals, auto-accepts
@@ -378,9 +391,10 @@ passes only the declared JSON handoffs back to BuildLore.
 
 #### Library API
 
-The product-level library boundary is
+The optional `wikiTitle` in the purpose becomes the root Wiki title; when omitted, the
+registered project display name is used. The product-level library boundary is
 `createHierarchicalWorkflowService({ hubRoot, knowledgeRoot })`. Its
-`start/status/submit/childReview/review/finalize/approve` methods mirror the CLI while
+`start/status/submit/resubmit/childReview/review/finalize/approve` methods mirror the CLI while
 persisting and replaying the ignored, project-confined local run. `approve` returns the
 exact `activationBundlePath`, approval digest, and `activationArgs`; pass those to the
 separate activation service when the human intends to make the reviewed generation
@@ -392,7 +406,12 @@ the importable `createCurrentSessionGenerationService({ knowledgeRoot })` API. I
 `prepare(...)` call returns one bounded, serializable exchange containing the writing
 brief, sanitized evidence, reviewed child summaries, instructions, and the exact proposal
 contract. Give only that exchange to the current agent, then pass its versioned
-`buildlore.current-session-proposal-submission.v1` response to `session.submit(...)`.
+`buildlore.current-session-proposal-submission.v2` response to `session.submit(...)`.
+Exchange v2 exposes the enforced rule codes and a required/optional section guide. A
+submission must include every required section, may add at most eight unique optional
+sections, and may give any section a human-readable `title`. Each substantive paragraph
+must carry a citation or contain a declared grounded claim; claims, independent summaries,
+and non-generic titles are checked with the shared semantic-token policy.
 `prepare(...)` deliberately accepts only the original `EvidencePackV1` returned by
 `createEvidencePack(...)` in the same process; do not JSON-round-trip the pack before
 preparing the exchange. Reuse one service instance for the complete leaf-to-parent run so
@@ -454,6 +473,14 @@ deterministic, Git-trackable human reading surface under
 the only authority; direct Markdown edits are reported as materialization drift and are never
 used as retrieval or semantic-index input. Activation does not call an LLM, embed content,
 rebuild an index, commit/push Git, or pin the knowledge submodule.
+
+If status reports `renderer-outdated` for an intact prior materialization, regenerate only
+the derived Markdown from the already verified authority. This does not repeat generation,
+review, approval, or semantic indexing and does not change the authority identity:
+
+```sh
+node dist/cli/bin.js compile activate --project example --rematerialize --json
+```
 
 ## Read and retrieve knowledge
 

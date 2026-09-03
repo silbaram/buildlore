@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  parseCurrentSessionProposalSubmission,
   type CurrentSessionGenerationExchangeV1,
   type CurrentSessionProposalSubmissionV1,
 } from '../src/compiler/index.js';
@@ -22,6 +23,58 @@ const execFileAsync = promisify(execFile);
 const PROJECT_ID = 'hierarchy-cycle';
 const roots: string[] = [];
 
+const MARKDOWN_SOURCES = Object.freeze([
+  Object.freeze({
+    id: 'payments',
+    path: 'docs/payments.md',
+    title: 'Payment Processing',
+    topic: 'Payment Requests',
+    focus: 'idempotent payment request validation and durable authorization state',
+  }),
+  Object.freeze({
+    id: 'incidents',
+    path: 'docs/incidents.md',
+    title: 'Incident Response',
+    topic: 'Outage Rollback',
+    focus: 'isolated outage rollback checkpoints and observable recovery decisions',
+  }),
+  Object.freeze({
+    id: 'security',
+    path: 'docs/security.md',
+    title: 'Security Boundaries',
+    topic: 'Sanitized Evidence',
+    focus: 'sanitizer-approved evidence and value-free rejection boundaries',
+  }),
+  Object.freeze({
+    id: 'retrieval',
+    path: 'docs/retrieval.md',
+    title: 'Local Retrieval',
+    topic: 'Semantic Index',
+    focus: 'local lexical graph and derived semantic index retrieval',
+  }),
+  Object.freeze({
+    id: 'lifecycle',
+    path: 'docs/lifecycle.md',
+    title: 'Review Lifecycle',
+    topic: 'Approval and Activation',
+    focus: 'separate review finalize human approval and activation transitions',
+  }),
+]);
+
+function markdownSourceBody(source: typeof MARKDOWN_SOURCES[number]): string {
+  return [
+    `# ${source.title}`,
+    '',
+    `## ${source.topic}`,
+    '',
+    ...Array.from({ length: 12 }, (_, index) => [
+      `${source.topic} evidence ${String(index + 1)} explains ${source.focus} while keeping ` +
+        'the synchronized local source, review lineage, and explicit Wiki activation verifiable.',
+      '',
+    ]).flat(),
+  ].join('\n');
+}
+
 async function git(cwd: string, args: readonly string[]): Promise<void> {
   await execFileAsync('git', [...args], {
     cwd,
@@ -34,7 +87,10 @@ async function configureIdentity(repository: string): Promise<void> {
   await git(repository, ['config', 'user.email', 'buildlore@example.invalid']);
 }
 
-async function fixture(): Promise<Readonly<{ readonly hubRoot: string }>> {
+async function fixture(): Promise<Readonly<{
+  readonly hubRoot: string;
+  readonly sourceCount: number;
+}>> {
   const root = await mkdtemp(join(tmpdir(), 'buildlore-hierarchy-agent-cycle-'));
   roots.push(root);
   const origin = join(root, 'knowledge.git');
@@ -53,30 +109,19 @@ async function fixture(): Promise<Readonly<{ readonly hubRoot: string }>> {
   await configureIdentity(sourceRoot);
   await mkdir(join(sourceRoot, 'docs'));
   await Promise.all([
-    writeFile(
-      join(sourceRoot, 'docs/leaf.md'),
-      'Leaf evidence explains that sanitized local source bytes remain bound to exact ' +
-        'citation anchors before any reviewed Wiki candidate can advance.\n',
+    ...MARKDOWN_SOURCES.map((source) => writeFile(
+      join(sourceRoot, source.path),
+      markdownSourceBody(source),
       'utf8',
-    ),
-    writeFile(
-      join(sourceRoot, 'docs/root.md'),
-      'Root evidence explains that explicit child review, integrated quality inspection, ' +
-        'human approval, and activation remain separate local steps.\n',
-      'utf8',
-    ),
-    writeFile(
-      join(sourceRoot, 'docs/operations.txt'),
-      'Operational text evidence explains that a restarted local command must replay the ' +
-        'same sanitized corpus identity before it accepts a proposal or changes Wiki authority.\n',
-      'utf8',
-    ),
+    )),
     writeFile(
       join(sourceRoot, 'docs/authority.ts'),
-      '/** Code evidence keeps review and activation as distinct explicit authority steps. */\n' +
-        'export function mayActivate(reviewAccepted: boolean, humanApproved: boolean): boolean {\n' +
-        '  return reviewAccepted && humanApproved;\n' +
-        '}\n',
+      Array.from({ length: 10 }, (_, index) => [
+        `export function authorityStep${String(index + 1)}(reviewed: boolean): boolean {`,
+        `  // Authority step ${String(index + 1)} preserves explicit local review and activation.`,
+        '  return reviewed;',
+        '}',
+      ].join('\n')).join('\n\n') + '\n',
       'utf8',
     ),
   ]);
@@ -93,24 +138,14 @@ async function fixture(): Promise<Readonly<{ readonly hubRoot: string }>> {
     capabilities: ['compile'],
   });
   const sources = createSourceManagement({ hubRoot });
-  await sources.add({
-    id: 'leaf',
-    kind: 'markdown',
-    path: 'docs/leaf.md',
-    projectId: PROJECT_ID,
-  });
-  await sources.add({
-    id: 'root',
-    kind: 'markdown',
-    path: 'docs/root.md',
-    projectId: PROJECT_ID,
-  });
-  await sources.add({
-    id: 'operations',
-    kind: 'text',
-    path: 'docs/operations.txt',
-    projectId: PROJECT_ID,
-  });
+  for (const source of MARKDOWN_SOURCES) {
+    await sources.add({
+      id: source.id,
+      kind: 'markdown',
+      path: source.path,
+      projectId: PROJECT_ID,
+    });
+  }
   await sources.add({
     id: 'authority-code',
     kind: 'code',
@@ -118,7 +153,7 @@ async function fixture(): Promise<Readonly<{ readonly hubRoot: string }>> {
     projectId: PROJECT_ID,
   });
   await mkdir(join(hubRoot, 'handoffs'));
-  return Object.freeze({ hubRoot });
+  return Object.freeze({ hubRoot, sourceCount: MARKDOWN_SOURCES.length + 1 });
 }
 
 interface Invocation {
@@ -174,38 +209,51 @@ function authorProposal(
   const roleVocabulary = exchange.writingBrief.role === 'overview'
     ? 'landscape navigation governance sequence synthesis portfolio orientation'
     : 'focused detail implementation trace inspection verification mechanics boundary';
-  const evidenceText = exchange.evidencePack.units.map((unit) =>
-    `${unit.content} [^${unit.citation.citationId}]`).join(' ');
+  const primaryCitation = `[^${firstUnit.citation.citationId}]`;
   const childText = exchange.request.approvedChildSummaries.map((summary) =>
-    `${summary.summary} ${summary.citationIds.map((citationId) =>
+    `${exchange.writingBrief.title} incorporates ${summary.summary} ${summary.citationIds.map((citationId) =>
       `[^${citationId}]`).join(' ')}`).join(' ');
   const linkText = exchange.request.requiredLinkPageIds.map((pageId) =>
     `[[${pageId}]]`).join(' ');
   const questions = exchange.writingBrief.keyQuestions.join(' ');
+  const claimedSourceIds = new Set<string>();
+  const claimedUnits = exchange.evidencePack.units.filter((unit) => {
+    if (exchange.writingBrief.role === 'topic') return true;
+    if (claimedSourceIds.has(unit.sourceId)) return false;
+    claimedSourceIds.add(unit.sourceId);
+    return true;
+  });
+  const claims = claimedUnits.map((unit) => Object.freeze({
+    text: `${unit.content.replace(/\s+/gu, ' ').trim()} — ${exchange.writingBrief.title}`,
+    evidenceUnitIds: Object.freeze([unit.unitId]),
+    citationIds: Object.freeze([unit.citation.citationId]),
+  }));
+  const renderedClaims = claims.map((claim) =>
+    `${claim.text} [^${claim.citationIds[0]}]`).join('\n\n');
   const sections = exchange.request.requiredSections.map((sectionId, index) => ({
     sectionId,
-    body: [
-      questions,
-      `The reviewed ${sectionId} section provides ${roleVocabulary} grounded in exact local claims:`,
-      evidenceText,
-      index === 0 ? childText : '',
-      index === 0 ? linkText : '',
-    ].filter((part) => part.length > 0).join(' '),
+    body: index === 0
+      ? [
+          `The ${exchange.writingBrief.title} ${sectionId} section answers ${questions} ` +
+            `through ${roleVocabulary}. ` +
+            `${primaryCitation} ${linkText}`,
+          childText,
+          renderedClaims,
+        ].filter((part) => part.length > 0).join('\n\n')
+      : `The ${exchange.writingBrief.title} ${sectionId} view connects reviewed ` +
+          `${roleVocabulary} to ${questions} ` +
+          `without changing the approved evidence boundary. ${primaryCitation}`,
   }));
   return Object.freeze({
-    schemaVersion: 'buildlore.current-session-proposal-submission.v1',
+    schemaVersion: 'buildlore.current-session-proposal-submission.v2',
     projectId: exchange.projectId,
     pageId: exchange.pageId,
     exchangeDigest: exchange.exchangeDigest,
     requestDigest: exchange.requestDigest,
     title: exchange.writingBrief.title,
-    summary: firstUnit.content,
+    summary: `Summary: ${claims[0]?.text ?? ''}`,
     sections: Object.freeze(sections.map((section) => Object.freeze(section))),
-    claims: Object.freeze(exchange.evidencePack.units.map((unit) => Object.freeze({
-      text: unit.content,
-      evidenceUnitIds: Object.freeze([unit.unitId]),
-      citationIds: Object.freeze([unit.citation.citationId]),
-    }))),
+    claims: Object.freeze(claims),
     wikilinks: exchange.request.requiredLinkPageIds,
   });
 }
@@ -226,7 +274,10 @@ describe('current-agent hierarchical Wiki product cycle', () => {
     const current = await fixture();
     const synchronized = await invoke(current.hubRoot, ['sync', '--project', PROJECT_ID]);
     expect(synchronized.exitCode).toBe(0);
-    expect(synchronized.envelope.data).toMatchObject({ appliedCount: 4, projectId: PROJECT_ID });
+    expect(synchronized.envelope.data).toMatchObject({
+      appliedCount: current.sourceCount,
+      projectId: PROJECT_ID,
+    });
 
     const purposePath = await writeHandoff(current.hubRoot, 'purpose', {
       schemaVersion: 'buildlore.hierarchical-workflow-purpose-input.v1',
@@ -238,6 +289,7 @@ describe('current-agent hierarchical Wiki product cycle', () => {
       excludedTopics: ['Hosted agents and automatic approval'],
       outputLanguage: 'en',
       requestedPageRoles: ['overview', 'topic'],
+      wikiTitle: 'BuildLore Operations Wiki',
     });
     const started = await invoke(current.hubRoot, [
       'compile', 'hierarchy', 'start', '--project', PROJECT_ID, '--purpose', purposePath,
@@ -248,11 +300,26 @@ describe('current-agent hierarchical Wiki product cycle', () => {
     let status = record(record(started.envelope.data, 'start result').status, 'start status');
     let step = 0;
     let wrongExchangeChecked = false;
-    while (status.nextAction === 'submit-proposal' || status.nextAction === 'review-child') {
+    const firstExchanges = new Map<string, CurrentSessionGenerationExchangeV1>();
+    const resubmittedPageIds = new Set<string>();
+    while (status.nextAction === 'submit-proposal' ||
+        status.nextAction === 'resubmit-proposal' || status.nextAction === 'review-child') {
       step += 1;
-      if (step > 20) throw new Error('Hierarchy workflow did not converge.');
-      if (status.nextAction === 'submit-proposal') {
+      if (step > 30) throw new Error('Hierarchy workflow did not converge.');
+      if (status.nextAction === 'submit-proposal' ||
+          status.nextAction === 'resubmit-proposal') {
         const exchange = exchangeFromStatus(status);
+        if (!firstExchanges.has(exchange.pageId)) firstExchanges.set(exchange.pageId, exchange);
+        if (status.nextAction === 'resubmit-proposal') resubmittedPageIds.add(exchange.pageId);
+        expect(Buffer.byteLength(serializeCanonicalJson(exchange), 'utf8'))
+          .toBeLessThanOrEqual(512 * 1024);
+        expect(exchange.evidencePack.units.length).toBeLessThanOrEqual(64);
+        const exchangeSourceCounts = new Map<string, number>();
+        for (const unit of exchange.evidencePack.units) {
+          exchangeSourceCounts.set(unit.sourceId, (exchangeSourceCounts.get(unit.sourceId) ?? 0) + 1);
+        }
+        expect(exchangeSourceCounts.size).toBeLessThanOrEqual(8);
+        expect([...exchangeSourceCounts.values()].every((count) => count <= 8)).toBe(true);
         expect(exchange.boundary).toEqual({
           buildloreInitiatedEgress: 'none',
           disclosureScope: 'sanitized-evidence-only',
@@ -260,10 +327,17 @@ describe('current-agent hierarchical Wiki product cycle', () => {
           processSpawned: false,
           providerUsed: null,
         });
+        const proposal = authorProposal(exchange);
+        expect(() => parseCurrentSessionProposalSubmission(proposal, {
+          projectId: exchange.projectId,
+          pageId: exchange.pageId,
+          exchangeDigest: exchange.exchangeDigest,
+          requestDigest: exchange.requestDigest,
+        })).not.toThrow();
         const proposalPath = await writeHandoff(
           current.hubRoot,
           `proposal-${String(step).padStart(2, '0')}`,
-          authorProposal(exchange),
+          proposal,
         );
         if (!wrongExchangeChecked) {
           const before = status.revision;
@@ -279,11 +353,17 @@ describe('current-agent hierarchical Wiki product cycle', () => {
           expect(record(unchanged.envelope.data, 'unchanged status').revision).toBe(before);
           wrongExchangeChecked = true;
         }
-        const submitted = await invoke(current.hubRoot, [
-          'compile', 'hierarchy', 'submit', '--project', PROJECT_ID, '--run', runId,
-          '--input', proposalPath, '--expect-exchange', exchange.exchangeDigest,
-        ]);
-        expect(submitted.exitCode).toBe(0);
+        const submitted = await invoke(current.hubRoot, status.nextAction === 'submit-proposal'
+          ? [
+              'compile', 'hierarchy', 'submit', '--project', PROJECT_ID, '--run', runId,
+              '--input', proposalPath, '--expect-exchange', exchange.exchangeDigest,
+            ]
+          : [
+              'compile', 'hierarchy', 'resubmit', '--project', PROJECT_ID, '--run', runId,
+              '--page', exchange.pageId, '--input', proposalPath,
+              '--expect-exchange', exchange.exchangeDigest,
+            ]);
+        expect(submitted.exitCode, submitted.raw).toBe(0);
         status = record(record(submitted.envelope.data, 'submit result').status, 'submit status');
       } else {
         const childReview = record(status.childReview, 'child review');
@@ -304,7 +384,7 @@ describe('current-agent hierarchical Wiki product cycle', () => {
         status = record(record(reviewed.envelope.data, 'child result').status, 'child status');
       }
     }
-    expect(status).toMatchObject({
+    expect(status, JSON.stringify(status)).toMatchObject({
       nextAction: 'review-integrated-wiki',
       phase: 'review-ready',
       processSpawned: false,
@@ -323,6 +403,50 @@ describe('current-agent hierarchical Wiki product cycle', () => {
     if (!Array.isArray(candidates) || !Array.isArray(relations)) {
       throw new Error('Integrated review candidates are unavailable.');
     }
+    expect(candidates.length / current.sourceCount).toBeGreaterThanOrEqual(1);
+    expect(firstExchanges.size).toBe(candidates.length);
+    expect((candidates.length - resubmittedPageIds.size) / candidates.length)
+      .toBeGreaterThanOrEqual(0.8);
+    const evidenceCounts = [...firstExchanges.values()].map((exchange) =>
+      exchange.evidencePack.units.length);
+    expect(evidenceCounts.reduce((sum, count) => sum + count, 0) / evidenceCounts.length)
+      .toBeGreaterThanOrEqual(12);
+    let selectedUnitCount = 0;
+    let inScopeUnitCount = 0;
+    let identicalSummaryCount = 0;
+    for (const candidateValue of candidates) {
+      const candidate = record(candidateValue, 'quality candidate');
+      const blueprint = record(candidate.blueprint, 'quality blueprint');
+      const proposal = record(candidate.proposal, 'quality proposal');
+      const quality = record(candidate.pageQualityReport, 'page quality report');
+      expect(quality.hardQualityPassed).toBe(true);
+      const pageId = stringField(candidate, 'pageId');
+      const exchange = firstExchanges.get(pageId);
+      if (exchange === undefined) throw new Error('Missing first exchange.');
+      const scope = record(blueprint.evidenceScope, 'evidence scope');
+      const preferred = new Set(Array.isArray(scope.preferredUnitIds)
+        ? scope.preferredUnitIds.filter((unitId): unitId is string => typeof unitId === 'string')
+        : []);
+      const scopedSources = new Set(Array.isArray(scope.sourceIds)
+        ? scope.sourceIds.filter((sourceId): sourceId is string => typeof sourceId === 'string')
+        : []);
+      selectedUnitCount += exchange.evidencePack.units.length;
+      inScopeUnitCount += exchange.evidencePack.units.filter((unit) =>
+        preferred.size > 0 ? preferred.has(unit.unitId) : scopedSources.has(unit.sourceId)).length;
+      const claims = proposal.claims;
+      const summary = proposal.summary;
+      if (Array.isArray(claims) && typeof summary === 'string' && claims.some((claim) =>
+        record(claim, 'quality claim').text === summary)) identicalSummaryCount += 1;
+      expect([stringField(blueprint, 'title')]).not.toEqual(['overview']);
+      expect(stringField(blueprint, 'title')).not.toBe('topic');
+    }
+    expect(inScopeUnitCount / selectedUnitCount).toBeGreaterThanOrEqual(0.8);
+    expect(identicalSummaryCount / candidates.length).toBeLessThanOrEqual(0.2);
+    const paymentExchange = [...firstExchanges.values()].find((exchange) =>
+      exchange.writingBrief.title.includes('Payment Requests'));
+    expect(paymentExchange?.evidencePack.units[0]?.citation.sourceRef).toBe('docs/payments.md');
+    expect(paymentExchange?.evidencePack.units.every((unit) =>
+      unit.citation.sourceRef !== 'docs/incidents.md')).toBe(true);
     const finalReviewPath = await writeHandoff(current.hubRoot, 'final-review', {
       schemaVersion: 'buildlore.hierarchical-workflow-finalize-input.v1',
       projectId: PROJECT_ID,
@@ -419,12 +543,71 @@ describe('current-agent hierarchical Wiki product cycle', () => {
     const activeStatus = await invoke(current.hubRoot, [
       'compile', 'hierarchy', 'status', '--project', PROJECT_ID, '--run', runId,
     ]);
-    expect(activeStatus.envelope.data).toMatchObject({
+    expect(activeStatus.exitCode, activeStatus.raw).toBe(0);
+    expect(activeStatus.envelope.data, activeStatus.raw).toMatchObject({
       activationState: 'active',
       authorityCheckStatus: 'clean',
       nextAction: 'none',
       phase: 'approved',
     });
+    const markdownRoot = join(
+      current.hubRoot,
+      'knowledge',
+      'projects',
+      PROJECT_ID,
+      'wiki',
+      'buildlore-hierarchy',
+    );
+    const manifest = record(
+      JSON.parse(await readFile(join(markdownRoot, 'manifest.json'), 'utf8')) as unknown,
+      'Markdown manifest',
+    );
+    expect(manifest).toMatchObject({
+      pageCount: candidates.length,
+      schemaVersion: 'buildlore.hierarchical-markdown-materialization-manifest.v2',
+    });
+    const manifestFiles = manifest.files;
+    if (!Array.isArray(manifestFiles)) throw new Error('Markdown files are unavailable.');
+    const pageFiles = manifestFiles.filter((file) => record(file, 'manifest file').kind === 'page');
+    expect(pageFiles).toHaveLength(candidates.length);
+    const candidateByPageId = new Map(candidates.map((candidate) => {
+      const value = record(candidate, 'quality candidate');
+      return [stringField(value, 'pageId'), value] as const;
+    }));
+    const sectionTitles: Readonly<Record<string, string>> = Object.freeze({
+      evidence: 'Evidence',
+      goals: 'Goals',
+      'related-topics': 'Related topics',
+      summary: 'Summary',
+      'topic-map': 'Topic map',
+    });
+    for (const fileValue of pageFiles) {
+      const file = record(fileValue, 'page manifest file');
+      const citationMap = file.citationMap;
+      if (!Array.isArray(citationMap)) throw new Error('Citation map is unavailable.');
+      expect(citationMap.map((entry) => record(entry, 'citation map entry').number))
+        .toEqual(Array.from({ length: citationMap.length }, (_, index) => index + 1));
+      const body = await readFile(join(markdownRoot, stringField(file, 'path')), 'utf8');
+      expect(body).toContain('[^1]');
+      const candidate = candidateByPageId.get(stringField(file, 'pageId'));
+      if (candidate === undefined) throw new Error('Rendered candidate is unavailable.');
+      const blueprint = record(candidate.blueprint, 'rendered blueprint');
+      const requiredSections = blueprint.requiredSections;
+      if (!Array.isArray(requiredSections)) throw new Error('Required sections are unavailable.');
+      const offsets = requiredSections.map((sectionId) => {
+        if (typeof sectionId !== 'string') throw new Error('Section id is unavailable.');
+        const title = sectionTitles[sectionId];
+        if (title === undefined) throw new Error('Localized section title is unavailable.');
+        return body.indexOf(`## ${title}`);
+      });
+      expect(offsets.every((offset) => offset >= 0)).toBe(true);
+      expect(offsets).toEqual([...offsets].sort((left, right) => left - right));
+    }
+    expect((await readdir(markdownRoot)).sort()).toEqual([
+      'index.md',
+      'manifest.json',
+      ...pageFiles.map((file) => stringField(file, 'path')),
+    ].sort());
 
     const listed = await invoke(current.hubRoot, ['wiki', 'list', '--project', PROJECT_ID]);
     expect(listed.exitCode).toBe(0);

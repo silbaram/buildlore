@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import type { EvidenceCitationAnchorV1 } from '../compiler/hierarchy/types.js';
+import type {
+  EvidenceCitationAnchorV1,
+  EvidenceUnitV1,
+  HierarchicalProposalSectionV1,
+  PageBlueprintV1,
+} from '../compiler/hierarchy/types.js';
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import {
   prepareApprovedWikiPublication,
@@ -9,9 +14,9 @@ import {
 import type { ApprovedWikiRetrievalPageV1 } from './hierarchical.js';
 
 export const HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION =
-  'buildlore.hierarchical-markdown-materialization-manifest.v1' as const;
+  'buildlore.hierarchical-markdown-materialization-manifest.v2' as const;
 export const HIERARCHICAL_MARKDOWN_STATUS_SCHEMA_VERSION =
-  'buildlore.hierarchical-markdown-materialization-status.v1' as const;
+  'buildlore.hierarchical-markdown-materialization-status.v2' as const;
 export const HIERARCHICAL_MARKDOWN_PAGE_SCHEMA_VERSION =
   'buildlore.hierarchical-markdown-page.v1' as const;
 export const HIERARCHICAL_MARKDOWN_INDEX_SCHEMA_VERSION =
@@ -49,18 +54,23 @@ const INDEX_FILE_PROPERTIES = Object.freeze([
 ] as const);
 const PAGE_FILE_PROPERTIES = Object.freeze([
   ...INDEX_FILE_PROPERTIES,
+  'citationMap',
   'pageId',
   'proposalDigest',
 ] as const);
 const RENDERER_CONTRACT = Object.freeze({
-  citationOrder: 'citation-id',
+  citationExcerpt: 'nfc-prose-160-scalars-or-code-first-line',
+  citationMarkers: 'page-local-integers-by-citation-id',
   encoding: 'utf-8',
   frontmatter: 'json-scalars',
   lineEndings: 'lf',
   linkMode: 'relative-page-id-outside-code',
+  navigation: 'child-table-above-eight',
   normalization: 'nfc',
   pageOrder: 'page-id',
-  schemaVersion: 'buildlore.hierarchical-markdown-renderer.v1',
+  schemaVersion: 'buildlore.hierarchical-markdown-renderer.v2',
+  sectionOrder: 'blueprint-required-then-proposal-optional',
+  sectionTitles: 'proposal-then-output-language-default',
   timestamp: 'none',
 });
 
@@ -100,11 +110,17 @@ export class HierarchicalMarkdownMaterializationError extends Error {
 
 export interface HierarchicalMarkdownFileRecordV1 {
   readonly byteLength: number;
+  readonly citationMap?: readonly HierarchicalMarkdownCitationMapEntryV2[];
   readonly kind: 'index' | 'page';
   readonly pageId?: string;
   readonly path: string;
   readonly proposalDigest?: `sha256:${string}`;
   readonly sha256: `sha256:${string}`;
+}
+
+export interface HierarchicalMarkdownCitationMapEntryV2 {
+  readonly citationId: string;
+  readonly number: number;
 }
 
 export interface HierarchicalMarkdownMaterializationManifestV1 {
@@ -162,6 +178,15 @@ export type HierarchicalMarkdownMaterializationStatusV1 =
       readonly state: 'invalid';
     }>
   | Readonly<{
+      readonly projectId: string;
+      readonly reasonCode: 'renderer-outdated';
+      readonly recoveryAction: readonly [
+        'compile', 'activate', '--project', string, '--rematerialize',
+      ];
+      readonly schemaVersion: typeof HIERARCHICAL_MARKDOWN_STATUS_SCHEMA_VERSION;
+      readonly state: 'renderer-outdated';
+    }>
+  | Readonly<{
       readonly fileCount: number;
       readonly generationDigest: `sha256:${string}`;
       readonly materializationDigest: `sha256:${string}`;
@@ -211,7 +236,31 @@ function escapeMarkdownLabel(value: string): string {
   return value.normalize('NFC').replace(/[\\[\]*_`<>#]/gu, '\\$&');
 }
 
-function sectionTitle(sectionId: string): string {
+const SECTION_TITLES = Object.freeze({
+  en: Object.freeze({
+    summary: 'Summary',
+    goals: 'Goals',
+    'key-questions': 'Key questions',
+    'topic-map': 'Topic map',
+    evidence: 'Evidence',
+    'related-topics': 'Related topics',
+  }),
+  ko: Object.freeze({
+    summary: '요약',
+    goals: '목표',
+    'key-questions': '핵심 질문',
+    'topic-map': '주제 지도',
+    evidence: '근거',
+    'related-topics': '관련 주제',
+  }),
+});
+
+function sectionTitle(sectionId: string, outputLanguage: string): string {
+  const language = outputLanguage.toLowerCase().startsWith('ko') ? 'ko' : 'en';
+  const localized = SECTION_TITLES[language][
+    sectionId as keyof typeof SECTION_TITLES.en
+  ];
+  if (localized !== undefined) return localized;
   const value = sectionId.replaceAll('-', ' ').replaceAll('_', ' ').trim();
   return escapeMarkdownLabel(value.length > 0 ? value : sectionId);
 }
@@ -232,9 +281,32 @@ function replaceWikiLinksInText(
   });
 }
 
+function replaceCitationMarkersInText(
+  value: string,
+  citationNumbers: ReadonlyMap<string, number>,
+): string {
+  return value.replace(
+    /(?<!\\)\[\^(citation-[a-f0-9]{64})\]/gu,
+    (_match, citationId: string) => {
+      const number = citationNumbers.get(citationId);
+      if (number === undefined) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+      return `[^${String(number)}]`;
+    },
+  );
+}
+
+function transformPlainText(
+  value: string,
+  pages: ReadonlyMap<string, ApprovedWikiRetrievalPageV1>,
+  citationNumbers: ReadonlyMap<string, number>,
+): string {
+  return replaceCitationMarkersInText(replaceWikiLinksInText(value, pages), citationNumbers);
+}
+
 function replaceWikiLinksOutsideInlineCode(
   line: string,
   pages: ReadonlyMap<string, ApprovedWikiRetrievalPageV1>,
+  citationNumbers: ReadonlyMap<string, number>,
 ): string {
   let result = '';
   let plainStart = 0;
@@ -249,17 +321,18 @@ function replaceWikiLinksOutsideInlineCode(
     const delimiter = line.slice(cursor, delimiterEnd);
     const close = line.indexOf(delimiter, delimiterEnd);
     if (close < 0) break;
-    result += replaceWikiLinksInText(line.slice(plainStart, cursor), pages);
+    result += transformPlainText(line.slice(plainStart, cursor), pages, citationNumbers);
     result += line.slice(cursor, close + delimiter.length);
     cursor = close + delimiter.length;
     plainStart = cursor;
   }
-  return result + replaceWikiLinksInText(line.slice(plainStart), pages);
+  return result + transformPlainText(line.slice(plainStart), pages, citationNumbers);
 }
 
 function transformWikiLinks(
   body: string,
   pages: ReadonlyMap<string, ApprovedWikiRetrievalPageV1>,
+  citationNumbers: ReadonlyMap<string, number> = new Map(),
 ): string {
   const lines = body.replace(/\r\n?/gu, '\n').normalize('NFC').split('\n');
   let fence: Readonly<{ readonly character: '`' | '~'; readonly length: number }> | null = null;
@@ -281,32 +354,56 @@ function transformWikiLinks(
       }
       return line;
     }
-    return replaceWikiLinksOutsideInlineCode(line, pages);
+    return replaceWikiLinksOutsideInlineCode(line, pages, citationNumbers);
   }).join('\n');
 }
 
-function citationAnchors(
-  publication: ApprovedWikiPublicationSnapshotV1,
-): ReadonlyMap<string, EvidenceCitationAnchorV1> {
-  const anchors = new Map<string, EvidenceCitationAnchorV1>();
-  for (const pack of publication.authority.finalization.evidencePacks) {
-    for (const unit of pack.units) {
-      const existing = anchors.get(unit.citation.citationId);
-      if (existing !== undefined && !sameValue(existing, unit.citation)) {
-        fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
-      }
-      anchors.set(unit.citation.citationId, unit.citation);
-    }
-  }
-  return anchors;
+interface CitationEvidenceV2 {
+  readonly anchor: EvidenceCitationAnchorV1;
+  readonly content: string;
+  readonly kind: EvidenceUnitV1['kind'];
 }
 
-function citationLine(anchor: EvidenceCitationAnchorV1): string {
+function citationEvidence(
+  publication: ApprovedWikiPublicationSnapshotV1,
+): ReadonlyMap<string, CitationEvidenceV2> {
+  const evidence = new Map<string, CitationEvidenceV2>();
+  for (const pack of publication.authority.finalization.evidencePacks) {
+    for (const unit of pack.units) {
+      const candidate = Object.freeze({
+        anchor: unit.citation,
+        content: unit.content,
+        kind: unit.kind,
+      });
+      const existing = evidence.get(unit.citation.citationId);
+      if (existing !== undefined && !sameValue(existing, candidate)) {
+        fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+      }
+      evidence.set(unit.citation.citationId, candidate);
+    }
+  }
+  return evidence;
+}
+
+function evidenceExcerpt(evidence: CitationEvidenceV2): string {
+  const normalized = evidence.content.normalize('NFC');
+  if (evidence.kind === 'fenced-code') {
+    const lines = normalized.split('\n');
+    const first = /^\s*(?:`{3,}|~{3,})/u.test(lines[0] ?? '')
+      ? lines.slice(1).find((line) => line.trim().length > 0) ?? lines[0] ?? ''
+      : lines.find((line) => line.trim().length > 0) ?? '';
+    return [...first.trim()].slice(0, 160).join('');
+  }
+  const prose = normalized.replace(/\s+/gu, ' ').trim();
+  return [...prose].slice(0, 160).join('');
+}
+
+function citationLine(number: number, evidence: CitationEvidenceV2): string {
+  const anchor = evidence.anchor;
   const range = `${anchor.range.startLine}:${anchor.range.startColumn}-` +
     `${anchor.range.endLine}:${anchor.range.endColumn}`;
-  return `[^${anchor.citationId}]: source ${jsonScalar(anchor.sourceId)}; ` +
-    `ref ${jsonScalar(anchor.sourceRef)}; range ${range}; ` +
-    `revision ${jsonScalar(anchor.sourceRevision)}; quote ${jsonScalar(anchor.quoteDigest)}`;
+  return `[^${String(number)}]: ${jsonScalar(anchor.sourceRef)}; range ${range}; ` +
+    `excerpt ${jsonScalar(evidenceExcerpt(evidence))}`;
 }
 
 function renderNavigation(
@@ -321,10 +418,20 @@ function renderNavigation(
     pages.get(pageId) ?? fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID'));
   const related = page.relationPageIds.map((pageId) =>
     pages.get(pageId) ?? fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID'));
+  const childLines = children.length <= 8
+    ? [`- Children: ${children.length === 0 ? 'None' : children.map(linkFor).join(', ')}`]
+    : [
+        '- Children:',
+        '',
+        '| # | Page |',
+        '| ---: | --- |',
+        ...children.map((child, index) => `| ${String(index + 1)} | ${linkFor(child)} |`),
+      ];
   return Object.freeze([
     `- Index: [BuildLore Hierarchical Wiki](./${HIERARCHICAL_MARKDOWN_INDEX_FILENAME})`,
     `- Parent: ${parent === null ? 'None' : linkFor(parent)}`,
-    `- Children: ${children.length === 0 ? 'None' : children.map(linkFor).join(', ')}`,
+    ...childLines,
+    ...(children.length > 8 ? [''] : []),
     `- Related: ${related.length === 0 ? 'None' : related.map(linkFor).join(', ')}`,
   ]);
 }
@@ -333,32 +440,69 @@ function renderPage(
   page: ApprovedWikiRetrievalPageV1,
   publication: ApprovedWikiPublicationSnapshotV1,
   pages: ReadonlyMap<string, ApprovedWikiRetrievalPageV1>,
-  anchors: ReadonlyMap<string, EvidenceCitationAnchorV1>,
-): string {
-  const citationIds = [...new Set(page.sections.flatMap((section) =>
+  evidenceByCitationId: ReadonlyMap<string, CitationEvidenceV2>,
+  blueprint: PageBlueprintV1,
+  proposalSections: readonly HierarchicalProposalSectionV1[],
+  outputLanguage: string,
+): Readonly<{
+  readonly body: string;
+  readonly citationMap: readonly HierarchicalMarkdownCitationMapEntryV2[];
+}> {
+  const pageSectionById = new Map(page.sections.map((section) =>
+    [section.sectionId, section]));
+  const proposalSectionById = new Map(proposalSections.map((section) =>
+    [section.sectionId, section]));
+  if (pageSectionById.size !== page.sections.length ||
+      proposalSectionById.size !== proposalSections.length) {
+    fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  }
+  const requiredSections = [...blueprint.requiredSections];
+  const optionalSections = proposalSections.filter((section) =>
+    !blueprint.requiredSections.includes(section.sectionId));
+  const orderedSectionIds = [...requiredSections, ...optionalSections.map((section) =>
+    section.sectionId)];
+  if (orderedSectionIds.length !== page.sections.length ||
+      orderedSectionIds.some((sectionId) => !pageSectionById.has(sectionId))) {
+    fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  }
+  const orderedSections = orderedSectionIds.map((sectionId) =>
+    pageSectionById.get(sectionId) ?? fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID'));
+  const citationIds = [...new Set(orderedSections.flatMap((section) =>
     section.citationLocators.map((locator) => {
-      const anchor = anchors.get(locator.citationId);
-      if (anchor === undefined || anchor.sourceId !== locator.sourceId) {
+      const evidence = evidenceByCitationId.get(locator.citationId);
+      if (evidence === undefined || evidence.anchor.sourceId !== locator.sourceId) {
         fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
       }
       return locator.citationId;
     })))]
     .sort(compareText);
-  const sections = page.sections.flatMap((section) => [
-    `## ${sectionTitle(section.sectionId)}`,
+  const citationMap = Object.freeze(citationIds.map((citationId, index) => Object.freeze({
+    citationId,
+    number: index + 1,
+  })));
+  const citationNumbers = new Map(citationMap.map((entry) =>
+    [entry.citationId, entry.number]));
+  const sections = orderedSections.flatMap((section) => {
+    const proposalSection = proposalSectionById.get(section.sectionId);
+    if (proposalSection === undefined) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    return [
+    `## ${proposalSection.title === undefined
+      ? sectionTitle(section.sectionId, outputLanguage)
+      : escapeMarkdownLabel(proposalSection.title)}`,
     '',
-    transformWikiLinks(section.body, pages),
+    transformWikiLinks(section.body, pages, citationNumbers),
     '',
-  ]);
+    ];
+  });
   const citations = citationIds.length === 0
     ? []
-    : ['## Citations', '', ...citationIds.map((citationId) => {
-        const anchor = anchors.get(citationId);
-        return anchor === undefined
+    : ['## Citations', '', ...citationMap.map((entry) => {
+        const evidence = evidenceByCitationId.get(entry.citationId);
+        return evidence === undefined
           ? fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID')
-          : citationLine(anchor);
+          : citationLine(entry.number, evidence);
       }), ''];
-  return [
+  const body = [
     '---',
     `schema_version: ${jsonScalar(HIERARCHICAL_MARKDOWN_PAGE_SCHEMA_VERSION)}`,
     `project_id: ${jsonScalar(publication.projection.projectId)}`,
@@ -383,6 +527,7 @@ function renderPage(
     ...sections,
     ...citations,
   ].join('\n').normalize('NFC');
+  return Object.freeze({ body, citationMap });
 }
 
 function renderTree(
@@ -414,6 +559,10 @@ function renderIndex(
   publication: ApprovedWikiPublicationSnapshotV1,
   pages: ReadonlyMap<string, ApprovedWikiRetrievalPageV1>,
 ): string {
+  const roots = [...pages.values()].filter((page) => page.parentPageId === null)
+    .sort((left, right) => compareText(left.pageId, right.pageId));
+  const wikiTitle = roots.length === 1 ? roots[0]?.title ?? 'BuildLore Hierarchical Wiki'
+    : 'BuildLore Hierarchical Wiki';
   const related = [...pages.values()].filter((page) => page.relationPageIds.length > 0)
     .sort((left, right) => compareText(left.pageId, right.pageId))
     .map((page) => `- ${linkFor(page)}: ${[...page.relationPageIds].sort(compareText)
@@ -429,7 +578,7 @@ function renderIndex(
     'generated: true',
     '---',
     '',
-    '# BuildLore Hierarchical Wiki',
+    `# ${escapeMarkdownLabel(wikiTitle)}`,
     '',
     '<!-- Generated from approved BuildLore authority. Direct edits are not authoritative. -->',
     '',
@@ -443,6 +592,7 @@ function renderIndex(
 
 function renderedFile(input: Readonly<{
   readonly body: string;
+  readonly citationMap?: readonly HierarchicalMarkdownCitationMapEntryV2[];
   readonly kind: 'index' | 'page';
   readonly pageId?: string;
   readonly path: string;
@@ -456,6 +606,7 @@ function renderedFile(input: Readonly<{
   return Object.freeze({
     body,
     byteLength,
+    ...(input.citationMap === undefined ? {} : { citationMap: input.citationMap }),
     kind: input.kind,
     ...(input.pageId === undefined ? {} : { pageId: input.pageId }),
     path: input.path,
@@ -471,6 +622,7 @@ function fileRecord(
 ): HierarchicalMarkdownFileRecordV1 {
   return Object.freeze({
     byteLength: file.byteLength,
+    ...(file.citationMap === undefined ? {} : { citationMap: file.citationMap }),
     kind: file.kind,
     ...(file.pageId === undefined ? {} : { pageId: file.pageId }),
     path: file.path,
@@ -495,6 +647,13 @@ export function renderHierarchicalMarkdown(
     input.publication.projection.projectId,
   );
   if (!sameValue(expected, input.publication)) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  return renderVerifiedHierarchicalMarkdown(input);
+}
+
+/** @internal Render a snapshot already verified from the approved-authority store. */
+export function renderVerifiedHierarchicalMarkdown(
+  input: Readonly<{ readonly publication: ApprovedWikiPublicationSnapshotV1 }>,
+): HierarchicalMarkdownRenderPlanV1 {
   const orderedPages = [...input.publication.projection.corpus.pages]
     .sort((left, right) => compareText(left.pageId, right.pageId));
   if (orderedPages.length > MAXIMUM_PAGE_COUNT || orderedPages.some((page) =>
@@ -504,15 +663,55 @@ export function renderHierarchicalMarkdown(
     if (pages.has(page.pageId)) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
     pages.set(page.pageId, page);
   }
-  const anchors = citationAnchors(input.publication);
+  const evidenceByCitationId = citationEvidence(input.publication);
+  const blueprintByPageId = new Map(input.publication.authority.finalization.outline.blueprints
+    .map((blueprint) => [blueprint.pageId, blueprint]));
+  const proposalByPageId = new Map(input.publication.authority.finalization.proposals
+    .map((proposal) => [proposal.pageId, proposal]));
+  const handoffByPageId = new Map<string, Readonly<{
+    readonly outputLanguage: string;
+    readonly proposalDigest: string;
+  }>>();
+  for (const handoff of input.publication.authority.finalization.generationHandoffs) {
+    if (!isRecord(handoff.exchange) || !isRecord(handoff.exchange.writingBrief) ||
+        !isRecord(handoff.result) || !isRecord(handoff.result.proposal) ||
+        typeof handoff.exchange.pageId !== 'string' ||
+        typeof handoff.exchange.writingBrief.outputLanguage !== 'string' ||
+        typeof handoff.result.proposal.proposalDigest !== 'string' ||
+        handoffByPageId.has(handoff.exchange.pageId)) {
+      fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    }
+    handoffByPageId.set(handoff.exchange.pageId, Object.freeze({
+      outputLanguage: handoff.exchange.writingBrief.outputLanguage,
+      proposalDigest: handoff.result.proposal.proposalDigest,
+    }));
+  }
   const files: HierarchicalMarkdownRenderedFileV1[] = [renderedFile({
     body: renderIndex(input.publication, pages),
     kind: 'index',
     path: HIERARCHICAL_MARKDOWN_INDEX_FILENAME,
   })];
   for (const page of orderedPages) {
+    const blueprint = blueprintByPageId.get(page.pageId);
+    const proposal = proposalByPageId.get(page.pageId);
+    const handoff = handoffByPageId.get(page.pageId);
+    if (blueprint === undefined || proposal === undefined || handoff === undefined ||
+        proposal.proposalDigest !== page.proposalDigest ||
+        handoff.proposalDigest !== page.proposalDigest) {
+      fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    }
+    const renderedPage = renderPage(
+      page,
+      input.publication,
+      pages,
+      evidenceByCitationId,
+      blueprint,
+      proposal.sections,
+      handoff.outputLanguage,
+    );
     files.push(renderedFile({
-      body: renderPage(page, input.publication, pages, anchors),
+      body: renderedPage.body,
+      citationMap: renderedPage.citationMap,
       kind: 'page',
       pageId: page.pageId,
       path: `${page.pageId}.md`,
@@ -576,11 +775,27 @@ function parseFileRecord(value: unknown): HierarchicalMarkdownFileRecordV1 {
   if (!exactKeys(value, PAGE_FILE_PROPERTIES) ||
       typeof value.pageId !== 'string' || !PAGE_ID_PATTERN.test(value.pageId) ||
       value.path !== `${value.pageId}.md` || !PAGE_FILENAME_PATTERN.test(value.path) ||
-      !isDigest(value.proposalDigest)) {
+      !isDigest(value.proposalDigest) || !Array.isArray(value.citationMap) ||
+      value.citationMap.length > 64) {
+    fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  }
+  const citationMap = Object.freeze(value.citationMap.map((entry, index) => {
+    if (!isRecord(entry) || !exactKeys(entry, ['citationId', 'number']) ||
+        typeof entry.citationId !== 'string' ||
+        !/^citation-[a-f0-9]{64}$/u.test(entry.citationId) ||
+        entry.number !== index + 1) {
+      fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    }
+    return Object.freeze({ citationId: entry.citationId, number: index + 1 });
+  }));
+  if (new Set(citationMap.map((entry) => entry.citationId)).size !== citationMap.length ||
+      citationMap.some((entry, index) => index > 0 &&
+        (citationMap[index - 1]?.citationId ?? '') >= entry.citationId)) {
     fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
   }
   return Object.freeze({
     byteLength: value.byteLength,
+    citationMap,
     kind: value.kind,
     pageId: value.pageId,
     path: value.path,

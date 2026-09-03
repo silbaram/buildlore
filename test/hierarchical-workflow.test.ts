@@ -43,6 +43,7 @@ function reviseRecord(
     baselineProposals: record.baselineProposals,
     startDigests: record.startDigests,
     submissions: record.submissions,
+    resubmissions: record.resubmissions,
     childDecisions: record.childDecisions,
     integratedDecisions: record.integratedDecisions,
     relationDecisions: record.relationDecisions,
@@ -115,12 +116,20 @@ async function advanceToIntegratedReview(
     const exchange = status.currentExchange;
     const submission = mutate(authorHierarchicalWorkflowProposal(exchange), index);
     const input = await current.writeJson(`advance-${String(index)}.json`, submission);
-    status = (await current.createService().submit(
-      current.projectId,
-      started.runId,
-      input,
-      exchange.exchangeDigest,
-    )).status;
+    status = (await (status.nextAction === 'resubmit-proposal'
+      ? current.createService().resubmit(
+          current.projectId,
+          started.runId,
+          exchange.pageId,
+          input,
+          exchange.exchangeDigest,
+        )
+      : current.createService().submit(
+          current.projectId,
+          started.runId,
+          input,
+          exchange.exchangeDigest,
+        ))).status;
     if (status.childReview !== null) {
       const child = status.childReview;
       const decision = await current.writeJson(`advance-child-${String(index)}.json`, {
@@ -183,8 +192,8 @@ describe('restart-safe hierarchical workflow service', () => {
       const exchange = started.status.currentExchange;
       if (exchange === null) throw new Error('Expected exchange.');
       const units = exchange.evidencePack.units;
-      expect(new Set(units.map((unit) => unit.sourceId)).size).toBe(2);
-      expect(units.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(units.map((unit) => unit.sourceId)).size).toBe(1);
+      expect(units.length).toBeGreaterThanOrEqual(1);
       for (const unit of units) {
         expect(unit.content).not.toMatch(/^#/u);
         expect(unit.content.length).toBeGreaterThan(24);
@@ -643,47 +652,155 @@ describe('restart-safe hierarchical workflow service', () => {
     });
   });
 
-  it('records hard quality failure as terminal rejection without a ledger or bundle', async () => {
+  it('resubmits only the failed page and replays the corrected proposal byte-identically',
+    async () => {
+      const current = await fixture();
+      const started = await start(current);
+      const initialExchange = started.status.currentExchange;
+      if (initialExchange === null) throw new Error('Expected exchange.');
+      const failedFile = await current.writeJson('failed-page.json', {
+        ...authorHierarchicalWorkflowProposal(initialExchange),
+        title: 'Deliberately ungrounded title',
+      });
+      const failed = await current.createService().submit(
+        current.projectId,
+        started.runId,
+        failedFile,
+        initialExchange.exchangeDigest,
+      );
+      const retryExchange = failed.status.currentExchange;
+      if (retryExchange === null) throw new Error('Expected retry exchange.');
+      expect(failed.status).toMatchObject({
+        phase: 'hard-quality-failed', nextAction: 'resubmit-proposal',
+      });
+      expect(retryExchange).toMatchObject({
+        pageId: initialExchange.pageId,
+        request: { generationAttempt: 1 },
+      });
+      const correctedFile = await current.writeJson(
+        'corrected-page.json',
+        authorHierarchicalWorkflowProposal(retryExchange),
+      );
+      const corrected = await current.createService().resubmit(
+        current.projectId,
+        started.runId,
+        retryExchange.pageId,
+        correctedFile,
+        retryExchange.exchangeDigest,
+      );
+      expect(corrected.status).toMatchObject({
+        phase: 'awaiting-child-review', nextAction: 'review-child', rejection: null,
+      });
+      const persisted = await storedRecord(current, started.runId);
+      expect(persisted.submissions).toHaveLength(1);
+      expect(persisted.resubmissions).toHaveLength(1);
+      expect(persisted.resubmissions[0]).toMatchObject({
+        attempt: 1,
+        outcome: {
+          kind: 'accepted',
+          reasonCodes: [],
+        },
+        pageId: initialExchange.pageId,
+        proposalDigest: corrected.proposalDigest,
+      });
+      expect(persisted.resubmissions[0]?.outcome.pageQualityReportDigest)
+        .toMatch(/^sha256:[0-9a-f]{64}$/u);
+      const replayed = await current.createService().status(current.projectId, started.runId);
+      expect(replayed).toEqual(corrected.status);
+
+      const altered = reviseRecord(persisted, {
+        resubmissions: Object.freeze(persisted.resubmissions.map((entry) => Object.freeze({
+          ...entry,
+          outcome: Object.freeze({
+            ...entry.outcome,
+            pageQualityReportDigest: entry.expectedExchangeDigest,
+          }),
+        }))),
+      });
+      const store = createHierarchicalWorkflowRunStore(current.hubRoot);
+      await store.replace({
+        expectedRecordDigest: persisted.recordDigest,
+        expectedRevision: persisted.revision,
+        next: altered,
+        projectId: current.projectId,
+        runId: started.runId,
+      });
+      await expect(current.createService().status(current.projectId, started.runId))
+        .rejects.toMatchObject({ code: 'HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH' });
+    });
+
+  it('keeps hard-quality attempts append-only and rejects after three resubmissions', async () => {
     const current = await fixture();
-    const { runId, review } = await advanceToIntegratedReview(
-      current,
-      (submission, index) => index === 0
-        ? Object.freeze({ ...submission, title: 'Deliberately ungrounded title' })
-        : submission,
-    );
-    expect(review.surface.hardQualityPassed).toBe(false);
-    const input = await current.writeJson('hard-quality-rejected.json', {
-      schemaVersion: HIERARCHICAL_WORKFLOW_FINALIZE_INPUT_SCHEMA_VERSION,
-      projectId: current.projectId,
-      runId,
-      reviewDigest: review.reviewDigest,
-      surfaceDigest: review.surface.surfaceDigest,
-      candidateDecisions: review.surface.candidates.map((candidate) => ({
-        decision: 'rejected',
-        pageId: candidate.pageId,
-        reasonCodes: ['hard-quality-failed'],
-      })).sort((left, right) => left.pageId < right.pageId ? -1 : 1),
-      relationDecisions: review.relationCandidates.map((relation) => ({
-        decision: 'rejected', relationId: relation.relationId,
-      })).sort((left, right) => left.relationId < right.relationId ? -1 : 1),
+    const started = await start(current);
+    const initialExchange = started.status.currentExchange;
+    if (initialExchange === null) throw new Error('Expected exchange.');
+    const invalidSubmission = (exchange: typeof initialExchange) => Object.freeze({
+      ...authorHierarchicalWorkflowProposal(exchange),
+      title: 'Deliberately ungrounded title',
     });
-    const finalized = await current.createService().finalize(
-      current.projectId,
-      runId,
-      input,
-      review.reviewDigest,
+    const initialFile = await current.writeJson(
+      'hard-quality-initial.json',
+      invalidSubmission(initialExchange),
     );
-    expect(finalized).toMatchObject({
-      phase: 'rejected',
-      ledger: null,
-      rejection: { kind: 'hard-quality-failed', surfaceDigest: review.surface.surfaceDigest },
-    });
-    await expect(current.createService().approve(
+    let status = (await current.createService().submit(
       current.projectId,
-      runId,
-      `sha256:${'1'.repeat(64)}`,
-      true,
+      started.runId,
+      initialFile,
+      initialExchange.exchangeDigest,
+    )).status;
+    expect(status).toMatchObject({
+      phase: 'hard-quality-failed', nextAction: 'resubmit-proposal',
+      rejection: { kind: 'hard-quality-failed', surfaceDigest: null },
+    });
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const exchange = status.currentExchange;
+      if (exchange === null) throw new Error('Expected retry exchange.');
+      expect(exchange.request.generationAttempt).toBe(attempt);
+      const file = await current.writeJson(
+        `hard-quality-retry-${String(attempt)}.json`,
+        invalidSubmission(exchange),
+      );
+      status = (await current.createService().resubmit(
+        current.projectId,
+        started.runId,
+        exchange.pageId,
+        file,
+        exchange.exchangeDigest,
+      )).status;
+    }
+    expect(status).toMatchObject({
+      phase: 'rejected', nextAction: 'none', currentExchange: null,
+      rejection: { kind: 'hard-quality-failed', surfaceDigest: null },
+    });
+    const record = await storedRecord(current, started.runId);
+    expect(record.submissions).toHaveLength(1);
+    expect(record.resubmissions.map((entry) => entry.attempt)).toEqual([1, 2, 3]);
+    expect(record.resubmissions.map((entry) => entry.outcome.kind)).toEqual([
+      'hard-quality-failed', 'hard-quality-failed', 'hard-quality-failed',
+    ]);
+    await expect(current.createService().status(current.projectId, started.runId))
+      .resolves.toMatchObject({ phase: 'rejected', nextAction: 'none' });
+    await expect(current.createService().resubmit(
+      current.projectId,
+      started.runId,
+      initialExchange.pageId,
+      initialFile,
+      initialExchange.exchangeDigest,
     )).rejects.toMatchObject({ code: 'HIERARCHICAL_WORKFLOW_PHASE_MISMATCH' });
+  });
+
+  it('rejects resubmission audit history that moves backward between pages', async () => {
+    const current = await fixture();
+    const { runId } = await advanceToIntegratedReview(current, (submission, index) =>
+      index % 2 === 0
+        ? Object.freeze({ ...submission, title: 'Deliberately ungrounded title' })
+        : submission);
+    const record = await storedRecord(current, runId);
+    expect(record.resubmissions.length).toBeGreaterThan(1);
+
+    expect(() => reviseRecord(record, {
+      resubmissions: Object.freeze([...record.resubmissions].reverse()),
+    })).toThrow(expect.objectContaining({ code: 'HIERARCHICAL_WORKFLOW_RUN_INVALID' }));
   });
 
   it('hard-fails a suspected secret in purpose without persisting the value', async () => {

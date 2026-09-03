@@ -85,6 +85,7 @@ export {
   type CurrentSessionGenerationSessionV1,
   type CurrentSessionProposalContractV1,
   type CurrentSessionProposalSubmissionV1,
+  type CurrentSessionSectionGuideEntryV2,
   type CurrentSessionWritingBriefV1,
   type ExecuteAuthorizedExternalGenerationInputV1,
   type ExternalGenerationAuditV1,
@@ -99,14 +100,17 @@ export {
   type PrepareCurrentSessionGenerationInputV1,
 } from './current-session.js';
 export {
+  BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE,
   SEMANTIC_QUALITY_POLICY,
   createIntegratedWikiCandidateReview,
   createIntegratedWikiReviewSurface,
+  evaluatePageSemanticQuality,
   evaluateSemanticQuality,
   verifyIntegratedWikiReviewSurface,
   type CreateIntegratedWikiReviewSurfaceInputV1,
   type CurrentSessionGenerationHandoffV1,
   type EvaluateSemanticQualityInputV1,
+  type EvaluatePageSemanticQualityInputV2,
 } from './quality.js';
 export {
   approveCompileRun,
@@ -137,8 +141,15 @@ export {
 } from './lineage.js';
 export {
   HierarchyContractError,
+  HierarchicalWorkflowEvidenceInsufficientError,
   type HierarchyContractErrorCode,
+  type HierarchicalWorkflowEvidenceInsufficientErrorCode,
 } from './errors.js';
+export {
+  hierarchySurfaceTokens,
+  hierarchyTokens,
+  normalizedHierarchyTokenText,
+} from './tokens.js';
 export {
   COMPILATION_PURPOSE_SCHEMA_VERSION,
   COMPILE_CONTINUATION_SCHEMA_VERSION,

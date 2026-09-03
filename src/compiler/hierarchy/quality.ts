@@ -4,6 +4,7 @@ import {
   hierarchySha256,
 } from './contracts.js';
 import {
+  citationIdsForProposalSummary,
   reconcileWikiProposalLinks,
 } from './evidence.js';
 import {
@@ -16,12 +17,16 @@ import {
   parsePlanningDispositionInventory,
   parseSparseRelationGraph,
 } from './planning.js';
+import { hierarchySurfaceTokens, hierarchyTokens } from './tokens.js';
 import {
   CORPUS_QUALITY_REPORT_SCHEMA_VERSION,
   INTEGRATED_WIKI_CANDIDATE_REVIEW_SCHEMA_VERSION,
   INTEGRATED_WIKI_REVIEW_SURFACE_SCHEMA_VERSION,
+  PAGE_BLUEPRINT_SCHEMA_VERSION,
   PAGE_QUALITY_REPORT_SCHEMA_VERSION,
   SEMANTIC_QUALITY_POLICY_SCHEMA_VERSION,
+  HIERARCHICAL_WIKI_PROPOSAL_SCHEMA_VERSION,
+  WIKI_OUTLINE_SCHEMA_VERSION,
   WIKI_CONTENT_DIFF_SCHEMA_VERSION,
   type CorpusQualityReportV1,
   type EvidenceCitationAnchorV1,
@@ -52,6 +57,12 @@ const UNIT_ID_PATTERN = /^unit-[a-f0-9]{64}$/u;
 const CITATION_ID_PATTERN = /^citation-[a-f0-9]{64}$/u;
 const PORTABLE_IDENTIFIER_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 const REASON_CODE_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
+const LEGACY_HIERARCHICAL_WIKI_PROPOSAL_SCHEMA_VERSION =
+  'buildlore.hierarchical-wiki-proposal.v1';
+const BASELINE_PAGE_REMOVAL_REQUIRES_REVIEW_REASON_CODE =
+  'baseline-page-removal-requires-review';
+export const BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE =
+  'baseline-page-removal-reviewed';
 const ISSUED_INTEGRATED_REVIEW_SURFACES = new WeakSet<object>();
 const MAX_INTEGRATED_REVIEW_SURFACE_BYTES = 33_554_432;
 const ALL_TEXT_UNIT_KINDS = Object.freeze([
@@ -59,7 +70,6 @@ const ALL_TEXT_UNIT_KINDS = Object.freeze([
 ] as const);
 const CITATION_PATTERN = /citation-[a-f0-9]{64}/gu;
 const PAGE_PATTERN = /page-[a-f0-9]{64}/gu;
-const TOKEN_PATTERN = /[\p{L}\p{N}_-]+/gu;
 const FILE_LINE_PATTERN = /^(?:[-*]\s*)?(?:(?:[A-Za-z0-9._ -]+\/)+[A-Za-z0-9._ -]+|[A-Za-z0-9_.-]+)\.[A-Za-z0-9]{1,16}$/u;
 const QUESTION_STOP_WORDS = new Set([
   'a', 'an', 'are', 'does', 'how', 'is', 'the', 'this', 'what', 'when', 'where', 'which',
@@ -70,12 +80,16 @@ const thresholds = Object.freeze({
   minimumSectionCoverageBasisPoints: 10_000,
   minimumClaimGroundingBasisPoints: 10_000,
   minimumClaimEvidenceSupportBasisPoints: 10_000,
+  minimumClaimTokenOverlapBasisPoints: 2_500,
+  minimumSummaryTokenOverlapBasisPoints: 5_000,
+  minimumTitleTokenOverlapBasisPoints: 6_000,
   minimumQuestionCoverageBasisPoints: 10_000,
   maximumRepeatedLineBasisPoints: 5_000,
   maximumNearDuplicateBasisPoints: 8_500,
   maximumOrphanBasisPoints: 500,
   maximumUncategorizedPages: 0,
   maximumUnresolvedConflicts: 0,
+  maximumOptionalSections: 8,
   minimumSubstantiveUtf8Bytes: 80,
   minimumUniqueTokens: 8,
 } as const);
@@ -103,17 +117,30 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 }
 
 function normalizedText(value: string): string {
-  return value.normalize('NFKC')
-    .toLocaleLowerCase('und')
+  return hierarchyTokens(value
     .replace(CITATION_PATTERN, ' citation ')
-    .replace(PAGE_PATTERN, ' page ')
-    .replace(/[^\p{L}\p{N}_-]+/gu, ' ')
-    .trim()
-    .replace(/\s+/gu, ' ');
+    .replace(PAGE_PATTERN, ' page ')).join(' ');
 }
 
 function tokens(value: string): readonly string[] {
-  return normalizedText(value).match(TOKEN_PATTERN) ?? [];
+  return hierarchyTokens(value
+    .replace(CITATION_PATTERN, ' citation ')
+    .replace(PAGE_PATTERN, ' page '));
+}
+
+function tokenWeight(token: string): number {
+  return /\p{N}/u.test(token) || [...token].length >= 8 ? 2 : 1;
+}
+
+function weightedCoverageBasisPoints(
+  expectedTokens: readonly string[],
+  observedTokens: ReadonlySet<string>,
+): number {
+  const uniqueExpected = [...new Set(expectedTokens)];
+  const denominator = uniqueExpected.reduce((sum, token) => sum + tokenWeight(token), 0);
+  const numerator = uniqueExpected.filter((token) => observedTokens.has(token))
+    .reduce((sum, token) => sum + tokenWeight(token), 0);
+  return basisPoints(numerator, denominator);
 }
 
 function answersQuestion(question: string, bodyTokenSet: ReadonlySet<string>): boolean {
@@ -148,10 +175,23 @@ function evidenceSupportBasisPoints(
     !QUESTION_STOP_WORDS.has(token)))];
   if (claimTokens.length === 0) return 0;
   const evidenceTokens = new Set(evidenceContents.flatMap((content) => [...tokens(content)]));
-  return basisPoints(
-    claimTokens.filter((token) => evidenceTokens.has(token)).length,
-    claimTokens.length,
-  );
+  return weightedCoverageBasisPoints(claimTokens, evidenceTokens);
+}
+
+function genericBlueprintTitle(blueprint: PageBlueprintV1): boolean {
+  const genericTokens = new Set([
+    'additional', 'evidence', 'group', 'overview', 'reference', 'role', 'root', 'topic',
+  ]);
+  const titleTokens = [...new Set(tokens(blueprint.title))];
+  return titleTokens.length === 0 ||
+    normalizedText(blueprint.title) === normalizedText(blueprint.role) ||
+    titleTokens.every((token) => genericTokens.has(token));
+}
+
+function markdownParagraphs(body: string): readonly string[] {
+  return Object.freeze(body.split(/\n[\t ]*\n/gu)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0));
 }
 
 function requiredLinks(blueprint: PageBlueprintV1): readonly string[] {
@@ -256,7 +296,7 @@ function assertCanonicalBlueprint(blueprint: PageBlueprintV1, projectId: string)
     'requiredSections', 'role', 'schemaVersion', 'stableKey', 'title',
   ], projectId);
   if (
-    blueprint.schemaVersion !== 'buildlore.page-blueprint.v1' ||
+    blueprint.schemaVersion !== PAGE_BLUEPRINT_SCHEMA_VERSION ||
     blueprint.projectId !== projectId ||
     blueprint.blueprintDigest !== digestHierarchyValue(blueprintBasis(blueprint))
   ) invalid(projectId);
@@ -319,7 +359,37 @@ function assertCanonicalProposal(proposal: HierarchicalWikiProposalV1, projectId
     'title', 'wikilinks',
   ], projectId);
   if (
-    proposal.schemaVersion !== 'buildlore.hierarchical-wiki-proposal.v1' ||
+    proposal.schemaVersion !== HIERARCHICAL_WIKI_PROPOSAL_SCHEMA_VERSION ||
+    proposal.projectId !== projectId ||
+    proposal.lifecycle !== 'candidate' ||
+    proposal.sections.some((section) => {
+      exactKeys(section, ['body', 'sectionId', ...(section.title === undefined
+        ? [] : ['title'])], projectId);
+      return false;
+    }) ||
+    proposal.claims.some((claim) => {
+      exactKeys(claim, ['citationIds', 'claimId', 'evidenceUnitIds', 'text'], projectId);
+      return claim.claimId !== `claim-${digestHierarchyValue({
+        text: claim.text,
+        evidenceUnitIds: claim.evidenceUnitIds,
+        citationIds: claim.citationIds,
+      }).slice('sha256:'.length)}`;
+    }) ||
+    proposal.proposalDigest !== digestHierarchyValue(proposalBasis(proposal))
+  ) invalid(projectId);
+}
+
+function assertCanonicalLegacyBaselineProposal(
+  proposal: HierarchicalWikiProposalV1,
+  projectId: string,
+): void {
+  exactKeys(proposal, [
+    'blueprintDigest', 'citationIds', 'claims', 'evidencePackDigest', 'lifecycle', 'pageId',
+    'projectId', 'proposalDigest', 'requestDigest', 'schemaVersion', 'sections', 'summary',
+    'title', 'wikilinks',
+  ], projectId);
+  if (
+    (proposal.schemaVersion as string) !== LEGACY_HIERARCHICAL_WIKI_PROPOSAL_SCHEMA_VERSION ||
     proposal.projectId !== projectId ||
     proposal.lifecycle !== 'candidate' ||
     proposal.sections.some((section) => {
@@ -368,7 +438,11 @@ function assertCanonicalBaselineProposal(
   proposal: HierarchicalWikiProposalV1,
   projectId: string,
 ): void {
-  assertCanonicalProposal(proposal, projectId);
+  if ((proposal.schemaVersion as string) === LEGACY_HIERARCHICAL_WIKI_PROPOSAL_SCHEMA_VERSION) {
+    assertCanonicalLegacyBaselineProposal(proposal, projectId);
+  } else {
+    assertCanonicalProposal(proposal, projectId);
+  }
   if (
     !PAGE_ID_PATTERN.test(proposal.pageId) ||
     !DIGEST_PATTERN.test(proposal.blueprintDigest) ||
@@ -397,6 +471,9 @@ function assertCanonicalBaselineProposal(
   safeIntegratedReviewText(proposal.summary, 4_096, projectId, true);
   for (const section of proposal.sections) {
     if (!PORTABLE_IDENTIFIER_PATTERN.test(section.sectionId)) invalid(projectId);
+    if (section.title !== undefined) {
+      safeIntegratedReviewText(section.title, 1_000, projectId, false);
+    }
     safeIntegratedReviewText(section.body, 524_288, projectId, true);
   }
   for (const claim of proposal.claims) {
@@ -427,7 +504,7 @@ function assertIntegratedBlueprintContract(
   assertCanonicalBlueprint(blueprint, projectId);
   exactKeys(blueprint.evidenceScope, [
     'allowedUnitKinds', 'relationSetDigest', 'snapshotDigest', 'sourceIds',
-    'taskSetDigest',
+    'taskSetDigest', 'preferredUnitIds',
   ], projectId);
   if (
     !Array.isArray(blueprint.childPageIds) ||
@@ -435,8 +512,9 @@ function assertIntegratedBlueprintContract(
     !Array.isArray(blueprint.keyQuestions) ||
     !Array.isArray(blueprint.requiredSections) ||
     !Array.isArray(blueprint.evidenceScope.allowedUnitKinds) ||
+    !Array.isArray(blueprint.evidenceScope.preferredUnitIds) ||
     !Array.isArray(blueprint.evidenceScope.sourceIds) ||
-    blueprint.stableKey.length > 64 ||
+    blueprint.stableKey.length > 128 ||
     blueprint.role.length > 64 ||
     (blueprint.parentPageId !== null && !PAGE_ID_PATTERN.test(blueprint.parentPageId)) ||
     !Number.isSafeInteger(blueprint.minimumDistinctSources) ||
@@ -455,7 +533,7 @@ function assertCanonicalInputs(input: EvaluateSemanticQualityInputV1, projectId:
   exactKeys(input.outline, [
     'activationState', 'blueprints', 'graphDigest', 'interpretationSetDigest',
     'outlineDigest', 'policyDigest', 'projectId', 'purposeDigest', 'rootPageId',
-    'schemaVersion', 'snapshotDigest',
+    'reviewNotes', 'schemaVersion', 'snapshotDigest',
   ], projectId);
   input.outline.blueprints.forEach((blueprint) => assertCanonicalBlueprint(blueprint, projectId));
   const outlineBasis = {
@@ -469,9 +547,10 @@ function assertCanonicalInputs(input: EvaluateSemanticQualityInputV1, projectId:
     activationState: input.outline.activationState,
     rootPageId: input.outline.rootPageId,
     blueprints: input.outline.blueprints,
+    reviewNotes: input.outline.reviewNotes,
   };
   if (
-    input.outline.schemaVersion !== 'buildlore.wiki-outline.v1' ||
+    input.outline.schemaVersion !== WIKI_OUTLINE_SCHEMA_VERSION ||
     input.outline.projectId !== projectId ||
     input.outline.outlineDigest !== digestHierarchyValue(outlineBasis)
   ) invalid(projectId);
@@ -510,6 +589,12 @@ interface PageContext {
   readonly pack: EvidencePackV1;
 }
 
+export interface EvaluatePageSemanticQualityInputV2 {
+  readonly blueprint: PageBlueprintV1;
+  readonly proposal: HierarchicalWikiProposalV1;
+  readonly evidencePack: EvidencePackV1;
+}
+
 function pageQualityReport(
   context: PageContext,
   allContexts: readonly PageContext[],
@@ -537,7 +622,7 @@ function pageQualityReport(
         const unit = unitById.get(unitId);
         return unit === undefined ? [] : [unit.content];
       }),
-    ) >= 2_500).map((claim) => claim.claimId));
+    ) >= thresholds.minimumClaimTokenOverlapBasisPoints).map((claim) => claim.claimId));
   const claimEvidenceSupportBasisPoints = basisPoints(
     evidenceSupportedClaimIds.size,
     proposal.claims.length,
@@ -555,10 +640,20 @@ function pageQualityReport(
         markersBySection.get(section.sectionId)?.citationIds.includes(citationId) === true)) &&
     evidenceSupportedClaimIds.has(claim.claimId));
   const claimGroundingBasisPoints = basisPoints(groundedClaims.length, proposal.claims.length);
-  const titleGrounded = normalizedText(proposal.title) === normalizedText(blueprint.title);
-  const normalizedSummary = normalizedText(proposal.summary);
-  const summaryGrounded = normalizedSummary.length > 0 && groundedClaims.some((claim) =>
-    normalizedText(claim.text) === normalizedSummary);
+  const titleGroundingBasisPoints = genericBlueprintTitle(blueprint)
+    ? 10_000
+    : weightedCoverageBasisPoints(tokens(blueprint.title), new Set(tokens(proposal.title)));
+  const titleGrounded = titleGroundingBasisPoints >=
+    thresholds.minimumTitleTokenOverlapBasisPoints;
+  const groundedClaimTokens = new Set(groundedClaims.flatMap((claim) =>
+    [...tokens(claim.text)]));
+  const summaryTokens = tokens(proposal.summary);
+  const summaryGroundingBasisPoints = weightedCoverageBasisPoints(
+    summaryTokens,
+    groundedClaimTokens,
+  );
+  const summaryGrounded = summaryTokens.length > 0 &&
+    summaryGroundingBasisPoints >= thresholds.minimumSummaryTokenOverlapBasisPoints;
   const lines = normalizedLines(proposal);
   const repeatedLines = lines.filter((line) => (lineFrequency.get(line) ?? 0) > 1);
   const repeatedLineBasisPoints = basisPoints(repeatedLines.length, lines.length);
@@ -594,16 +689,22 @@ function pageQualityReport(
     [...proposal.citationIds].sort(),
   );
   const substantiveUtf8Bytes = Buffer.byteLength(fullBody.trim(), 'utf8');
-  const uniqueTokenCount = new Set(ownTokens).size;
-  const substantiveSectionCount = proposal.sections.filter((section) => {
+  const uniqueTokenCount = new Set(hierarchySurfaceTokens(fullBody
+    .replace(CITATION_PATTERN, ' ')
+    .replace(PAGE_PATTERN, ' '))).size;
+  const substantiveSectionIds = new Set(proposal.sections.filter((section) => {
     const sectionTokens = new Set(tokens(section.body));
     return Buffer.byteLength(section.body.trim(), 'utf8') >= 40 && sectionTokens.size >= 5;
-  }).length;
-  const unsupportedSubstantiveLineCount = proposal.sections.flatMap((section) =>
-    section.body.split('\n')).filter((line) => {
-    const lineTokens = new Set(tokens(line));
-    return Buffer.byteLength(line.trim(), 'utf8') >= 40 && lineTokens.size >= 5 &&
-      !proposal.claims.some((claim) => line.includes(claim.text));
+  }).map((section) => section.sectionId));
+  const optionalSectionCount = proposal.sections.filter((section) =>
+    !blueprint.requiredSections.includes(section.sectionId)).length;
+  const unsupportedParagraphCount = proposal.sections.flatMap((section) =>
+    markdownParagraphs(section.body)).filter((paragraph) => {
+    const paragraphTokens = new Set(tokens(paragraph));
+    if (Buffer.byteLength(paragraph, 'utf8') < 40 || paragraphTokens.size < 5) return false;
+    const markers = renderedBodyMarkers(paragraph);
+    return markers.citationIds.length === 0 &&
+      !proposal.claims.some((claim) => paragraph.includes(claim.text));
   }).length;
   const bodyTokenSet = new Set(ownTokens);
   const answeredKeyQuestionCount = blueprint.keyQuestions.filter((question) =>
@@ -620,8 +721,11 @@ function pageQualityReport(
     basisPoints(filenameLineCount, nonemptyRawLines.length) >= 8_000;
   const reasonCodes = new Set<string>();
   if (sectionCoverageBasisPoints < thresholds.minimumSectionCoverageBasisPoints ||
-      substantiveSectionCount < blueprint.requiredSections.length) {
+      blueprint.requiredSections.some((sectionId) => !substantiveSectionIds.has(sectionId))) {
     reasonCodes.add('blueprint-coverage-insufficient');
+  }
+  if (optionalSectionCount > thresholds.maximumOptionalSections) {
+    reasonCodes.add('optional-section-limit-exceeded');
   }
   if (claimGroundingBasisPoints < thresholds.minimumClaimGroundingBasisPoints ||
       proposal.claims.length === 0) reasonCodes.add('claim-grounding-insufficient');
@@ -633,7 +737,7 @@ function pageQualityReport(
   if (questionCoverageBasisPoints < thresholds.minimumQuestionCoverageBasisPoints) {
     reasonCodes.add('key-question-unanswered');
   }
-  if (unsupportedSubstantiveLineCount > 0) {
+  if (unsupportedParagraphCount > 0) {
     reasonCodes.add('unsupported-section-content');
   }
   if (repeatedLineBasisPoints > thresholds.maximumRepeatedLineBasisPoints) {
@@ -666,8 +770,12 @@ function pageQualityReport(
     sectionCoverageBasisPoints,
     claimGroundingBasisPoints,
     claimEvidenceSupportBasisPoints,
+    titleGroundingBasisPoints,
+    summaryGroundingBasisPoints,
     titleGrounded,
     summaryGrounded,
+    optionalSectionCount,
+    unsupportedParagraphCount,
     questionCoverageBasisPoints,
     unansweredKeyQuestionCount,
     repeatedLineBasisPoints,
@@ -691,6 +799,35 @@ function pageQualityReport(
     ...candidate,
     reportDigest: digestHierarchyValue(pageReportWithoutDigest(candidate)),
   });
+}
+
+export function evaluatePageSemanticQuality(
+  input: EvaluatePageSemanticQualityInputV2,
+  expectedProjectId: string,
+): PageQualityReportV1 {
+  assertCanonicalBlueprint(input.blueprint, expectedProjectId);
+  assertCanonicalPack(input.evidencePack, expectedProjectId);
+  assertCanonicalProposal(input.proposal, expectedProjectId);
+  if (
+    input.blueprint.projectId !== expectedProjectId ||
+    input.proposal.projectId !== expectedProjectId ||
+    input.evidencePack.projectId !== expectedProjectId ||
+    input.proposal.pageId !== input.blueprint.pageId ||
+    input.evidencePack.pageId !== input.blueprint.pageId ||
+    input.proposal.blueprintDigest !== input.blueprint.blueprintDigest ||
+    input.proposal.evidencePackDigest !== input.evidencePack.packDigest ||
+    input.evidencePack.blueprintDigest !== input.blueprint.blueprintDigest
+  ) invalid(expectedProjectId);
+  const context = Object.freeze({
+    blueprint: input.blueprint,
+    proposal: input.proposal,
+    pack: input.evidencePack,
+  });
+  const lineFrequency = new Map<string, number>();
+  for (const line of normalizedLines(input.proposal)) {
+    lineFrequency.set(line, (lineFrequency.get(line) ?? 0) + 1);
+  }
+  return pageQualityReport(context, Object.freeze([context]), lineFrequency, expectedProjectId);
 }
 
 function reachablePageIds(
@@ -1005,6 +1142,20 @@ function canonicalReasonCodes(
   return result;
 }
 
+function explicitlyReviewsBaselinePageRemoval(
+  surface: IntegratedWikiReviewSurfaceV1,
+  reasonCodes: readonly string[],
+): boolean {
+  return !surface.eligibleForHumanAcceptance &&
+    surface.runCoverage.complete &&
+    surface.hardQualityPassed &&
+    surface.corpusQualityReport.eligibleForApproval &&
+    surface.canonicalMutationAuthorized === false &&
+    surface.removedBaselinePages.length > 0 &&
+    sameStrings(surface.reasonCodes, [BASELINE_PAGE_REMOVAL_REQUIRES_REVIEW_REASON_CODE]) &&
+    reasonCodes.includes(BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE);
+}
+
 function createIntegratedWikiReviewSurfaceUnsafe(
   input: CreateIntegratedWikiReviewSurfaceInputV1,
   projectId: string,
@@ -1018,12 +1169,12 @@ function createIntegratedWikiReviewSurfaceUnsafe(
   exactKeys(input.outline, [
     'activationState', 'blueprints', 'graphDigest', 'interpretationSetDigest',
     'outlineDigest', 'policyDigest', 'projectId', 'purposeDigest', 'rootPageId',
-    'schemaVersion', 'snapshotDigest',
+    'reviewNotes', 'schemaVersion', 'snapshotDigest',
   ], projectId);
   input.outline.blueprints.forEach((blueprint) =>
     assertIntegratedBlueprintContract(blueprint, projectId));
   if (
-    input.outline.schemaVersion !== 'buildlore.wiki-outline.v1' ||
+    input.outline.schemaVersion !== WIKI_OUTLINE_SCHEMA_VERSION ||
     input.outline.projectId !== projectId ||
     input.outline.activationState !== 'candidate' ||
     !DIGEST_PATTERN.test(input.outline.snapshotDigest) ||
@@ -1096,7 +1247,6 @@ function createIntegratedWikiReviewSurfaceUnsafe(
       new Set(blueprint.keyQuestions).size !== blueprint.keyQuestions.length ||
       blueprint.requiredSections.length < 1 ||
       blueprint.requiredSections.length > 32 ||
-      !sameStrings(blueprint.requiredSections, [...blueprint.requiredSections].sort()) ||
       new Set(blueprint.requiredSections).size !== blueprint.requiredSections.length ||
       blueprint.requiredSections.some((section) => !PORTABLE_IDENTIFIER_PATTERN.test(section)) ||
       blueprint.childPageIds.length > 96 ||
@@ -1190,7 +1340,11 @@ function createIntegratedWikiReviewSurfaceUnsafe(
         child.exchange.request.generationOrder >= exchange.request.generationOrder ||
         summary.proposalDigest !== child.result.proposal.proposalDigest ||
         summary.summary !== child.result.proposal.summary ||
-        !sameStrings(summary.citationIds, child.result.proposal.citationIds)
+        (!sameStrings(summary.citationIds, child.result.proposal.citationIds) &&
+          !sameStrings(
+            summary.citationIds,
+            citationIdsForProposalSummary(child.result.proposal, projectId),
+          ))
       ) invalid(projectId);
     }
   }
@@ -1343,7 +1497,7 @@ function createIntegratedWikiReviewSurfaceUnsafe(
   const reasonCodes = new Set(quality.corpus.reasonCodes);
   if (!runCoverage.complete) reasonCodes.add('run-coverage-incomplete');
   if (removedBaselinePages.length > 0) {
-    reasonCodes.add('baseline-page-removal-requires-review');
+    reasonCodes.add(BASELINE_PAGE_REMOVAL_REQUIRES_REVIEW_REASON_CODE);
   }
   const candidate = Object.freeze({
     schemaVersion: INTEGRATED_WIKI_REVIEW_SURFACE_SCHEMA_VERSION,
@@ -1457,18 +1611,26 @@ export function createIntegratedWikiCandidateReview(
     }
     const reviewCandidate = surface.candidates.find((candidate) => candidate.pageId === pageId);
     if (reviewCandidate === undefined) invalid(expectedProjectId);
-    if (
-      decision === 'accepted' &&
-      (!surface.eligibleForHumanAcceptance ||
-       !surface.hardQualityPassed ||
-       !surface.corpusQualityReport.eligibleForApproval ||
-       !reviewCandidate.pageQualityReport.eligibleForApproval)
-    ) invalid(expectedProjectId);
     const reasonCodes = canonicalReasonCodes(
       reasonCodesValue,
       expectedProjectId,
       decision === 'rejected',
     );
+    const explicitlyReviewedRemoval = explicitlyReviewsBaselinePageRemoval(
+      surface,
+      reasonCodes,
+    );
+    if (
+      reasonCodes.includes(BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE) &&
+      (decision !== 'accepted' || !explicitlyReviewedRemoval)
+    ) invalid(expectedProjectId);
+    if (
+      decision === 'accepted' &&
+      ((!surface.eligibleForHumanAcceptance && !explicitlyReviewedRemoval) ||
+       !surface.hardQualityPassed ||
+       !surface.corpusQualityReport.eligibleForApproval ||
+       !reviewCandidate.pageQualityReport.eligibleForApproval)
+    ) invalid(expectedProjectId);
     const candidate = Object.freeze({
       schemaVersion: INTEGRATED_WIKI_CANDIDATE_REVIEW_SCHEMA_VERSION,
       projectId: expectedProjectId,

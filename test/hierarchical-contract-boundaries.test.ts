@@ -109,6 +109,7 @@ function blueprintFor(snapshotDigest: typeof DIGEST, sourceId: string): PageBlue
       relationSetDigest: DIGEST,
       allowedUnitKinds: Object.freeze(['heading'] as const),
       sourceIds: Object.freeze([sourceId]),
+      preferredUnitIds: Object.freeze([]),
     }),
     minimumDistinctSources: 1,
     generationOrder: 0,
@@ -446,7 +447,9 @@ describe('hierarchical contract boundaries', () => {
       '  "limits": {',
       '    "maxClusterMembers": 256,',
       '    "maxEvidenceBytes": 262144,',
+      '    "maxEvidenceSourcesPerPage": 8,',
       '    "maxEvidenceUnits": 64,',
+      '    "maxEvidenceUnitsPerSource": 8,',
       '    "maxPartitionTasks": 256,',
       '    "maxPlanBytes": 33554432,',
       '    "maxRelationCandidatesPerTask": 32,',
@@ -460,7 +463,7 @@ describe('hierarchical contract boundaries', () => {
     const referenceDigest = `sha256:${createHash('sha256')
       .update(Buffer.from(referencePolicyBytes, 'utf8')).digest('hex')}`;
     expect(referenceDigest).toBe(
-      'sha256:e6057a046693eacdb2ba45958ec7e65f94336926e793a97221c8d855199c397f',
+      'sha256:cea5fe21b26f87798cef265d52152acb6aa9a19e0c541bc2e8076b063981edb2',
     );
     expect(HIERARCHICAL_COMPILATION_POLICY.policyDigest).toBe(
       referenceDigest,
@@ -491,7 +494,9 @@ describe('hierarchical contract boundaries', () => {
     expect(Object.keys(HIERARCHICAL_COMPILATION_POLICY.limits)).toEqual([
       'maxClusterMembers',
       'maxEvidenceBytes',
+      'maxEvidenceSourcesPerPage',
       'maxEvidenceUnits',
+      'maxEvidenceUnitsPerSource',
       'maxPartitionTasks',
       'maxPlanBytes',
       'maxRelationCandidatesPerTask',

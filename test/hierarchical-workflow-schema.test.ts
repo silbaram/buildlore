@@ -147,10 +147,22 @@ describe('hierarchical workflow JSON Schema', () => {
     expect(definition(definitions, 'runRecord').required).toEqual([
       'schemaVersion', 'projectId', 'runId', 'revision', 'phase', 'purpose',
       'baselineAuthorityDigest', 'baselineState', 'baselineProposals', 'startDigests',
-      'submissions', 'childDecisions', 'integratedDecisions', 'relationDecisions',
+      'submissions', 'resubmissions', 'childDecisions', 'integratedDecisions',
+      'relationDecisions',
       'rejection', 'approvalDecision', 'pendingExchangeDigest',
       'pendingChildReviewDigest', 'pendingReviewDigest', 'pendingLedgerDigest',
       'recordDigest',
+    ]);
+    expect(definition(definitions, 'storedResubmission').required).toEqual([
+      'attempt', 'expectedExchangeDigest', 'generationOrder', 'pageId',
+      'proposalDigest', 'receiptDigest', 'submission', 'outcome',
+    ]);
+    const resubmissionProperties = definition(
+      definition(definitions, 'storedResubmission'),
+      'properties',
+    );
+    expect(definition(resubmissionProperties, 'outcome').required).toEqual([
+      'kind', 'pageQualityReportDigest', 'reasonCodes',
     ]);
     expect(definition(definitions, 'status').required).toEqual([
       'schemaVersion', 'projectId', 'runId', 'revision', 'phase', 'purpose',
@@ -158,6 +170,12 @@ describe('hierarchical workflow JSON Schema', () => {
       'activationState', 'authorityCheckStatus', 'authorityCheck', 'egress',
       'providerUsed', 'processSpawned',
     ]);
+    expect((definition(definitions, 'status').properties as Record<string, {
+      readonly enum: readonly string[];
+    }>).phase?.enum).toContain('hard-quality-failed');
+    expect((definition(definitions, 'status').properties as Record<string, {
+      readonly enum: readonly string[];
+    }>).nextAction?.enum).toContain('resubmit-proposal');
     expect(definition(definitions, 'approveResult').required).toEqual([
       'schemaVersion', 'projectId', 'runId', 'approvalDigest', 'generationDigest',
       'activationBundlePath', 'activationBundleDigest', 'activationArgs', 'egress',

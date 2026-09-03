@@ -15,11 +15,13 @@ import {
 } from './contracts.js';
 import {
   createCurrentSessionGenerationRequest,
+  citationIdsForProposalSummary,
   classificationsForExternalGeneration,
   isSameProcessSanitizedEvidencePack,
   parseExternalGenerationAuthorization,
   snapshotSanitizedEvidencePack,
   submitCurrentSessionProposal,
+  truncateSanitizedEvidencePack,
   type HierarchicalProposalClaimInputV1,
   type HierarchicalProposalInputV1,
 } from './evidence.js';
@@ -40,9 +42,9 @@ import {
 } from './types.js';
 
 export const CURRENT_SESSION_GENERATION_EXCHANGE_SCHEMA_VERSION =
-  'buildlore.current-session-generation-exchange.v1' as const;
+  'buildlore.current-session-generation-exchange.v2' as const;
 export const CURRENT_SESSION_PROPOSAL_SUBMISSION_SCHEMA_VERSION =
-  'buildlore.current-session-proposal-submission.v1' as const;
+  'buildlore.current-session-proposal-submission.v2' as const;
 export const CURRENT_SESSION_GENERATION_RECEIPT_SCHEMA_VERSION =
   'buildlore.current-session-generation-receipt.v1' as const;
 export const EXTERNAL_GENERATION_PAYLOAD_SCHEMA_VERSION =
@@ -101,6 +103,7 @@ const EXCHANGE_PROPERTIES = Object.freeze([
   'instructions',
   'proposalContract',
   'boundary',
+  'truncatedUnitCount',
   'exchangeDigest',
 ] as const);
 
@@ -114,6 +117,7 @@ const WRITING_BRIEF_PROPERTIES = Object.freeze([
   'role',
   'keyQuestions',
   'minimumDistinctSources',
+  'sectionGuide',
 ] as const);
 
 const REQUEST_PROPERTIES = Object.freeze([
@@ -123,6 +127,7 @@ const REQUEST_PROPERTIES = Object.freeze([
   'blueprintDigest',
   'evidencePackDigest',
   'generationOrder',
+  'generationAttempt',
   'instructionCodes',
   'requiredSections',
   'requiredLinkPageIds',
@@ -242,7 +247,7 @@ const REQUIRED_SUBMISSION_PROPERTIES = Object.freeze([
   'wikilinks',
 ] as const);
 
-const SECTION_PROPERTIES = Object.freeze(['sectionId', 'body'] as const);
+const SECTION_PROPERTIES = Object.freeze(['sectionId', 'title', 'body'] as const);
 const CLAIM_PROPERTIES = Object.freeze([
   'text',
   'evidenceUnitIds',
@@ -261,6 +266,7 @@ const EXTERNAL_PAYLOAD_PROPERTIES = Object.freeze([
   'snapshotDigest',
   'sanitizerPolicyDigest',
   'generationOrder',
+  'generationAttempt',
   'writingBrief',
   'instructions',
   'requiredSections',
@@ -313,8 +319,16 @@ const EXTERNAL_PROVIDER_RECEIPT_PROPERTIES = Object.freeze([
 
 const INSTRUCTION_TEXT = Object.freeze(new Map<string, string>([
   [
-    'cite-substantive-claims',
-    'Bind every substantive claim to allowed evidence unit and citation identifiers.',
+    'cite-each-paragraph',
+    'Give every substantive Markdown paragraph a citation marker or a declared claim.',
+  ],
+  [
+    'ground-claims-25pct',
+    'Bind each claim to evidence whose weighted shared-token coverage is at least 25 percent.',
+  ],
+  [
+    'optional-sections-allowed',
+    'You may add at most eight unique optional sections after all required sections.',
   ],
   [
     'preserve-evidence-bytes',
@@ -333,14 +347,44 @@ const INSTRUCTION_TEXT = Object.freeze(new Map<string, string>([
     'Return only a candidate submission; do not claim review, approval, or activation.',
   ],
   [
+    'summary-from-claims',
+    'Write an independent summary with at least 50 percent token coverage from grounded claims.',
+  ],
+  [
+    'title-may-paraphrase',
+    'You may paraphrase a non-generic title while retaining at least 60 percent of its tokens.',
+  ],
+  [
     'use-required-sections',
-    'Return every required section exactly once and do not invent section identifiers.',
+    'Return every required section exactly once; optional section identifiers must be unique.',
   ],
   [
     'use-required-wikilinks',
     'Return exactly the required Wiki page identifiers and no undeclared links.',
   ],
+  [
+    'write-in-output-language',
+    'Write human-facing prose and optional section titles in the requested output language.',
+  ],
 ]));
+
+const OPTIONAL_SECTION_GUIDES = Object.freeze([
+  Object.freeze({
+    sectionId: 'examples',
+    requirement: 'optional' as const,
+    description: 'Concrete evidence-backed examples that help the reader apply this page.',
+  }),
+  Object.freeze({
+    sectionId: 'limitations',
+    requirement: 'optional' as const,
+    description: 'Known evidence-backed limits or boundaries of the described behavior.',
+  }),
+  Object.freeze({
+    sectionId: 'maintenance-notes',
+    requirement: 'optional' as const,
+    description: 'Evidence-backed notes useful to future maintainers.',
+  }),
+]);
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
@@ -354,6 +398,40 @@ export interface CurrentSessionWritingBriefV1 {
   readonly role: string;
   readonly keyQuestions: readonly string[];
   readonly minimumDistinctSources: number;
+  readonly sectionGuide: readonly CurrentSessionSectionGuideEntryV2[];
+}
+
+export interface CurrentSessionSectionGuideEntryV2 {
+  readonly sectionId: string;
+  readonly requirement: 'optional' | 'required';
+  readonly description: string;
+}
+
+function createSectionGuide(
+  requiredSections: readonly string[],
+): readonly CurrentSessionSectionGuideEntryV2[] {
+  return Object.freeze([
+    ...requiredSections.map((sectionId) => Object.freeze({
+      sectionId,
+      requirement: 'required' as const,
+      description: `Required ${sectionId} content grounded in the supplied evidence.`,
+    })),
+    ...OPTIONAL_SECTION_GUIDES.filter((entry) => !requiredSections.includes(entry.sectionId)),
+  ]);
+}
+
+function parseProposalSection(
+  value: unknown,
+  projectId: string,
+): HierarchicalProposalSectionV1 {
+  const section = record(value, projectId);
+  const hasTitle = Object.hasOwn(section, 'title');
+  exactKeys(section, ['sectionId', 'body', ...(hasTitle ? ['title'] : [])], projectId);
+  return Object.freeze({
+    sectionId: identifier(section.sectionId, PORTABLE_IDENTIFIER_PATTERN, projectId, 64),
+    ...(hasTitle ? { title: safeText(section.title, 1_000, projectId) } : {}),
+    body: safeText(section.body, MAX_PROPOSAL_BYTES, projectId, true),
+  });
 }
 
 export interface CurrentSessionGenerationInstructionV1 {
@@ -392,6 +470,7 @@ export interface CurrentSessionGenerationExchangeV1 {
   readonly instructions: readonly CurrentSessionGenerationInstructionV1[];
   readonly proposalContract: CurrentSessionProposalContractV1;
   readonly boundary: CurrentSessionExecutionBoundaryV1;
+  readonly truncatedUnitCount: number;
   readonly exchangeDigest: HierarchySha256Digest;
 }
 
@@ -440,6 +519,7 @@ export interface PrepareCurrentSessionGenerationInputV1 {
   readonly blueprint: PageBlueprintV1;
   readonly evidencePack: EvidencePackV1;
   readonly approvedChildSummaries: readonly ApprovedChildSummaryV1[];
+  readonly generationAttempt?: number;
 }
 
 export interface CurrentSessionGenerationService {
@@ -477,6 +557,7 @@ export interface ExternalGenerationPayloadV1 {
   readonly snapshotDigest: HierarchySha256Digest;
   readonly sanitizerPolicyDigest: HierarchySha256Digest;
   readonly generationOrder: number;
+  readonly generationAttempt: number;
   readonly writingBrief: CurrentSessionWritingBriefV1;
   readonly instructions: readonly CurrentSessionGenerationInstructionV1[];
   readonly requiredSections: readonly string[];
@@ -764,8 +845,23 @@ function assertClosedExchange(
   boundedInteger(writingBrief.minimumDistinctSources, 1, 4_096, projectId);
 
   const request = assertClosedRequest(exchangeRecord.request, projectId);
+  const guide = records(writingBrief.sectionGuide, request.requiredSections.length,
+    request.requiredSections.length + OPTIONAL_SECTION_GUIDES.length, projectId);
+  for (const entry of guide) {
+    exactKeys(entry, ['description', 'requirement', 'sectionId'], projectId);
+    identifier(entry.sectionId, PORTABLE_IDENTIFIER_PATTERN, projectId, 64);
+    safeText(entry.description, 1_000, projectId);
+    if (entry.requirement !== 'required' && entry.requirement !== 'optional') invalid(projectId);
+  }
+  if (serializeCanonicalJson(guide) !==
+      serializeCanonicalJson(createSectionGuide(request.requiredSections))) invalid(projectId);
   const evidencePack = assertClosedEvidencePack(exchangeRecord.evidencePack, projectId);
-  const instructions = records(exchangeRecord.instructions, 7, 7, projectId);
+  const instructions = records(
+    exchangeRecord.instructions,
+    INSTRUCTION_TEXT.size,
+    INSTRUCTION_TEXT.size,
+    projectId,
+  );
   for (let index = 0; index < instructions.length; index += 1) {
     const instruction = instructions[index];
     const code = request.instructionCodes[index];
@@ -814,6 +910,12 @@ function assertClosedExchange(
     boundary.providerUsed !== null ||
     boundary.processSpawned !== false
   ) invalid(projectId);
+  boundedInteger(
+    exchangeRecord.truncatedUnitCount,
+    0,
+    HIERARCHICAL_COMPILATION_LIMITS.maxEvidenceUnits,
+    projectId,
+  );
   const exchange = exchangeRecord as unknown as CurrentSessionGenerationExchangeV1;
   if (
     exchange.schemaVersion !== CURRENT_SESSION_GENERATION_EXCHANGE_SCHEMA_VERSION ||
@@ -963,8 +1065,9 @@ function createExchange(
   evidencePack: EvidencePackV1,
   request: CurrentSessionGenerationRequestV1,
   disclosureClassifications: ReadonlySet<DataClassification>,
+  truncatedUnitCount: number,
   projectId: string,
-): CurrentSessionGenerationExchangeV1 {
+): CurrentSessionGenerationExchangeV1 | null {
   const instructions = Object.freeze(request.instructionCodes.map((code) => {
     const instruction = INSTRUCTION_TEXT.get(code);
     if (instruction === undefined) invalid(projectId);
@@ -986,6 +1089,7 @@ function createExchange(
       role: blueprint.role,
       keyQuestions: Object.freeze([...blueprint.keyQuestions]),
       minimumDistinctSources: blueprint.minimumDistinctSources,
+      sectionGuide: createSectionGuide(blueprint.requiredSections),
     }),
     request,
     evidencePack,
@@ -1007,13 +1111,14 @@ function createExchange(
       providerUsed: null,
       processSpawned: false as const,
     }),
+    truncatedUnitCount,
   });
   const exchange = Object.freeze({
     ...candidate,
     exchangeDigest: digestHierarchyValue(exchangeWithoutDigest(candidate)),
   });
   if (Buffer.byteLength(serializeCanonicalJson(exchange), 'utf8') > MAX_EXCHANGE_BYTES) {
-    invalid(projectId);
+    return null;
   }
   ISSUED_CURRENT_SESSION_EXCHANGES.add(exchange);
   EXCHANGE_DISCLOSURE_CLASSIFICATIONS.set(exchange, new Set(disclosureClassifications));
@@ -1048,19 +1153,8 @@ export function parseCurrentSessionProposalSubmission(
     submission.claims.length < 1 ||
     submission.claims.length > 512
   ) invalid(expected.projectId);
-  const sections = Object.freeze(submission.sections.map((value): HierarchicalProposalSectionV1 => {
-    const section = record(value, expected.projectId);
-    exactKeys(section, SECTION_PROPERTIES, expected.projectId);
-    return Object.freeze({
-      sectionId: identifier(
-        section.sectionId,
-        PORTABLE_IDENTIFIER_PATTERN,
-        expected.projectId,
-        64,
-      ),
-      body: safeText(section.body, MAX_PROPOSAL_BYTES, expected.projectId, true),
-    });
-  }));
+  const sections = Object.freeze(submission.sections.map((section) =>
+    parseProposalSection(section, expected.projectId)));
   const claims = Object.freeze(submission.claims.map((value):
   HierarchicalProposalClaimInputV1 => {
     const claim = record(value, expected.projectId);
@@ -1141,6 +1235,7 @@ export function createExternalGenerationPayload(
       snapshotDigest: evidencePack.snapshotDigest,
       sanitizerPolicyDigest: evidencePack.sanitizerPolicyDigest,
       generationOrder: exchange.request.generationOrder,
+      generationAttempt: exchange.request.generationAttempt,
       writingBrief: canonicalDeepSnapshot(exchange.writingBrief, expectedProjectId),
       instructions: canonicalDeepSnapshot(exchange.instructions, expectedProjectId),
       requiredSections: Object.freeze([...exchange.request.requiredSections]),
@@ -1332,15 +1427,8 @@ function parseExternalGenerationProposalSubmission(
     submission.claims.length < 1 ||
     submission.claims.length > 512
   ) invalid(projectId);
-  const sections = Object.freeze(submission.sections.map((value):
-  HierarchicalProposalSectionV1 => {
-    const section = record(value, projectId);
-    exactKeys(section, SECTION_PROPERTIES, projectId);
-    return Object.freeze({
-      sectionId: identifier(section.sectionId, PORTABLE_IDENTIFIER_PATTERN, projectId, 64),
-      body: safeText(section.body, MAX_PROPOSAL_BYTES, projectId, true),
-    });
-  }));
+  const sections = Object.freeze(submission.sections.map((section) =>
+    parseProposalSection(section, projectId)));
   const claims = Object.freeze(submission.claims.map((value):
   HierarchicalProposalClaimInputV1 => {
     const claim = record(value, projectId);
@@ -1543,8 +1631,10 @@ function parseClosedProposal(
   safeText(proposal.summary, 4_096, projectId, true);
   const sections = records(proposal.sections, 1, 32, projectId);
   sections.forEach((section) => {
-    exactKeys(section, SECTION_PROPERTIES, projectId);
+    const hasTitle = Object.hasOwn(section, 'title');
+    exactKeys(section, ['sectionId', 'body', ...(hasTitle ? ['title'] : [])], projectId);
     identifier(section.sectionId, PORTABLE_IDENTIFIER_PATTERN, projectId, 64);
+    if (hasTitle) safeText(section.title, 1_000, projectId);
     safeText(section.body, MAX_PROPOSAL_BYTES, projectId, true);
   });
   const claims = records(proposal.claims, 1, 512, projectId);
@@ -1661,6 +1751,7 @@ function replayBlueprint(exchange: CurrentSessionGenerationExchangeV1): PageBlue
       relationSetDigest: hierarchySha256('current-session-receipt-verification-relation-set'),
       allowedUnitKinds,
       sourceIds,
+      preferredUnitIds: Object.freeze([]),
     }),
     minimumDistinctSources: exchange.writingBrief.minimumDistinctSources,
     generationOrder: exchange.request.generationOrder,
@@ -1748,6 +1839,7 @@ function requestFromExternalPayload(
     blueprintDigest: payload.blueprintDigest,
     evidencePackDigest: payload.evidencePackDigest,
     generationOrder: payload.generationOrder,
+    generationAttempt: payload.generationAttempt,
     instructionCodes: Object.freeze(payload.instructions.map((instruction) => instruction.code)),
     requiredSections: payload.requiredSections,
     requiredLinkPageIds: payload.requiredLinkPageIds,
@@ -1791,6 +1883,7 @@ function replayBlueprintFromExternalPayload(
       relationSetDigest: hierarchySha256('external-generation-verification-relation-set'),
       allowedUnitKinds,
       sourceIds,
+      preferredUnitIds: Object.freeze([]),
     }),
     minimumDistinctSources: payload.writingBrief.minimumDistinctSources,
     generationOrder: payload.generationOrder,
@@ -2072,6 +2165,7 @@ export function createCurrentSessionGenerationService(
     pageId: string;
     summary: string;
     citationIds: readonly string[];
+    summaryCitationIds: readonly string[];
     classifications: ReadonlySet<DataClassification>;
     sanitizerPolicyDigest: HierarchySha256Digest;
     snapshotDigest: HierarchySha256Digest;
@@ -2120,7 +2214,8 @@ export function createCurrentSessionGenerationService(
           trusted === undefined ||
           trusted.pageId !== summary.pageId ||
           trusted.summary !== summary.summary ||
-          !sameStrings(trusted.citationIds, summary.citationIds) ||
+          (!sameStrings(trusted.citationIds, summary.citationIds) &&
+            !sameStrings(trusted.summaryCitationIds, summary.citationIds)) ||
           trusted.sanitizerPolicyDigest !== policy.digest ||
           trusted.snapshotDigest !== evidencePack.snapshotDigest
         ) invalid(expectedProjectId);
@@ -2128,20 +2223,52 @@ export function createCurrentSessionGenerationService(
           disclosureClassifications.add(classification);
         }
       }
-      const request = createCurrentSessionGenerationRequest(
-        blueprint,
-        evidencePack,
-        approvedChildSummaries,
-        expectedProjectId,
-      );
-      const exchange = createExchange(
-        purpose,
-        blueprint,
-        evidencePack,
-        request,
-        disclosureClassifications,
-        expectedProjectId,
-      );
+      const fullUnitCount = evidencePack.units.length;
+      let generationEvidencePack: EvidencePackV1 | null = null;
+      let request: CurrentSessionGenerationRequestV1 | null = null;
+      let exchange: CurrentSessionGenerationExchangeV1 | null = null;
+      for (let retainedUnitCount = fullUnitCount;
+        retainedUnitCount >= 1 && exchange === null;
+        retainedUnitCount -= 1) {
+        const retainedUnits = evidencePack.units.slice(0, retainedUnitCount);
+        const retainedUnitIds = new Set(retainedUnits.map((unit) => unit.unitId));
+        const observedSources = new Set(retainedUnits.map((unit) => unit.sourceId)).size;
+        if (observedSources < blueprint.minimumDistinctSources ||
+            evidencePack.conflicts.some((conflict) =>
+              conflict.unitIds.some((unitId) => !retainedUnitIds.has(unitId)))) {
+          continue;
+        }
+        const candidatePack = truncateSanitizedEvidencePack(
+          evidencePack,
+          blueprint,
+          retainedUnitCount,
+          expectedProjectId,
+        );
+        const candidateRequest = createCurrentSessionGenerationRequest(
+          blueprint,
+          candidatePack,
+          approvedChildSummaries,
+          expectedProjectId,
+          input.generationAttempt ?? 0,
+        );
+        const candidateExchange = createExchange(
+          purpose,
+          blueprint,
+          candidatePack,
+          candidateRequest,
+          disclosureClassifications,
+          fullUnitCount - retainedUnitCount,
+          expectedProjectId,
+        );
+        if (candidateExchange !== null) {
+          generationEvidencePack = candidatePack;
+          request = candidateRequest;
+          exchange = candidateExchange;
+        }
+      }
+      if (generationEvidencePack === null || request === null || exchange === null) {
+        invalid(expectedProjectId);
+      }
       let inFlight = false;
       let submitted = false;
       return Object.freeze({
@@ -2169,7 +2296,7 @@ export function createCurrentSessionGenerationService(
             const proposal = submitCurrentSessionProposal(
               blueprint,
               request,
-              evidencePack,
+              generationEvidencePack,
               proposalInput(submission),
               expectedProjectId,
             );
@@ -2220,6 +2347,10 @@ export function createCurrentSessionGenerationService(
               pageId: result.proposal.pageId,
               summary: result.proposal.summary,
               citationIds: result.proposal.citationIds,
+              summaryCitationIds: citationIdsForProposalSummary(
+                result.proposal,
+                expectedProjectId,
+              ),
               classifications: new Set([
                 ...disclosureClassifications,
                 prepared.classification,

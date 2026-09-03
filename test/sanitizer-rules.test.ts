@@ -442,7 +442,7 @@ describe('deterministic sanitizer rules', () => {
     'AABB/circle/polygon/collision',
     'https://docs.example.test/ferrum/collisionPipeline2D',
     'buildlore.approved-wiki-authority-record.v1',
-    'buildlore.hierarchical-wiki-proposal.v1',
+    'buildlore.hierarchical-wiki-proposal.v2',
     exactLengthTechnicalIdentifier(),
   ])('includes the bounded technical entropy token %s in every Markdown context', async (token) => {
     const item = await fixture();

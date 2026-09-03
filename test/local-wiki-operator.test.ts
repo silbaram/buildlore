@@ -297,8 +297,7 @@ describe('local Wiki operator surface', () => {
     })).rejects.toMatchObject({
       code: 'HIERARCHICAL_WIKI_ACTIVATION_APPROVAL_MISMATCH',
     });
-    await expect(service.activate({ projectId: PROJECT_ID } as unknown as
-      Parameters<typeof service.activate>[0])).rejects.toMatchObject({
+    await expect(service.activate({ projectId: PROJECT_ID })).rejects.toMatchObject({
       code: 'HIERARCHICAL_WIKI_ACTIVATION_APPROVAL_MISMATCH',
     });
     expect(liveVerificationCount).toBe(0);

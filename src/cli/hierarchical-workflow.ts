@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 
 import {
   HIERARCHICAL_COMPILATION_POLICY,
+  HierarchicalWorkflowEvidenceInsufficientError,
   advanceCompileContinuation,
   approveChildSummaryForSynthesis,
   buildSparseRelationGraph,
@@ -22,6 +23,7 @@ import {
   createProjectSessionCompiler,
   createWikiOutline,
   digestHierarchyValue,
+  evaluatePageSemanticQuality,
   finalizeCompileRun,
   finalizePlanningDispositionInventory,
   hierarchySha256,
@@ -48,6 +50,7 @@ import {
   type HierarchySha256Digest,
   type IntegratedWikiReviewSurfaceV1,
   type PageBlueprintV1,
+  type PageQualityReportV1,
   type PageOwnershipGraphV1,
   type PlanningDispositionInventoryV1,
   type ProjectSessionCompilerPort,
@@ -59,6 +62,7 @@ import {
 } from '../compiler/index.js';
 import { readConfinedSessionUtf8 } from '../compiler/session/safe-io.js';
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
+import { showProject } from '../knowledge/index.js';
 import { parseJsonStrict } from '../knowledge/strict-json.js';
 import { validateProjectId } from '../knowledge/validation.js';
 import { consumePreparedSource } from '../sanitizer/approval.js';
@@ -91,6 +95,7 @@ import {
   type HierarchicalWorkflowStoredIntegratedDecisionV1,
   type HierarchicalWorkflowStoredRelationDecisionV1,
   type HierarchicalWorkflowStoredSubmissionV1,
+  type HierarchicalWorkflowStoredResubmissionV2,
 } from './hierarchical-run-store.js';
 
 export const HIERARCHICAL_WORKFLOW_PURPOSE_INPUT_SCHEMA_VERSION =
@@ -124,8 +129,8 @@ const REASON_CODE_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 const MAXIMUM_PURPOSE_BYTES = 262_144;
 const MAXIMUM_INPUT_BYTES = 524_288;
 const INTERPRETATION_RULES_DIGEST = digestHierarchyValue({
-  schemaVersion: 'buildlore.hierarchical-workflow-interpretation.v1',
-  strategy: 'stable-source-default-current-supporting',
+  schemaVersion: 'buildlore.hierarchical-workflow-interpretation.v2',
+  strategy: 'document-heading-topics-with-shared-korean-token-variants',
 });
 
 export interface HierarchicalWorkflowPurposeInputV1 {
@@ -138,6 +143,7 @@ export interface HierarchicalWorkflowPurposeInputV1 {
   readonly excludedTopics: readonly string[];
   readonly outputLanguage: string;
   readonly requestedPageRoles: readonly string[];
+  readonly wikiTitle?: string;
 }
 
 export interface HierarchicalWorkflowChildReviewInputV1 {
@@ -193,6 +199,7 @@ export interface HierarchicalWorkflowReviewViewV1 {
 
 export type HierarchicalWorkflowNextActionV1 =
   | 'submit-proposal'
+  | 'resubmit-proposal'
   | 'review-child'
   | 'review-integrated-wiki'
   | 'approve-activation'
@@ -322,6 +329,13 @@ export interface HierarchicalWorkflowServicePort {
     inputFile: string,
     expectExchange: HierarchySha256Digest,
   ): Promise<HierarchicalWorkflowSubmitResultV1>;
+  resubmit(
+    projectId: string,
+    runId: string,
+    pageId: string,
+    inputFile: string,
+    expectExchange: HierarchySha256Digest,
+  ): Promise<HierarchicalWorkflowSubmitResultV1>;
   childReview(
     projectId: string,
     runId: string,
@@ -424,9 +438,10 @@ function stableSourceId(projectId: string, sourceRef: string): string {
 }
 
 function createPurpose(value: unknown, expectedProjectId: string): CompilationPurposeV1 {
+  const hasWikiTitle = isRecord(value) && Object.hasOwn(value, 'wikiTitle');
   exactKeys(value, [
     'audience', 'excludedTopics', 'goals', 'keyQuestions', 'outputLanguage', 'projectId',
-    'requestedPageRoles', 'schemaVersion', 'scopeHints',
+    'requestedPageRoles', 'schemaVersion', 'scopeHints', ...(hasWikiTitle ? ['wikiTitle'] : []),
   ]);
   if (value.schemaVersion !== HIERARCHICAL_WORKFLOW_PURPOSE_INPUT_SCHEMA_VERSION ||
       value.projectId !== expectedProjectId) {
@@ -444,6 +459,7 @@ function createPurpose(value: unknown, expectedProjectId: string): CompilationPu
       projectId: expectedProjectId,
       requestedPageRoles: value.requestedPageRoles as readonly string[],
       scopeHints: value.scopeHints as readonly string[],
+      ...(hasWikiTitle ? { wikiTitle: value.wikiTitle as string } : {}),
     });
   } catch {
     return fail('HIERARCHICAL_WORKFLOW_INPUT_INVALID');
@@ -599,6 +615,14 @@ type ReplayStateV1 =
       readonly base: ReplayBaseV1;
       readonly exchange: CurrentSessionGenerationExchangeV1;
       readonly session: CurrentSessionGenerationSessionV1;
+    }>
+  | Readonly<{
+      readonly kind: 'hard-quality-failed';
+      readonly base: ReplayBaseV1;
+      readonly exchange: CurrentSessionGenerationExchangeV1 | null;
+      readonly session: CurrentSessionGenerationSessionV1 | null;
+      readonly pageQualityReport: PageQualityReportV1;
+      readonly rejection: HierarchicalWorkflowRejectionV1;
     }>
   | Readonly<{
       readonly kind: 'awaiting-child-review';
@@ -773,7 +797,8 @@ async function buildLiveHierarchy(
       evidencePacks,
     });
   } catch (error) {
-    if (error instanceof HierarchicalWorkflowError) throw error;
+    if (error instanceof HierarchicalWorkflowError ||
+        error instanceof HierarchicalWorkflowEvidenceInsufficientError) throw error;
     return fail('HIERARCHICAL_WORKFLOW_SOURCE_DRIFT');
   }
 }
@@ -822,6 +847,46 @@ function replayBase(
     generations: Object.freeze([...generations]),
     childReviews: Object.freeze([...childReviews]),
     generationService,
+  });
+}
+
+const MAXIMUM_PAGE_RESUBMISSIONS = 3;
+
+function pageQualityEvaluation(
+  generation: ReplayGenerationV1,
+  projectId: string,
+): Readonly<{
+  readonly outcome: HierarchicalWorkflowStoredResubmissionV2['outcome'];
+  readonly failure: Readonly<{
+    readonly report: PageQualityReportV1;
+    readonly rejection: HierarchicalWorkflowRejectionV1;
+  }> | null;
+}> {
+  const report = evaluatePageSemanticQuality({
+    blueprint: generation.blueprint,
+    proposal: generation.result.proposal,
+    evidencePack: generation.exchange.evidencePack,
+  }, projectId);
+  return Object.freeze({
+    outcome: Object.freeze({
+      kind: report.hardQualityPassed ? 'accepted' as const : 'hard-quality-failed' as const,
+      pageQualityReportDigest: report.reportDigest,
+      reasonCodes: report.reasonCodes,
+    }),
+    failure: report.hardQualityPassed
+      ? null
+      : Object.freeze({
+          report,
+          rejection: Object.freeze({
+            kind: 'hard-quality-failed' as const,
+            reasonCodes: Object.freeze([...new Set([
+              'hard-quality-failed',
+              ...report.reasonCodes,
+            ])].sort()),
+            reviewDigest: report.reportDigest,
+            surfaceDigest: null,
+          }),
+        }),
   });
 }
 
@@ -1023,13 +1088,21 @@ async function replayRun(
   const generationService = dependencies.createGenerationService();
   const submissions = new Map(record.submissions.map((submission) =>
     [submission.generationOrder, submission]));
+  const resubmissionsByOrder = new Map<number, HierarchicalWorkflowStoredResubmissionV2[]>();
+  for (const resubmission of record.resubmissions) {
+    const entries = resubmissionsByOrder.get(resubmission.generationOrder) ?? [];
+    entries.push(resubmission);
+    resubmissionsByOrder.set(resubmission.generationOrder, entries);
+  }
   const childDecisionByPage = new Map(record.childDecisions.map((decision) =>
     [decision.pageId, decision]));
   const generations: ReplayGenerationV1[] = [];
   const childReviews: CompileCandidateReviewV1[] = [];
   const approvedChildSummaryByPage = new Map<string, ApprovedChildSummaryV1>();
+  let consumedResubmissions = 0;
   for (const blueprint of live.outline.blueprints) {
     const stored = submissions.get(blueprint.generationOrder);
+    const storedResubmissions = resubmissionsByOrder.get(blueprint.generationOrder) ?? [];
     const approvedChildSummaries = Object.freeze(blueprint.childPageIds.map((childPageId) => {
       const summary = approvedChildSummaryByPage.get(childPageId);
       if (summary === undefined) fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
@@ -1039,14 +1112,16 @@ async function replayRun(
     if (pack === undefined || pack.pageId !== blueprint.pageId) {
       fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
     }
-    const session = await generationService.prepare({
+    let session = await generationService.prepare({
       approvedChildSummaries,
       blueprint,
       evidencePack: pack,
+      generationAttempt: 0,
       purpose: record.purpose,
     }, record.projectId);
     if (stored === undefined) {
       if (record.submissions.length !== blueprint.generationOrder ||
+          storedResubmissions.length !== 0 || record.resubmissions.length !== consumedResubmissions ||
           record.childDecisions.length !== childReviews.length ||
           record.integratedDecisions.length !== 0 || record.relationDecisions.length !== 0 ||
           record.rejection !== null || record.approvalDecision !== null) {
@@ -1076,18 +1151,105 @@ async function replayRun(
       exchangeDigest: session.exchange.exchangeDigest,
       requestDigest: session.exchange.requestDigest,
     });
-    const result = await session.submit(parsedSubmission);
+    let result = await session.submit(parsedSubmission);
     if (result.proposal.proposalDigest !== stored.proposalDigest ||
         result.receipt.receiptDigest !== stored.receiptDigest) {
       fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
     }
-    const generation = Object.freeze({ blueprint, exchange: session.exchange, result });
+    let generation = Object.freeze({ blueprint, exchange: session.exchange, result });
+    let quality = pageQualityEvaluation(generation, record.projectId);
+    let failure = quality.failure;
+    let latestAttempt = 0;
+    for (const storedResubmission of storedResubmissions) {
+      if (failure === null || storedResubmission.attempt !== latestAttempt + 1 ||
+          storedResubmission.pageId !== blueprint.pageId) {
+        fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
+      }
+      latestAttempt = storedResubmission.attempt;
+      consumedResubmissions += 1;
+      session = await generationService.prepare({
+        approvedChildSummaries,
+        blueprint,
+        evidencePack: pack,
+        generationAttempt: latestAttempt,
+        purpose: record.purpose,
+      }, record.projectId);
+      if (storedResubmission.expectedExchangeDigest !== session.exchange.exchangeDigest) {
+        fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
+      }
+      const parsedResubmission = parseCurrentSessionProposalSubmission(
+        storedResubmission.submission,
+        {
+          projectId: record.projectId,
+          pageId: blueprint.pageId,
+          exchangeDigest: session.exchange.exchangeDigest,
+          requestDigest: session.exchange.requestDigest,
+        },
+      );
+      result = await session.submit(parsedResubmission);
+      if (result.proposal.proposalDigest !== storedResubmission.proposalDigest ||
+          result.receipt.receiptDigest !== storedResubmission.receiptDigest) {
+        fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
+      }
+      generation = Object.freeze({ blueprint, exchange: session.exchange, result });
+      quality = pageQualityEvaluation(generation, record.projectId);
+      if (!sameValue(storedResubmission.outcome, quality.outcome)) {
+        fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
+      }
+      failure = quality.failure;
+    }
+    if (failure !== null) {
+      if (record.submissions.length !== blueprint.generationOrder + 1 ||
+          record.resubmissions.length !== consumedResubmissions ||
+          record.childDecisions.length !== childReviews.length ||
+          childDecisionByPage.has(blueprint.pageId) || record.integratedDecisions.length !== 0 ||
+          record.relationDecisions.length !== 0 || record.approvalDecision !== null ||
+          !sameValue(record.rejection, failure.rejection)) {
+        fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
+      }
+      const retrySession = latestAttempt < MAXIMUM_PAGE_RESUBMISSIONS
+        ? await generationService.prepare({
+            approvedChildSummaries,
+            blueprint,
+            evidencePack: pack,
+            generationAttempt: latestAttempt + 1,
+            purpose: record.purpose,
+          }, record.projectId)
+        : null;
+      assertPendingState(record, {
+        phase: retrySession === null ? 'rejected' : 'hard-quality-failed',
+        exchange: retrySession?.exchange.exchangeDigest ?? null,
+        child: null,
+        review: null,
+        ledger: null,
+      });
+      const base = replayBase(
+        live,
+        [...generations, generation],
+        childReviews,
+        generationService,
+      );
+      if (retrySession === null) {
+        return Object.freeze({
+          kind: 'rejected', base, review: null, rejection: failure.rejection,
+        });
+      }
+      return Object.freeze({
+        kind: 'hard-quality-failed',
+        base,
+        exchange: retrySession.exchange,
+        session: retrySession,
+        pageQualityReport: failure.report,
+        rejection: failure.rejection,
+      });
+    }
     generations.push(generation);
     if (blueprint.parentPageId !== null) {
       const view = childReviewView(generation, record.projectId, record.runId);
       const decision = childDecisionByPage.get(blueprint.pageId);
       if (decision === undefined) {
         if (record.submissions.length !== blueprint.generationOrder + 1 ||
+            record.resubmissions.length !== consumedResubmissions ||
             record.childDecisions.length !== childReviews.length ||
             record.integratedDecisions.length !== 0 || record.relationDecisions.length !== 0 ||
             record.rejection !== null || record.approvalDecision !== null) {
@@ -1145,6 +1307,7 @@ async function replayRun(
     }
   }
   if (record.submissions.length !== live.outline.blueprints.length ||
+      record.resubmissions.length !== consumedResubmissions ||
       record.childDecisions.length !== childReviews.length) {
     fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
   }
@@ -1323,7 +1486,11 @@ async function statusFromReplay(
         : 'not-approved';
     }
   }
-  const currentExchange = replay.kind === 'awaiting-proposal' ? replay.exchange : null;
+  const currentExchange = replay.kind === 'awaiting-proposal'
+    ? replay.exchange
+    : replay.kind === 'hard-quality-failed'
+      ? replay.exchange
+      : null;
   const childReview = replay.kind === 'awaiting-child-review' ? replay.childReview : null;
   const review = replay.kind === 'review-ready' || replay.kind === 'finalized' ||
       replay.kind === 'approved'
@@ -1334,9 +1501,13 @@ async function statusFromReplay(
   const ledger = replay.kind === 'finalized' || replay.kind === 'approved'
     ? replay.ledger
     : null;
-  const rejection = replay.kind === 'rejected' ? replay.rejection : null;
+  const rejection = replay.kind === 'rejected' || replay.kind === 'hard-quality-failed'
+    ? replay.rejection
+    : null;
   const nextAction: HierarchicalWorkflowNextActionV1 = replay.kind === 'awaiting-proposal'
     ? 'submit-proposal'
+    : replay.kind === 'hard-quality-failed' && replay.exchange !== null
+      ? 'resubmit-proposal'
     : replay.kind === 'awaiting-child-review'
       ? 'review-child'
       : replay.kind === 'review-ready'
@@ -1514,10 +1685,23 @@ export function createHierarchicalWorkflowService(
   const service: HierarchicalWorkflowServicePort = {
     async start(projectIdValue, purposeFile) {
       const projectId = project(projectIdValue);
-      const purpose = createPurpose(
+      const inputPurpose = createPurpose(
         await readJsonInput(hubRoot, purposeFile, MAXIMUM_PURPOSE_BYTES, projectId),
         projectId,
       );
+      const purpose = inputPurpose.wikiTitle === undefined
+        ? createCompilationPurpose({
+            audience: inputPurpose.audience,
+            excludedTopics: inputPurpose.excludedTopics,
+            goals: inputPurpose.goals,
+            keyQuestions: inputPurpose.keyQuestions,
+            outputLanguage: inputPurpose.outputLanguage,
+            projectId,
+            requestedPageRoles: inputPurpose.requestedPageRoles,
+            scopeHints: inputPurpose.scopeHints,
+            wikiTitle: (await showProject(knowledgeRoot, projectId)).entry.displayName,
+          })
+        : inputPurpose;
       await assertSafePurpose(purpose, knowledgeRoot, projectId);
       const baselineAuthority = await readCurrentAuthority(corpusStore, projectId);
       const baselineState = baselineAuthority?.state ?? null;
@@ -1536,6 +1720,7 @@ export function createHierarchicalWorkflowService(
         approvedChildSummaries: Object.freeze([]),
         blueprint: firstBlueprint,
         evidencePack: firstPack,
+        generationAttempt: 0,
         purpose,
       }, projectId);
       for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -1561,6 +1746,7 @@ export function createHierarchicalWorkflowService(
             snapshotDigest: live.snapshot.snapshotDigest,
           }),
           submissions: Object.freeze([]),
+          resubmissions: Object.freeze([]),
           childDecisions: Object.freeze([]),
           integratedDecisions: Object.freeze([]),
           relationDecisions: Object.freeze([]),
@@ -1652,7 +1838,44 @@ export function createHierarchicalWorkflowService(
       const generations = Object.freeze([...replay.base.generations, generation]);
       let nextRecord: HierarchicalWorkflowRunRecordV1;
       let nextReplay: ReplayStateV1;
-      if (blueprint.parentPageId !== null) {
+      const failure = pageQualityEvaluation(generation, projectId).failure;
+      if (failure !== null) {
+        const retrySession = await replay.base.generationService.prepare({
+          approvedChildSummaries: summariesForBlueprint(
+            blueprint,
+            replay.base.generations,
+            replay.base.childReviews,
+            projectId,
+          ),
+          blueprint,
+          evidencePack: replay.exchange.evidencePack,
+          generationAttempt: 1,
+          purpose: record.purpose,
+        }, projectId);
+        const base = replayBase(
+          replay.base,
+          generations,
+          replay.base.childReviews,
+          replay.base.generationService,
+        );
+        nextRecord = recordWith(record, {
+          submissions: Object.freeze([...record.submissions, storedSubmission]),
+          phase: 'hard-quality-failed',
+          rejection: failure.rejection,
+          pendingExchangeDigest: retrySession.exchange.exchangeDigest,
+          pendingChildReviewDigest: null,
+          pendingReviewDigest: null,
+          pendingLedgerDigest: null,
+        });
+        nextReplay = Object.freeze({
+          kind: 'hard-quality-failed',
+          base,
+          exchange: retrySession.exchange,
+          session: retrySession,
+          pageQualityReport: failure.report,
+          rejection: failure.rejection,
+        });
+      } else if (blueprint.parentPageId !== null) {
         const view = childReviewView(generation, projectId, currentRunIdValue);
         nextRecord = recordWith(record, {
           submissions: Object.freeze([...record.submissions, storedSubmission]),
@@ -1703,6 +1926,172 @@ export function createHierarchicalWorkflowService(
         projectId,
         runId: currentRunIdValue,
         pageId: blueprint.pageId,
+        proposalDigest: result.proposal.proposalDigest,
+        receiptDigest: result.receipt.receiptDigest,
+        status,
+      });
+    },
+
+    async resubmit(
+      projectIdValue,
+      runIdValue,
+      pageIdValue,
+      inputFile,
+      expectExchangeValue,
+    ) {
+      const projectId = project(projectIdValue);
+      const currentRunIdValue = runId(runIdValue);
+      const expectExchange = digest(expectExchangeValue);
+      if (!PAGE_ID_PATTERN.test(pageIdValue)) fail('HIERARCHICAL_WORKFLOW_INPUT_INVALID');
+      const record = await runStore.read(projectId, currentRunIdValue);
+      if (record.phase !== 'hard-quality-failed') {
+        fail('HIERARCHICAL_WORKFLOW_PHASE_MISMATCH');
+      }
+      if (record.pendingExchangeDigest !== expectExchange) {
+        fail('HIERARCHICAL_WORKFLOW_EXPECTATION_MISMATCH');
+      }
+      const input = parseSubmissionPreflight(
+        await readJsonInput(hubRoot, inputFile, MAXIMUM_INPUT_BYTES, projectId),
+        projectId,
+      );
+      if (input.pageId !== pageIdValue || input.exchangeDigest !== expectExchange) {
+        fail('HIERARCHICAL_WORKFLOW_EXPECTATION_MISMATCH');
+      }
+      const replay = await replayRun(record, dependencies);
+      if (replay.kind !== 'hard-quality-failed' || replay.exchange === null ||
+          replay.session === null || replay.exchange.pageId !== pageIdValue ||
+          replay.exchange.exchangeDigest !== expectExchange) {
+        fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
+      }
+      const attempt = replay.exchange.request.generationAttempt;
+      if (attempt < 1 || attempt > MAXIMUM_PAGE_RESUBMISSIONS) {
+        fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
+      }
+      const parsed = parseCurrentSessionProposalSubmission(input, {
+        projectId,
+        pageId: pageIdValue,
+        exchangeDigest: replay.exchange.exchangeDigest,
+        requestDigest: replay.exchange.requestDigest,
+      });
+      const result = await replay.session.submit(parsed);
+      const failedGeneration = replay.base.generations.at(-1);
+      if (failedGeneration === undefined || failedGeneration.blueprint.pageId !== pageIdValue ||
+          failedGeneration.blueprint.generationOrder !== record.submissions.length - 1 ||
+          result.proposal.pageId !== pageIdValue) {
+        fail('HIERARCHICAL_WORKFLOW_REPLAY_MISMATCH');
+      }
+      const generation: ReplayGenerationV1 = Object.freeze({
+        blueprint: failedGeneration.blueprint,
+        exchange: replay.exchange,
+        result,
+      });
+      const generations = Object.freeze([
+        ...replay.base.generations.slice(0, -1),
+        generation,
+      ]);
+      const base = replayBase(
+        replay.base,
+        generations,
+        replay.base.childReviews,
+        replay.base.generationService,
+      );
+      const quality = pageQualityEvaluation(generation, projectId);
+      const failure = quality.failure;
+      const storedResubmission: HierarchicalWorkflowStoredResubmissionV2 = Object.freeze({
+        attempt,
+        expectedExchangeDigest: expectExchange,
+        generationOrder: failedGeneration.blueprint.generationOrder,
+        outcome: quality.outcome,
+        pageId: pageIdValue,
+        proposalDigest: result.proposal.proposalDigest,
+        receiptDigest: result.receipt.receiptDigest,
+        submission: parsed,
+      });
+      let nextRecord: HierarchicalWorkflowRunRecordV1;
+      let nextReplay: ReplayStateV1;
+      if (failure !== null && attempt < MAXIMUM_PAGE_RESUBMISSIONS) {
+        const retrySession = await replay.base.generationService.prepare({
+          approvedChildSummaries: summariesForBlueprint(
+            failedGeneration.blueprint,
+            generations,
+            replay.base.childReviews,
+            projectId,
+          ),
+          blueprint: failedGeneration.blueprint,
+          evidencePack: failedGeneration.exchange.evidencePack,
+          generationAttempt: attempt + 1,
+          purpose: record.purpose,
+        }, projectId);
+        nextRecord = recordWith(record, {
+          resubmissions: Object.freeze([...record.resubmissions, storedResubmission]),
+          phase: 'hard-quality-failed',
+          rejection: failure.rejection,
+          pendingExchangeDigest: retrySession.exchange.exchangeDigest,
+          pendingChildReviewDigest: null,
+          pendingReviewDigest: null,
+          pendingLedgerDigest: null,
+        });
+        nextReplay = Object.freeze({
+          kind: 'hard-quality-failed',
+          base,
+          exchange: retrySession.exchange,
+          session: retrySession,
+          pageQualityReport: failure.report,
+          rejection: failure.rejection,
+        });
+      } else if (failure !== null) {
+        nextRecord = recordWith(record, {
+          resubmissions: Object.freeze([...record.resubmissions, storedResubmission]),
+          phase: 'rejected',
+          rejection: failure.rejection,
+          pendingExchangeDigest: null,
+          pendingChildReviewDigest: null,
+          pendingReviewDigest: null,
+          pendingLedgerDigest: null,
+        });
+        nextReplay = Object.freeze({
+          kind: 'rejected', base, review: null, rejection: failure.rejection,
+        });
+      } else if (failedGeneration.blueprint.parentPageId !== null) {
+        const view = childReviewView(generation, projectId, currentRunIdValue);
+        nextRecord = recordWith(record, {
+          resubmissions: Object.freeze([...record.resubmissions, storedResubmission]),
+          phase: 'awaiting-child-review',
+          rejection: null,
+          pendingExchangeDigest: null,
+          pendingChildReviewDigest: view.reviewViewDigest,
+          pendingReviewDigest: null,
+          pendingLedgerDigest: null,
+        });
+        nextReplay = Object.freeze({
+          kind: 'awaiting-child-review', base, childReview: view,
+        });
+      } else {
+        const integrated = buildIntegratedReview(record, base);
+        nextRecord = recordWith(record, {
+          resubmissions: Object.freeze([...record.resubmissions, storedResubmission]),
+          phase: 'review-ready',
+          rejection: null,
+          pendingExchangeDigest: null,
+          pendingChildReviewDigest: null,
+          pendingReviewDigest: integrated.view.reviewDigest,
+          pendingLedgerDigest: null,
+        });
+        nextReplay = Object.freeze({ kind: 'review-ready', base, review: integrated.view });
+      }
+      await runStore.replace({
+        expectedRecordDigest: record.recordDigest,
+        expectedRevision: record.revision,
+        next: nextRecord,
+        projectId,
+        runId: currentRunIdValue,
+      });
+      const status = await statusFromReplay(nextRecord, nextReplay, corpusStore, runStore);
+      return Object.freeze({
+        schemaVersion: HIERARCHICAL_WORKFLOW_SUBMIT_RESULT_SCHEMA_VERSION,
+        projectId,
+        runId: currentRunIdValue,
+        pageId: pageIdValue,
         proposalDigest: result.proposal.proposalDigest,
         receiptDigest: result.receipt.receiptDigest,
         status,

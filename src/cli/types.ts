@@ -11,6 +11,7 @@ export type CliCommandId =
   | 'compile.hierarchy.child-review'
   | 'compile.hierarchy.finalize'
   | 'compile.hierarchy.review'
+  | 'compile.hierarchy.resubmit'
   | 'compile.hierarchy.start'
   | 'compile.hierarchy.status'
   | 'compile.hierarchy.submit'

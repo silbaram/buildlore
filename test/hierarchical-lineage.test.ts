@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE,
   HIERARCHICAL_COMPILATION_POLICY,
   HierarchyContractError,
   activateLegacyWikiMigration,
@@ -126,7 +127,9 @@ function withBaseline(
       integratedReviewSurface,
       candidate.pageId,
       'accepted',
-      [],
+      integratedReviewSurface.removedBaselinePages.length === 0
+        ? []
+        : [BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE],
       PROJECT_ID,
     )));
   return Object.freeze({
@@ -278,6 +281,43 @@ describe('receipt-bound authoritative hierarchical lineage', () => {
       { ledger: run.ledger, ownershipGraph: run.ownershipGraph, currentState: null },
       PROJECT_ID,
     )).toEqual(approved.humanActivationApproval);
+  });
+
+  it('finalizes an explicitly reviewed replacement of removed baseline pages', () => {
+    const proposal = fixture.integrityInput.proposals[0];
+    if (proposal === undefined) throw new Error('fixture proposal missing');
+    const { proposalDigest: _proposalDigest, ...proposalBasis } = proposal;
+    void _proposalDigest;
+    const removedBasis = Object.freeze({
+      ...proposalBasis,
+      pageId: pageId('retired-baseline-page'),
+    });
+    const removedBaseline = Object.freeze({
+      ...removedBasis,
+      proposalDigest: digestHierarchyValue(removedBasis),
+    }) as HierarchicalWikiProposalV1;
+    const replacementInput = withBaseline(
+      fixture.integrityInput,
+      digest('baseline-with-retired-page'),
+      [removedBaseline],
+    );
+
+    expect(replacementInput.integratedReviewSurface).toMatchObject({
+      eligibleForHumanAcceptance: false,
+      hardQualityPassed: true,
+    });
+    expect(replacementInput.integratedReviewSurface.removedBaselinePages).toHaveLength(1);
+    expect(replacementInput.integratedReviews.every((review) =>
+      review.decision === 'accepted' &&
+      review.reasonCodes.includes(BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE))).toBe(true);
+
+    const run = finalize(replacementInput);
+    expect(run.ledger).toMatchObject({
+      status: 'finalized',
+      eligibleForApproval: true,
+      integrityPassed: true,
+      semanticQualityPassed: true,
+    });
   });
 
   it('rejects missing, duplicate, cross-page, cross-project, and tampered receipts', () => {

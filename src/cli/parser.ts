@@ -222,8 +222,8 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     'compile.activate',
     'compile.activate',
     ['--project', '--input', '--confirm-approval'],
-    ['--project', '--confirm-approval'],
-    [],
+    ['--project'],
+    ['--rematerialize'],
     {},
     '--project',
   ),
@@ -253,6 +253,16 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     'compile.hierarchy.submit',
     ['--project', '--run', '--input', '--expect-exchange'],
     ['--project', '--run', '--input', '--expect-exchange'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'hierarchy', 'resubmit'],
+    'compile.hierarchy.resubmit',
+    'compile.hierarchy.resubmit',
+    ['--project', '--run', '--page', '--input', '--expect-exchange'],
+    ['--project', '--run', '--page', '--input', '--expect-exchange'],
     [],
     {},
     '--project',
@@ -702,6 +712,7 @@ function validateSessionCompileOptions(
     return;
   }
   if (commandId === 'compile.activate') {
+    const rematerialize = values['--rematerialize'];
     const input = values['--input'];
     if (input !== undefined && (typeof input !== 'string' || input.length > 4_096 ||
         containsControlCharacter(input) || input.startsWith('/') || input.startsWith('~') ||
@@ -710,7 +721,17 @@ function validateSessionCompileOptions(
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
     const confirmation = values['--confirm-approval'];
-    if (typeof confirmation !== 'string' || !PLAN_DIGEST_PATTERN.test(confirmation)) {
+    if (rematerialize === true) {
+      if (input !== undefined || confirmation !== undefined) {
+        throw new CliUsageError('CLI_OPTION_CONFLICT');
+      }
+      return;
+    }
+    if (confirmation === undefined) {
+      throw new CliUsageError('CLI_OPTION_MISSING');
+    }
+    if (rematerialize !== undefined || typeof confirmation !== 'string' ||
+        !PLAN_DIGEST_PATTERN.test(confirmation)) {
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
     return;
@@ -757,6 +778,12 @@ function validateHierarchyCompileOptions(
   for (const option of ['--purpose', '--input']) {
     const value = values[option];
     if (value !== undefined && !isConfinedRelativeFilePath(value)) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
+  }
+  if (commandId === 'compile.hierarchy.resubmit') {
+    const page = values['--page'];
+    if (typeof page !== 'string' || !isGeneratedIdentifier(page, 'page')) {
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
   }

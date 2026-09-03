@@ -82,14 +82,21 @@ function fixture(
   untrustedData = false,
   classification: DataClassification = 'internal',
   purposeGoal = 'Explain integrity and local retrieval',
+  contents: readonly string[] = CONTENT,
+  largeWritingBrief = false,
+  splitEvidenceLines = false,
 ): EvidenceFixture {
+  const longItems = (label: string, count: number): readonly string[] => Object.freeze(
+    Array.from({ length: count }, (_, index) =>
+      `${'\t'.repeat(980)}${label}-${String(index).padStart(2, '0')}`),
+  );
   const purpose = createCompilationPurpose({
     projectId: PROJECT_ID,
-    audience: ['Maintainers'],
-    goals: [purposeGoal],
+    audience: largeWritingBrief ? longItems('audience', 33) : ['Maintainers'],
+    goals: largeWritingBrief ? longItems('goal', 33) : [purposeGoal],
     keyQuestions: ['How does the local knowledge workflow remain trustworthy?'],
-    scopeHints: ['Registered generic corpus'],
-    excludedTopics: ['Hosted services'],
+    scopeHints: largeWritingBrief ? longItems('scope', 33) : ['Registered generic corpus'],
+    excludedTopics: largeWritingBrief ? longItems('excluded', 33) : ['Hosted services'],
     outputLanguage: 'en',
     requestedPageRoles: ['architecture', 'overview'],
   });
@@ -97,8 +104,8 @@ function fixture(
   const snapshotSources = [];
   const textUnits = [];
   const selectedUnitIds: string[] = [];
-  for (let index = 0; index < CONTENT.length; index += 1) {
-    const sanitizedContent = CONTENT[index] as string;
+  for (let index = 0; index < contents.length; index += 1) {
+    const sanitizedContent = contents[index] as string;
     const sourceId = `source-${hierarchySha256(`source-${String(index)}`)
       .slice('sha256:'.length)}`;
     const sourceRevision = hierarchySha256(`revision-${String(index)}`);
@@ -148,24 +155,36 @@ function fixture(
       topicLabel,
     });
     textUnits.push(headingUnit);
-    const evidenceContent = lines.slice(1).join('\n');
-    const evidenceUnit = createTextUnit({
-      projectId: PROJECT_ID,
-      sourceId,
-      sourceRevision,
-      sourceRef,
-      kind: index === 2 ? 'fenced-code' : 'paragraph',
-      ordinal: 1,
-      range: {
-        startLine: 2,
-        startColumn: 1,
-        endLine: lines.length,
-        endColumn: [...(lines[lines.length - 1] as string)].length,
-      },
-      contentDigest: hierarchySha256(evidenceContent),
+    const evidenceSegments = splitEvidenceLines
+      ? lines.slice(1).map((content, lineIndex) => Object.freeze({
+          content,
+          endLine: lineIndex + 2,
+          startLine: lineIndex + 2,
+        })).filter(({ content }) => content.length > 0)
+      : [Object.freeze({
+          content: lines.slice(1).join('\n'),
+          endLine: lines.length,
+          startLine: 2,
+        })];
+    evidenceSegments.forEach((segment, segmentIndex) => {
+      const evidenceUnit = createTextUnit({
+        projectId: PROJECT_ID,
+        sourceId,
+        sourceRevision,
+        sourceRef,
+        kind: index === 2 ? 'fenced-code' : 'paragraph',
+        ordinal: segmentIndex + 1,
+        range: {
+          startLine: segment.startLine,
+          startColumn: 1,
+          endLine: segment.endLine,
+          endColumn: [...segment.content.split('\n').at(-1) ?? ''].length,
+        },
+        contentDigest: hierarchySha256(segment.content),
+      });
+      textUnits.push(evidenceUnit);
+      selectedUnitIds.push(evidenceUnit.unitId);
     });
-    textUnits.push(evidenceUnit);
-    selectedUnitIds.push(evidenceUnit.unitId);
   }
   const snapshot = createCorpusSnapshot({
     projectId: PROJECT_ID,
@@ -216,7 +235,7 @@ afterEach(async () => {
 
 function packFor(blueprint: PageBlueprintV1, value = fixture()): EvidencePackV1 {
   const selectedUnitIds = value.snapshot.textUnits.filter((unit) =>
-    unit.ordinal === 1 && blueprint.evidenceScope.sourceIds.includes(unit.sourceId))
+    unit.ordinal >= 1 && blueprint.evidenceScope.sourceIds.includes(unit.sourceId))
     .map((unit) => unit.unitId);
   return createEvidencePack({
     blueprint,
@@ -271,6 +290,38 @@ function proposalFor(
       evidenceUnitIds: [exchangedPack.units[0]?.unitId as string],
       citationIds: [exchangedPack.units[0]?.citation.citationId as string],
     }],
+    wikilinks: request.requiredLinkPageIds,
+  }, PROJECT_ID);
+}
+
+function multiClaimProposalFor(
+  blueprint: PageBlueprintV1,
+  pack: EvidencePackV1,
+): HierarchicalWikiProposalV1 {
+  const request = createCurrentSessionGenerationRequest(
+    blueprint,
+    pack,
+    [],
+    PROJECT_ID,
+  );
+  const firstUnit = pack.units[0];
+  if (firstUnit === undefined) throw new Error('expected multi-claim evidence');
+  const renderedClaims = pack.units.map((unit) =>
+    `${unit.content} [^${unit.citation.citationId}]`).join('\n');
+  const linkMarkers = request.requiredLinkPageIds.map((pageId) =>
+    `[[${pageId}]]`).join(' ');
+  return submitCurrentSessionProposal(blueprint, request, pack, {
+    title: blueprint.title,
+    summary: `Summary: ${firstUnit.content}`,
+    sections: request.requiredSections.map((sectionId, index) => ({
+      sectionId,
+      body: index === 0 ? `${renderedClaims}\n${linkMarkers}` : `Section ${sectionId}`,
+    })),
+    claims: pack.units.map((unit) => ({
+      text: unit.content,
+      evidenceUnitIds: [unit.unitId],
+      citationIds: [unit.citation.citationId],
+    })),
     wikilinks: request.requiredLinkPageIds,
   }, PROJECT_ID);
 }
@@ -353,7 +404,10 @@ async function serviceFixture(
   options: Readonly<{
     capabilities?: readonly SecurityEgressCapability[];
     classification?: DataClassification;
+    contents?: readonly string[];
+    largeWritingBrief?: boolean;
     purposeGoal?: string;
+    splitEvidenceLines?: boolean;
   }> = {},
 ): Promise<Readonly<{
   knowledgeRoot: string;
@@ -383,6 +437,9 @@ async function serviceFixture(
       false,
       options.classification ?? 'internal',
       options.purposeGoal,
+      options.contents,
+      options.largeWritingBrief,
+      options.splitEvidenceLines,
     ),
   });
 }
@@ -446,6 +503,53 @@ function resignGenerationProposal(
 }
 
 describe('bounded hierarchical evidence exchange', () => {
+  it('deterministically reports evidence removed to keep an exchange within 512 KiB', async () => {
+    const contents = Object.freeze([
+      '# Primary\nSmall primary evidence remains available after byte truncation.',
+      `# Secondary\nSmall secondary evidence preserves the source minimum.\n${'x'.repeat(258_000)}`,
+    ]);
+    const { knowledgeRoot, value } = await serviceFixture({
+      contents,
+      largeWritingBrief: true,
+      splitEvidenceLines: true,
+    });
+    const secondarySource = value.sources[1];
+    const leaf = value.outline.blueprints.find((page) =>
+      page.parentPageId !== null && secondarySource !== undefined &&
+      page.evidenceScope.sourceIds.includes(secondarySource.sourceId));
+    if (leaf === undefined) throw new Error('expected secondary leaf blueprint');
+    const fullPack = createEvidencePack({
+      blueprint: leaf,
+      conflicts: [],
+      gaps: [],
+      selectedUnitIds: value.snapshot.textUnits.filter((unit) =>
+        unit.ordinal >= 1 && leaf.evidenceScope.sourceIds.includes(unit.sourceId))
+        .map((unit) => unit.unitId),
+      snapshot: value.snapshot,
+      sources: value.sources,
+    }, PROJECT_ID);
+    expect(fullPack.units).toHaveLength(2);
+    expect(leaf.minimumDistinctSources).toBe(1);
+    const service = createCurrentSessionGenerationService({ knowledgeRoot });
+    const first = await service.prepare({
+      approvedChildSummaries: [],
+      blueprint: leaf,
+      evidencePack: fullPack,
+      purpose: value.purpose,
+    }, PROJECT_ID);
+    const second = await service.prepare({
+      approvedChildSummaries: [],
+      blueprint: leaf,
+      evidencePack: fullPack,
+      purpose: value.purpose,
+    }, PROJECT_ID);
+    expect(first.exchange).toEqual(second.exchange);
+    expect(first.exchange.truncatedUnitCount).toBe(1);
+    expect(first.exchange.evidencePack.units).toHaveLength(1);
+    expect(Buffer.byteLength(JSON.stringify(first.exchange), 'utf8'))
+      .toBeLessThanOrEqual(512 * 1024);
+  });
+
   it('extracts exact ranges with citations, conflicts, gaps and preserves fenced bytes', () => {
     const value = fixture();
     const root = value.outline.blueprints.find((page) => page.pageId === value.outline.rootPageId);
@@ -534,6 +638,63 @@ describe('bounded hierarchical evidence exchange', () => {
     );
     expect(reconciliation.complete).toBe(true);
     expect(reconciliation.entries).toHaveLength(value.outline.blueprints.length);
+  });
+
+  it('passes only summary-supporting citations into a wide parent synthesis', () => {
+    const contents = Array.from({ length: 9 }, (_, sourceIndex) => [
+      `# Corpus source ${String(sourceIndex)}`,
+      ...Array.from({ length: 8 }, (_, evidenceIndex) =>
+        `Corpus ${String(sourceIndex)} evidence ${String(evidenceIndex)} preserves local ` +
+        'review lineage and explicit activation boundaries.'),
+    ].join('\n'));
+    const value = fixture(
+      hierarchySha256('sanitizer'),
+      false,
+      'internal',
+      'Explain wide local synthesis',
+      contents,
+      false,
+      true,
+    );
+    const root = value.outline.blueprints.find((page) =>
+      page.pageId === value.outline.rootPageId);
+    if (root === undefined) throw new Error('expected wide root blueprint');
+    const leaves = value.outline.blueprints.filter((page) =>
+      page.parentPageId === root.pageId);
+    expect(leaves).toHaveLength(9);
+    const childProposals = leaves.map((leaf) =>
+      multiClaimProposalFor(leaf, packFor(leaf, value)));
+    expect(childProposals.every((proposal) => proposal.citationIds.length === 8)).toBe(true);
+    const childSummaries = childProposals.map((proposal) =>
+      approveChildSummaryForSynthesis(
+        proposal,
+        createCompileCandidateReview(proposal, 'accepted', PROJECT_ID),
+        PROJECT_ID,
+      ));
+    expect(childSummaries.every((summary) => summary.citationIds.length === 1)).toBe(true);
+    expect(new Set(childSummaries.flatMap((summary) => summary.citationIds)).size).toBe(9);
+
+    const selectedSourceIds = new Set<string>();
+    const rootSelectedUnitIds = value.snapshot.textUnits.filter((unit) => {
+      if (unit.ordinal < 1 || selectedSourceIds.has(unit.sourceId) ||
+          selectedSourceIds.size >= 8) return false;
+      selectedSourceIds.add(unit.sourceId);
+      return true;
+    }).map((unit) => unit.unitId);
+    const rootPack = createEvidencePack({
+      blueprint: root,
+      snapshot: value.snapshot,
+      sources: value.sources,
+      selectedUnitIds: rootSelectedUnitIds,
+      conflicts: [],
+      gaps: [],
+    }, PROJECT_ID);
+    expect(() => createCurrentSessionGenerationRequest(
+      root,
+      rootPack,
+      childSummaries,
+      PROJECT_ID,
+    )).not.toThrow();
   });
 
   it('runs a serialized current-agent exchange leaf-first through candidate creation', async () => {
@@ -839,6 +1000,25 @@ describe('bounded hierarchical evidence exchange', () => {
       exchangeDigest: 'sha256:bad',
       requestDigest: valid.requestDigest,
     })).toThrow(HierarchyContractError);
+    const legacyMarker = 'legacy-submission-body-must-not-be-reflected';
+    let legacyError: unknown;
+    try {
+      parseCurrentSessionProposalSubmission({
+        ...valid,
+        schemaVersion: 'buildlore.current-session-proposal-submission.v1',
+        title: legacyMarker,
+      }, {
+        projectId: PROJECT_ID,
+        pageId: valid.pageId,
+        exchangeDigest: valid.exchangeDigest,
+        requestDigest: valid.requestDigest,
+      });
+    } catch (error) {
+      legacyError = error;
+    }
+    expect(legacyError).toBeInstanceOf(HierarchyContractError);
+    expect(legacyError).toMatchObject({ code: 'HIERARCHY_CONTRACT_INVALID' });
+    expect(String(legacyError)).not.toContain(legacyMarker);
     expect(() => parseCurrentSessionProposalSubmission({
       ...valid,
       sections: valid.sections.map((section, index) => index === 0

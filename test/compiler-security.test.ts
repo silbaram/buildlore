@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -134,6 +134,28 @@ describe('compiler production security gate', () => {
       source: collectionSource,
       sourceKind: 'markdown',
     });
+    const compiler = createProjectCompiler({
+      backend: item.backend,
+      environment: {},
+      knowledgeRoot: item.knowledgeRoot,
+    });
+
+    await expect(compiler.execute({ capability: 'compile', projectId: 'alpha' }))
+      .resolves.toBeDefined();
+    expect(item.run).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the locally verified hierarchical authority out of provider input', async () => {
+    const item = await fixture();
+    await writeSecurityPolicy(item.knowledgeRoot, 'alpha');
+    await writeCanonicalSource(item.workspace, 'Approved planning evidence.');
+    const authorityRoot = join(item.workspace, '.llmwiki', 'buildlore-hierarchy');
+    await mkdir(authorityRoot, { recursive: true });
+    await writeFile(
+      join(authorityRoot, 'approved-authority.json'),
+      `${highEntropyCandidate()}${highEntropyCandidate()}\n`,
+      'utf8',
+    );
     const compiler = createProjectCompiler({
       backend: item.backend,
       environment: {},

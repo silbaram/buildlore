@@ -24,6 +24,7 @@ import {
 } from '../sanitizer/index.js';
 import {
   APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION,
+  readApprovedWikiPublicationSnapshot,
   type ApprovedWikiAuthorityV1,
 } from '../retrieval/index.js';
 import { verifyApprovedWikiAuthority } from '../retrieval/approved-corpus-store.js';
@@ -81,7 +82,7 @@ export interface HierarchicalWikiActivationResultV2 {
     readonly materializationDigest: `sha256:${string}`;
     readonly pageCount: number;
     readonly projectId: string;
-    readonly schemaVersion: 'buildlore.hierarchical-markdown-materialization-status.v1';
+    readonly schemaVersion: 'buildlore.hierarchical-markdown-materialization-status.v2';
     readonly state: 'ready';
   }>;
   readonly pageCount: number;
@@ -92,9 +93,10 @@ export interface HierarchicalWikiActivationResultV2 {
 
 export interface HierarchicalWikiActivationPort {
   activate(input: Readonly<{
-    readonly confirmationDigest: `sha256:${string}`;
+    readonly confirmationDigest?: `sha256:${string}`;
     readonly inputFile?: string;
     readonly projectId: string;
+    readonly rematerialize?: true;
   }>): Promise<Readonly<HierarchicalWikiActivationResultV2>>;
 }
 
@@ -281,6 +283,44 @@ export function createHierarchicalWikiActivationService(options: Readonly<{
   const verifier = options.liveSnapshotVerifier ?? createLiveSnapshotVerifier(options);
   const service: HierarchicalWikiActivationPort = {
     async activate(input) {
+      if (input.rematerialize === true) {
+        if (input.confirmationDigest !== undefined || input.inputFile !== undefined) {
+          invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
+        }
+        const status = await markdownPublication.status(input.projectId);
+        if (status.state !== 'renderer-outdated') {
+          invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
+        }
+        let current;
+        try {
+          current = await readApprovedWikiPublicationSnapshot(
+            options.knowledgeRoot,
+            input.projectId,
+          );
+        } catch {
+          return invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
+        }
+        const published = await markdownPublication.publish({
+          authority: current.authority,
+          preserveAuthority: true,
+          projectId: input.projectId,
+        });
+        const projection = published.projection;
+        return Object.freeze({
+          corpusDigest: projection.corpus.corpusDigest,
+          egress: 'none' as const,
+          generationDigest: projection.corpus.generationDigest,
+          materialization: published.materialization,
+          pageCount: projection.corpus.pages.length,
+          projectId: input.projectId,
+          projectionDigest: projection.projectionDigest,
+          providerUsed: 'none' as const,
+          schemaVersion: HIERARCHICAL_WIKI_ACTIVATION_RESULT_SCHEMA_VERSION,
+        });
+      }
+      if (input.rematerialize !== undefined) {
+        invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
+      }
       const path = resolve(
         options.hubRoot,
         input.inputFile ?? DEFAULT_HIERARCHICAL_WIKI_ACTIVATION_INPUT,

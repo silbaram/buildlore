@@ -31,9 +31,26 @@
     "pageFile": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["byteLength", "kind", "pageId", "path", "proposalDigest", "sha256"],
+      "required": [
+        "byteLength", "citationMap", "kind", "pageId", "path", "proposalDigest", "sha256"
+      ],
       "properties": {
         "byteLength": { "type": "integer", "minimum": 1, "maximum": 4194304 },
+        "citationMap": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["citationId", "number"],
+            "properties": {
+              "citationId": { "type": "string", "pattern": "^citation-[a-f0-9]{64}$" },
+              "number": { "type": "integer", "minimum": 1, "maximum": 64 }
+            }
+          },
+          "x-buildlore-canonicalOrderBy": "number",
+          "x-buildlore-uniqueBy": "citationId"
+        },
         "kind": { "const": "page" },
         "pageId": { "type": "string", "pattern": "^page-[a-f0-9]{64}$" },
         "path": { "type": "string", "pattern": "^page-[a-f0-9]{64}\\.md$" },
@@ -51,7 +68,7 @@
       ],
       "properties": {
         "schemaVersion": {
-          "const": "buildlore.hierarchical-markdown-materialization-manifest.v1"
+          "const": "buildlore.hierarchical-markdown-materialization-manifest.v2"
         },
         "projectId": { "$ref": "#/$defs/projectId" },
         "authorityDigest": { "$ref": "#/$defs/digest" },
@@ -97,7 +114,7 @@
           "required": ["schemaVersion", "projectId", "state"],
           "properties": {
             "schemaVersion": {
-              "const": "buildlore.hierarchical-markdown-materialization-status.v1"
+              "const": "buildlore.hierarchical-markdown-materialization-status.v2"
             },
             "projectId": { "$ref": "#/$defs/projectId" },
             "state": { "const": "none" }
@@ -109,7 +126,7 @@
           "required": ["schemaVersion", "projectId", "state", "reasonCode", "recoveryAction"],
           "properties": {
             "schemaVersion": {
-              "const": "buildlore.hierarchical-markdown-materialization-status.v1"
+              "const": "buildlore.hierarchical-markdown-materialization-status.v2"
             },
             "projectId": { "$ref": "#/$defs/projectId" },
             "state": { "enum": ["missing", "drifted", "invalid"] },
@@ -126,13 +143,38 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["schemaVersion", "projectId", "state", "reasonCode", "recoveryAction"],
+          "properties": {
+            "schemaVersion": {
+              "const": "buildlore.hierarchical-markdown-materialization-status.v2"
+            },
+            "projectId": { "$ref": "#/$defs/projectId" },
+            "state": { "const": "renderer-outdated" },
+            "reasonCode": { "const": "renderer-outdated" },
+            "recoveryAction": {
+              "prefixItems": [
+                { "const": "compile" },
+                { "const": "activate" },
+                { "const": "--project" },
+                { "$ref": "#/$defs/projectId" },
+                { "const": "--rematerialize" }
+              ],
+              "items": false,
+              "minItems": 5,
+              "maxItems": 5
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": [
             "schemaVersion", "projectId", "state", "generationDigest",
             "materializationDigest", "pageCount", "fileCount"
           ],
           "properties": {
             "schemaVersion": {
-              "const": "buildlore.hierarchical-markdown-materialization-status.v1"
+              "const": "buildlore.hierarchical-markdown-materialization-status.v2"
             },
             "projectId": { "$ref": "#/$defs/projectId" },
             "state": { "const": "ready" },

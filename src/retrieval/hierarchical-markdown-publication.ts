@@ -13,7 +13,11 @@ import {
 } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
-import { syncDirectory, writeJsonAtomic } from '../knowledge/atomic-file.js';
+import {
+  serializeCanonicalJson,
+  syncDirectory,
+  writeJsonAtomic,
+} from '../knowledge/atomic-file.js';
 import { isNodeError } from '../knowledge/errors.js';
 import { resolveProjectWorkspace } from '../knowledge/paths.js';
 import { decodeUtf8Strict, parseJsonStrict } from '../knowledge/strict-json.js';
@@ -35,13 +39,14 @@ import {
 } from './approved-corpus-store.js';
 import {
   HIERARCHICAL_MARKDOWN_MANIFEST_FILENAME,
+  HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION,
   HIERARCHICAL_MARKDOWN_MAXIMUM_MANIFEST_BYTES,
   HIERARCHICAL_MARKDOWN_NAMESPACE,
   HIERARCHICAL_MARKDOWN_RENDERER_DIGEST,
   HIERARCHICAL_MARKDOWN_STATUS_SCHEMA_VERSION,
   HierarchicalMarkdownMaterializationError,
   parseHierarchicalMarkdownManifest,
-  renderHierarchicalMarkdown,
+  renderVerifiedHierarchicalMarkdown,
   type HierarchicalMarkdownMaterializationManifestV1,
   type HierarchicalMarkdownMaterializationStatusV1,
   type HierarchicalMarkdownRenderPlanV1,
@@ -82,6 +87,7 @@ export interface HierarchicalMarkdownPublicationResultV1 {
 export interface HierarchicalMarkdownPublicationPort {
   publish(input: Readonly<{
     readonly authority: ApprovedWikiAuthorityV1;
+    readonly preserveAuthority?: true;
     readonly projectId: string;
   }>): Promise<HierarchicalMarkdownPublicationResultV1>;
   status(projectId: string): Promise<HierarchicalMarkdownMaterializationStatusV1>;
@@ -154,9 +160,22 @@ interface LockIdentity {
 }
 
 interface NamespaceInspection {
-  readonly manifest: HierarchicalMarkdownMaterializationManifestV1 | null;
-  readonly state: 'absent' | 'drifted' | 'invalid' | 'missing' | 'ready';
+  readonly manifest: InspectableManifest | null;
+  readonly state: 'absent' | 'drifted' | 'invalid' | 'missing' | 'ready' |
+    'renderer-outdated';
 }
+
+const LEGACY_MANIFEST_SCHEMA_VERSION =
+  'buildlore.hierarchical-markdown-materialization-manifest.v1' as const;
+
+interface LegacyManifestV1 extends Omit<
+  HierarchicalMarkdownMaterializationManifestV1,
+  'schemaVersion'
+> {
+  readonly schemaVersion: typeof LEGACY_MANIFEST_SCHEMA_VERSION;
+}
+
+type InspectableManifest = HierarchicalMarkdownMaterializationManifestV1 | LegacyManifestV1;
 
 function fail(code: ConstructorParameters<typeof HierarchicalMarkdownMaterializationError>[0]): never {
   throw new HierarchicalMarkdownMaterializationError(code);
@@ -164,6 +183,10 @@ function fail(code: ConstructorParameters<typeof HierarchicalMarkdownMaterializa
 
 function digestText(value: string): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
+}
+
+function digestValue(value: unknown): `sha256:${string}` {
+  return digestText(serializeCanonicalJson(value));
 }
 
 function isDigest(value: unknown): value is `sha256:${string}` {
@@ -176,6 +199,85 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function exactKeys(value: Readonly<Record<string, unknown>>, keys: readonly string[]): boolean {
   return Object.keys(value).sort().join('\0') === [...keys].sort().join('\0');
+}
+
+function parseLegacyManifest(value: unknown, projectId: string): LegacyManifestV1 {
+  const manifestKeys = [
+    'authorityDigest', 'corpusDigest', 'files', 'generationDigest',
+    'materializationDigest', 'pageCount', 'projectId', 'projectionDigest', 'recordDigest',
+    'rendererDigest', 'sanitizerPolicyDigest', 'schemaVersion',
+  ];
+  if (!isRecord(value) || !exactKeys(value, manifestKeys) ||
+      value.schemaVersion !== LEGACY_MANIFEST_SCHEMA_VERSION || value.projectId !== projectId ||
+      !Number.isSafeInteger(value.pageCount) || (value.pageCount as number) < 0 ||
+      (value.pageCount as number) > 4_096 || !Array.isArray(value.files)) {
+    fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  }
+  for (const candidate of [
+    value.authorityDigest, value.corpusDigest, value.generationDigest,
+    value.materializationDigest, value.projectionDigest, value.recordDigest,
+    value.rendererDigest, value.sanitizerPolicyDigest,
+  ]) {
+    if (!isDigest(candidate)) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  }
+  const files = Object.freeze(value.files.map((entry) => {
+    if (!isRecord(entry) || !Number.isSafeInteger(entry.byteLength) ||
+        (entry.byteLength as number) < 1 || (entry.byteLength as number) > 4 * 1024 * 1024 ||
+        !isDigest(entry.sha256) || typeof entry.path !== 'string') {
+      fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    }
+    if (entry.kind === 'index') {
+      if (!exactKeys(entry, ['byteLength', 'kind', 'path', 'sha256']) ||
+          entry.path !== 'index.md') fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+      return Object.freeze({
+        byteLength: entry.byteLength as number,
+        kind: 'index' as const,
+        path: entry.path,
+        sha256: entry.sha256,
+      });
+    }
+    if (entry.kind !== 'page' ||
+        !exactKeys(entry, ['byteLength', 'kind', 'pageId', 'path', 'proposalDigest', 'sha256']) ||
+        typeof entry.pageId !== 'string' || !/^page-[a-f0-9]{64}$/u.test(entry.pageId) ||
+        entry.path !== `${entry.pageId}.md` || !PAGE_FILENAME_PATTERN.test(entry.path) ||
+        !isDigest(entry.proposalDigest)) {
+      fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    }
+    return Object.freeze({
+      byteLength: entry.byteLength as number,
+      kind: 'page' as const,
+      pageId: entry.pageId,
+      path: entry.path,
+      proposalDigest: entry.proposalDigest,
+      sha256: entry.sha256,
+    });
+  }));
+  if (files.length !== (value.pageCount as number) + 1 || files[0]?.path !== 'index.md' ||
+      files.filter((file) => file.kind === 'page').length !== value.pageCount ||
+      files.some((file, index) => index > 0 &&
+        (files[index - 1]?.path ?? '') >= file.path)) {
+    fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  }
+  const basis = Object.freeze({
+    authorityDigest: value.authorityDigest as `sha256:${string}`,
+    corpusDigest: value.corpusDigest as `sha256:${string}`,
+    files,
+    generationDigest: value.generationDigest as `sha256:${string}`,
+    pageCount: value.pageCount,
+    projectId,
+    projectionDigest: value.projectionDigest as `sha256:${string}`,
+    recordDigest: value.recordDigest as `sha256:${string}`,
+    rendererDigest: value.rendererDigest as `sha256:${string}`,
+    sanitizerPolicyDigest: value.sanitizerPolicyDigest as `sha256:${string}`,
+    schemaVersion: LEGACY_MANIFEST_SCHEMA_VERSION,
+  });
+  if (value.materializationDigest !== digestValue(basis)) {
+    fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  }
+  return Object.freeze({
+    ...basis,
+    materializationDigest: value.materializationDigest,
+  });
 }
 
 function isContained(root: string, candidate: string): boolean {
@@ -445,12 +547,14 @@ async function inspectNamespace(
         await realpath(manifestPath) !== resolve(manifestPath)) {
       return Object.freeze({ manifest: null, state: 'invalid' as const });
     }
-    let manifest: HierarchicalMarkdownMaterializationManifestV1;
+    let manifest: InspectableManifest;
     try {
-      manifest = parseHierarchicalMarkdownManifest(
-        parseJsonStrict(decodeUtf8Strict(await readFile(manifestPath))),
-        projectId,
-      );
+      const value = parseJsonStrict(decodeUtf8Strict(await readFile(manifestPath)));
+      try {
+        manifest = parseHierarchicalMarkdownManifest(value, projectId);
+      } catch {
+        manifest = parseLegacyManifest(value, projectId);
+      }
     } catch {
       return Object.freeze({ manifest: null, state: 'invalid' as const });
     }
@@ -484,9 +588,12 @@ async function inspectNamespace(
       manifest.corpusDigest !== expected.projection.corpus.corpusDigest ||
       manifest.generationDigest !== expected.projection.corpus.generationDigest ||
       manifest.sanitizerPolicyDigest !== expected.projection.sanitizerPolicyDigest ||
-      manifest.rendererDigest !== HIERARCHICAL_MARKDOWN_RENDERER_DIGEST ||
       manifest.pageCount !== expected.projection.corpus.pages.length
     )) return Object.freeze({ manifest, state: 'drifted' as const });
+    if (expected !== null && (
+      manifest.schemaVersion !== HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION ||
+      manifest.rendererDigest !== HIERARCHICAL_MARKDOWN_RENDERER_DIGEST
+    )) return Object.freeze({ manifest, state: 'renderer-outdated' as const });
     return Object.freeze({ manifest, state: 'ready' as const });
   } catch {
     return Object.freeze({ manifest: null, state: 'invalid' as const });
@@ -733,8 +840,17 @@ function readyStatus(
 
 function recoveryStatus(
   projectId: string,
-  state: 'drifted' | 'invalid' | 'missing',
+  state: 'drifted' | 'invalid' | 'missing' | 'renderer-outdated',
 ): HierarchicalMarkdownMaterializationStatusV1 {
+  if (state === 'renderer-outdated') return Object.freeze({
+    projectId,
+    reasonCode: 'renderer-outdated' as const,
+    recoveryAction: Object.freeze([
+      'compile', 'activate', '--project', projectId, '--rematerialize',
+    ] as const),
+    schemaVersion: HIERARCHICAL_MARKDOWN_STATUS_SCHEMA_VERSION,
+    state,
+  });
   const recoveryAction = Object.freeze(
     ['compile', 'activate', '--project', projectId] as const,
   );
@@ -787,7 +903,8 @@ async function inspectStatus(
         })
       : recoveryStatus(projectId, 'invalid');
   }
-  if (inspection.state === 'ready' && inspection.manifest !== null) {
+  if (inspection.state === 'ready' && inspection.manifest !== null &&
+      inspection.manifest.schemaVersion === HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION) {
     return readyStatus(projectId, inspection.manifest);
   }
   if (inspection.state === 'ready') return recoveryStatus(projectId, 'invalid');
@@ -806,8 +923,22 @@ export function createHierarchicalMarkdownPublication(
   const service: HierarchicalMarkdownPublicationPort = {
     async publish(input): Promise<HierarchicalMarkdownPublicationResultV1> {
       if (lease === undefined) fail('HIERARCHICAL_MARKDOWN_WRITE_FAILED');
-      const publication = prepareApprovedWikiPublication(input.authority, input.projectId);
-      const plan = renderHierarchicalMarkdown({ publication });
+      if (input.preserveAuthority !== undefined && input.preserveAuthority !== true) {
+        fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+      }
+      let publication: ApprovedWikiPublicationSnapshotV1;
+      try {
+        publication = prepareApprovedWikiPublication(input.authority, input.projectId);
+      } catch (error) {
+        const stored = await currentAuthority(options.knowledgeRoot, input.projectId)
+          .catch(() => null);
+        if (stored === null || serializeCanonicalJson(stored.authority) !==
+            serializeCanonicalJson(input.authority)) throw error;
+        // Historical authority is accepted only after the stored record and retrieval
+        // projection have been verified; it can be re-rendered but never newly activated.
+        publication = stored;
+      }
+      const plan = renderVerifiedHierarchicalMarkdown({ publication });
       await scanFinalBytes(plan, input.projectId, security);
       const paths = await hierarchyPaths(options.knowledgeRoot, input.projectId);
       const generationToken = randomUUID();
@@ -828,6 +959,10 @@ export function createHierarchicalMarkdownPublication(
               fail('HIERARCHICAL_MARKDOWN_DRIFT');
             }
             const previous = await currentAuthority(options.knowledgeRoot, input.projectId);
+            if (input.preserveAuthority === true &&
+                previous?.recordDigest !== publication.recordDigest) {
+              fail('HIERARCHICAL_MARKDOWN_DRIFT');
+            }
             const previousNamespace = await inspectNamespace(paths.finalRoot, input.projectId, null);
             const journal: JournalV1 = Object.freeze({
               backupName,
@@ -875,7 +1010,8 @@ export function createHierarchicalMarkdownPublication(
                 plan.manifest.materializationDigest) {
               fail('HIERARCHICAL_MARKDOWN_DRIFT');
             }
-            if (previous?.recordDigest !== publication.recordDigest) {
+            if (input.preserveAuthority !== true &&
+                previous?.recordDigest !== publication.recordDigest) {
               await corpusStore.publish({ authority: input.authority, projectId: input.projectId });
             }
             const current = await currentAuthority(options.knowledgeRoot, input.projectId);

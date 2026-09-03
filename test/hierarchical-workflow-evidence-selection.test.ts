@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   HIERARCHICAL_COMPILATION_POLICY,
+  HierarchicalWorkflowEvidenceInsufficientError,
   buildSparseRelationGraph,
   createCompilationPurpose,
   createCorpusSnapshot,
@@ -20,11 +21,12 @@ function source(
   digit: string,
   sourceRef: string,
   body: string,
+  sourceKind: SanitizedHierarchyEvidenceSourceV1['sourceKind'] = 'markdown',
 ): SanitizedHierarchyEvidenceSourceV1 {
   return Object.freeze({
     body,
     sourceId: `source-${digit.repeat(64)}`,
-    sourceKind: 'markdown',
+    sourceKind,
     sourceRef,
     sourceRevision: hierarchySha256(body),
   });
@@ -105,6 +107,8 @@ describe('hierarchical workflow evidence selection', () => {
     const sources = [source('1', 'docs/architecture.md', body)];
     const units = createSubstantiveHierarchyTextUnits(sources, PROJECT_ID);
     expect(units).toHaveLength(2);
+    expect(units.find((candidate) => candidate.kind === 'document')?.topicLabel)
+      .toBe('Architecture 🧭');
     const unit = units.find((candidate) => candidate.kind === 'paragraph');
     if (unit === undefined) throw new Error('Missing unit.');
     expect(unit.range).toEqual({
@@ -120,100 +124,118 @@ describe('hierarchical workflow evidence selection', () => {
     ], PROJECT_ID)).toThrowError('Hierarchical corpus contract is invalid.');
   });
 
-  it('selects deterministic page-relevant units from the required distinct sources', () => {
+  it('selects heading-scoped units in document order before lexical fallback', () => {
     const sources = [
-      source('1', 'docs/architecture-boundary.md',
-        '# Architecture\n\nThe architecture keeps projector sanitizer compiler boundaries explicit.\n'),
-      source('2', 'docs/architecture-storage.md',
-        '# Storage\n\nLocal architecture stores canonical knowledge in project-confined Git history.\n'),
-      source('3', 'docs/security-policy.md',
-        '# Secrets\n\nSecurity rejects suspected secrets before compilation or persistence.\n'),
-      source('4', 'docs/security-isolation.md',
-        '# Isolation\n\nProject security prevents cross-project reads and unauthorized Wiki writes.\n'),
-      source('5', 'docs/local-runbook.md',
-        '# Runtime\n\nEach operation은 local state를 확인하고 명시적 승인 전에는 중단된다.\n'),
-      source('6', 'docs/compiler-lifecycle.md',
-        '# Lifecycle\n\nCompilerOperationError keeps operational recovery bounded and reviewable.\n'),
+      source('1', 'docs/payments.md', '# Payments\n\n## Payment requests\n\n' +
+        Array.from({ length: 10 }, (_, index) =>
+          `Payment request evidence paragraph ${String(index + 1)} describes verified behavior.`)
+          .join('\n\n') + '\n'),
+      source('2', 'docs/fulfillment.md', '# Fulfillment\n\n## Delivery\n\n' +
+        'Delivery evidence describes a separate operational workflow in detail.\n'),
     ];
     const value = hierarchy(sources);
-    const architecture = value.outline.blueprints.find((item) => item.role === 'architecture');
-    const security = value.outline.blueprints.find((item) => item.role === 'security');
-    const operations = value.outline.blueprints.find((item) => item.role === 'operations');
-    if (architecture === undefined || security === undefined || operations === undefined) {
-      throw new Error('Missing blueprint.');
-    }
-    const architectureIds = selectRelevantHierarchyEvidenceUnitIds(
-      architecture,
-      value.snapshot,
-      sources,
-      PROJECT_ID,
-    );
-    const securityIds = selectRelevantHierarchyEvidenceUnitIds(
-      security,
-      value.snapshot,
-      sources,
-      PROJECT_ID,
-    );
-    const operationsIds = selectRelevantHierarchyEvidenceUnitIds(
-      operations,
-      value.snapshot,
-      sources,
-      PROJECT_ID,
+    const payments = value.outline.blueprints.find((item) =>
+      item.evidenceScope.sourceIds.length === 1 &&
+      item.evidenceScope.sourceIds[0] === sources[0]?.sourceId);
+    if (payments === undefined) throw new Error('Missing payment blueprint.');
+    const paymentIds = selectRelevantHierarchyEvidenceUnitIds(
+      payments, value.snapshot, sources, PROJECT_ID,
     );
     expect(selectRelevantHierarchyEvidenceUnitIds(
-      architecture,
-      value.snapshot,
-      sources,
-      PROJECT_ID,
-    )).toEqual(architectureIds);
-    expect(selectedContents(architectureIds, sources, value.snapshot)
-      .every((content) => /architecture/u.test(content))).toBe(true);
-    expect(selectedContents(securityIds, sources, value.snapshot)
-      .every((content) => /security/iu.test(content))).toBe(true);
-    expect(selectedContents(operationsIds, sources, value.snapshot)
-      .every((content) => /operat/iu.test(content))).toBe(true);
-    for (const [blueprint, ids] of [
-      [architecture, architectureIds],
-      [security, securityIds],
-      [operations, operationsIds],
-    ] as const) {
-      const sourceIds = value.snapshot.textUnits.filter((unit) => ids.includes(unit.unitId))
-        .map((unit) => unit.sourceId);
-      expect(new Set(sourceIds).size).toBe(blueprint.minimumDistinctSources);
-    }
+      payments, value.snapshot, sources, PROJECT_ID,
+    )).toEqual(paymentIds);
+    expect(paymentIds).toHaveLength(8);
+    const selectedUnits = value.snapshot.textUnits.filter((unit) =>
+      paymentIds.includes(unit.unitId));
+    expect(selectedUnits.every((unit) => unit.sourceId === sources[0]?.sourceId)).toBe(true);
+    expect(selectedUnits.every((unit) => unit.kind !== 'document')).toBe(true);
+    expect(selectedUnits[0]?.kind).toBe('heading');
+    expect(selectedUnits.every((unit) => unit.range.startLine >= 3)).toBe(true);
+    expect(selectedContents(paymentIds, sources, value.snapshot)[0]).toBe('Payment requests');
   });
 
-  it('fails closed when a page lacks enough distinct primary evidence sources', () => {
+  it('uses the 64 total, 8-source, and 8-unit-per-source evidence budget', () => {
+    const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a'];
+    const sources = digits.map((digit, sourceIndex) => source(
+      digit,
+      `docs/service-${String(sourceIndex + 1)}.md`,
+      `# Service ${String(sourceIndex + 1)}\n\n## Runtime behavior\n\n` +
+        Array.from({ length: 12 }, (_, paragraphIndex) =>
+          `Runtime behavior paragraph ${String(paragraphIndex + 1)} for service ` +
+          `${String(sourceIndex + 1)} contains grounded operational evidence.`).join('\n\n') + '\n',
+    ));
+    const value = hierarchy(sources);
+    const selections = value.outline.blueprints.map((blueprint) => ({
+      blueprint,
+      ids: selectRelevantHierarchyEvidenceUnitIds(
+        blueprint, value.snapshot, sources, PROJECT_ID,
+      ),
+    }));
+    const rootSelection = selections.find(({ blueprint }) =>
+      blueprint.pageId === value.outline.rootPageId);
+    expect(rootSelection?.ids).toHaveLength(64);
+    const selectedRootUnits = value.snapshot.textUnits.filter((unit) =>
+      rootSelection?.ids.includes(unit.unitId) === true);
+    expect(new Set(selectedRootUnits.map((unit) => unit.sourceId)).size).toBe(8);
+    const counts = new Map<string, number>();
+    for (const unit of selectedRootUnits) {
+      counts.set(unit.sourceId, (counts.get(unit.sourceId) ?? 0) + 1);
+    }
+    expect([...counts.values()].every((count) => count <= 8)).toBe(true);
+    const average = selections.reduce((sum, item) => sum + item.ids.length, 0) /
+      selections.length;
+    expect(average).toBeGreaterThanOrEqual(12);
+  });
+
+  it('reports a dedicated value-free failure when primary evidence is insufficient', () => {
     const sources = [
-      source('1', 'docs/security-only.md',
-        'Security rejects unsafe evidence before any local persistence occurs.\n'),
+      source('1', 'docs/security.md',
+        '# Security\n\nSecurity evidence protects local persistence boundaries.\n'),
       source('2', 'docs/architecture.md',
-        'Architecture keeps compilation boundaries deterministic and reviewable.\n'),
+        '# Architecture\n\nArchitecture evidence keeps compilation deterministic.\n'),
     ];
     const value = hierarchy(sources);
-    const security = value.outline.blueprints.find((item) => item.role === 'security');
-    if (security === undefined) throw new Error('Missing security blueprint.');
-    expect(security.minimumDistinctSources).toBe(2);
-    expect(() => selectRelevantHierarchyEvidenceUnitIds(
-      security,
-      value.snapshot,
-      sources,
-      PROJECT_ID,
-    )).toThrowError('Hierarchical corpus contract is invalid.');
+    const root = value.outline.blueprints.find((item) =>
+      item.pageId === value.outline.rootPageId);
+    if (root === undefined) throw new Error('Missing root blueprint.');
+    const unrelated = Object.freeze({
+      ...root,
+      role: 'custom',
+      title: 'Quantum orchard',
+      minimumDistinctSources: 2,
+    });
+    let failure: unknown;
+    try {
+      selectRelevantHierarchyEvidenceUnitIds(
+        unrelated, value.snapshot, sources, PROJECT_ID,
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(HierarchicalWorkflowEvidenceInsufficientError);
+    expect(failure).toMatchObject({
+      code: 'HIERARCHICAL_WORKFLOW_EVIDENCE_INSUFFICIENT',
+      pageId: unrelated.pageId,
+      pageTitle: 'Quantum orchard',
+      primaryTokens: ['custom', 'orchard', 'quantum'],
+    });
+    expect(String(failure)).not.toContain(sources[0]?.body);
   });
 
   it('does not treat a role-bearing source path as substantive page evidence', () => {
     const sources = [
       source('1', 'iterations/local-cli-workflow/README.md',
-        '# Local CLI workflow\n\nThis workflow directory contains numerous approved intake artifacts, exports, indexes, baselines, manifests, snapshots, templates, and historical records for the iteration.\n'),
+        '# Local CLI workflow\n\nThis directory contains approved intake artifacts, exports, indexes, baselines, manifests, snapshots, templates, and historical records.\n'),
       source('2', 'docs/generation.md',
         '# Generation\n\nThe workflow keeps local Wiki generation inside architecture boundaries, accepts a cited candidate, and pauses for human review.\n'),
       source('3', 'docs/activation.md',
         '# Lifecycle\n\nA workflow uses security boundaries to protect local Wiki generation before activation updates the knowledge pointer.\n'),
     ];
     const value = hierarchy(sources);
-    const workflow = value.outline.blueprints.find((item) => item.role === 'workflow');
-    if (workflow === undefined) throw new Error('Missing workflow blueprint.');
+    const root = value.outline.blueprints.find((item) =>
+      item.pageId === value.outline.rootPageId);
+    if (root === undefined) throw new Error('Missing root blueprint.');
+    const workflow = Object.freeze({ ...root, role: 'workflow', title: 'Workflow' });
     const ids = selectRelevantHierarchyEvidenceUnitIds(
       workflow,
       value.snapshot,
@@ -226,5 +248,52 @@ describe('hierarchical workflow evidence selection', () => {
     expect(selected).not.toContain(
       'This workflow directory contains numerous approved intake artifacts, exports, indexes, baselines, manifests, snapshots, templates, and historical records for the iteration.',
     );
+  });
+
+  it('retains the first two blocks below each H2 and splits code at declarations', () => {
+    const markdownBody = '# Operations\n\n' + Array.from({ length: 5 }, (_, headingIndex) =>
+      `## Topic ${String(headingIndex + 1)}\n\n` +
+      Array.from({ length: 12 }, (_, paragraphIndex) =>
+        `Representative topic ${String(headingIndex + 1)} paragraph ` +
+        `${String(paragraphIndex + 1)} contains enough substantive evidence.`).join('\n\n'))
+      .join('\n\n') + '\n';
+    const markdown = source('1', 'docs/operations.md', markdownBody);
+    const codeBody = [
+      'export function alphaFeature() {',
+      '  return "alpha feature evidence";',
+      '}',
+      'export function betaFeature() {',
+      '  return "beta feature evidence";',
+      '}',
+      'export class GammaFeature {',
+      '  readonly value = "gamma feature evidence";',
+      '}',
+    ].join('\n');
+    const code = source('2', 'src/features.ts', codeBody, 'code');
+    const units = createSubstantiveHierarchyTextUnits([markdown, code], PROJECT_ID);
+    const markdownContents = selectedContents(
+      units.filter((unit) => unit.sourceId === markdown.sourceId)
+        .map((unit) => unit.unitId),
+      [markdown, code],
+      hierarchy([markdown, code]).snapshot,
+    );
+    for (let headingIndex = 1; headingIndex <= 5; headingIndex += 1) {
+      expect(markdownContents).toContain(
+        `Representative topic ${String(headingIndex)} paragraph 1 contains enough substantive evidence.`,
+      );
+      expect(markdownContents).toContain(
+        `Representative topic ${String(headingIndex)} paragraph 2 contains enough substantive evidence.`,
+      );
+    }
+    const codeUnits = units.filter((unit) =>
+      unit.sourceId === code.sourceId && unit.kind === 'fenced-code');
+    expect(codeUnits).toHaveLength(3);
+    expect(codeUnits.map((unit) => extractHierarchyTextUnitContent(
+      code.body, unit.range, PROJECT_ID,
+    ))).toEqual([
+      'export function alphaFeature() {\n  return "alpha feature evidence";\n}',
+      'export function betaFeature() {\n  return "beta feature evidence";\n}',
+      'export class GammaFeature {\n  readonly value = "gamma feature evidence";\n}',
+    ]);
   });
 });

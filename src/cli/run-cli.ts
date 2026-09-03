@@ -718,6 +718,17 @@ async function executeCommand(
         requiredStringOption(command, '--expect-exchange') as HierarchySha256Digest,
       );
     }
+    case 'compile.hierarchy.resubmit': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).resubmit(
+        projectId,
+        requiredStringOption(command, '--run'),
+        requiredStringOption(command, '--page'),
+        requiredStringOption(command, '--input'),
+        requiredStringOption(command, '--expect-exchange') as HierarchySha256Digest,
+      );
+    }
     case 'compile.hierarchy.child-review': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
@@ -766,6 +777,9 @@ async function executeCommand(
         hubRoot: runtime.cwd,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
+      if (command.options['--rematerialize'] === true) {
+        return activation.activate({ projectId, rematerialize: true });
+      }
       const inputFile = stringOption(command, '--input');
       return activation.activate({
         confirmationDigest: requiredStringOption(command, '--confirm-approval') as

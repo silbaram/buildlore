@@ -8,6 +8,7 @@ import {
   parseCorpusSnapshot,
 } from './contracts.js';
 import { HierarchyContractError } from './errors.js';
+import { hierarchyTokens } from './tokens.js';
 import {
   CURRENT_SESSION_GENERATION_REQUEST_SCHEMA_VERSION,
   EVIDENCE_PACK_SCHEMA_VERSION,
@@ -48,13 +49,18 @@ const EVIDENCE_PACK_CLASSIFICATIONS = new WeakMap<
   ReadonlySet<DataClassification>
 >();
 const CURRENT_SESSION_INSTRUCTION_CODES = Object.freeze([
-  'cite-substantive-claims',
+  'cite-each-paragraph',
+  'ground-claims-25pct',
+  'optional-sections-allowed',
   'preserve-evidence-bytes',
   'render-citation-markers',
   'render-wikilinks',
   'submit-candidate-only',
+  'summary-from-claims',
+  'title-may-paraphrase',
   'use-required-sections',
   'use-required-wikilinks',
+  'write-in-output-language',
 ]);
 
 function invalid(projectId: string): never {
@@ -305,6 +311,54 @@ export function snapshotSanitizedEvidencePack(
   return snapshot;
 }
 
+/** @internal Reissues a document-order prefix while retaining sanitizer lineage. */
+export function truncateSanitizedEvidencePack(
+  pack: EvidencePackV1,
+  blueprint: PageBlueprintV1,
+  retainedUnitCount: number,
+  expectedProjectId: string,
+): EvidencePackV1 {
+  const classifications = EVIDENCE_PACK_CLASSIFICATIONS.get(pack);
+  if (
+    !ISSUED_EVIDENCE_PACKS.has(pack) ||
+    classifications === undefined ||
+    classifications.size < 1 ||
+    !Number.isSafeInteger(retainedUnitCount) ||
+    retainedUnitCount < 1 ||
+    retainedUnitCount > pack.units.length
+  ) invalid(expectedProjectId);
+  assertCanonicalEvidencePack(pack, blueprint, expectedProjectId);
+  if (retainedUnitCount === pack.units.length) return pack;
+  const units = Object.freeze(pack.units.slice(0, retainedUnitCount));
+  const retainedUnitIds = new Set(units.map((unit) => unit.unitId));
+  if (pack.conflicts.some((conflict) =>
+    conflict.unitIds.some((unitId) => !retainedUnitIds.has(unitId)))) {
+    invalid(expectedProjectId);
+  }
+  const evidenceBytes = units.reduce((sum, unit) =>
+    sum + Buffer.byteLength(unit.content, 'utf8'), 0);
+  const candidate = Object.freeze({
+    schemaVersion: pack.schemaVersion,
+    projectId: pack.projectId,
+    pageId: pack.pageId,
+    blueprintDigest: pack.blueprintDigest,
+    snapshotDigest: pack.snapshotDigest,
+    sanitizerPolicyDigest: pack.sanitizerPolicyDigest,
+    units,
+    conflicts: pack.conflicts,
+    gaps: pack.gaps,
+    evidenceBytes,
+  });
+  const truncated = Object.freeze({
+    ...candidate,
+    packDigest: digestHierarchyValue(packWithoutDigest(candidate)),
+  });
+  assertCanonicalEvidencePack(truncated, blueprint, expectedProjectId);
+  ISSUED_EVIDENCE_PACKS.add(truncated);
+  EVIDENCE_PACK_CLASSIFICATIONS.set(truncated, new Set(classifications));
+  return truncated;
+}
+
 export function createEvidencePack(
   input: CreateEvidencePackInputV1,
   expectedProjectId: string,
@@ -464,6 +518,7 @@ function requestWithoutDigest(
     blueprintDigest: request.blueprintDigest,
     evidencePackDigest: request.evidencePackDigest,
     generationOrder: request.generationOrder,
+    generationAttempt: request.generationAttempt,
     instructionCodes: request.instructionCodes,
     requiredSections: request.requiredSections,
     requiredLinkPageIds: request.requiredLinkPageIds,
@@ -525,6 +580,8 @@ function assertCanonicalGenerationRequest(
     request.blueprintDigest !== blueprint.blueprintDigest ||
     request.evidencePackDigest !== evidencePack.packDigest ||
     request.generationOrder !== blueprint.generationOrder ||
+    !Number.isSafeInteger(request.generationAttempt) || request.generationAttempt < 0 ||
+    request.generationAttempt > 3 ||
     !sameStrings(request.instructionCodes, CURRENT_SESSION_INSTRUCTION_CODES) ||
     !sameStrings(request.requiredSections, blueprint.requiredSections) ||
     !sameStrings(request.requiredLinkPageIds, requiredLinkPageIds(blueprint)) ||
@@ -543,13 +600,15 @@ export function createCurrentSessionGenerationRequest(
   evidencePack: EvidencePackV1,
   approvedChildSummariesValue: readonly ApprovedChildSummaryV1[],
   expectedProjectId: string,
+  generationAttempt = 0,
 ): CurrentSessionGenerationRequestV1 {
   assertCanonicalEvidencePack(evidencePack, blueprint, expectedProjectId);
   if (
     blueprint.projectId !== expectedProjectId ||
     evidencePack.projectId !== expectedProjectId ||
     evidencePack.pageId !== blueprint.pageId ||
-    evidencePack.blueprintDigest !== blueprint.blueprintDigest
+    evidencePack.blueprintDigest !== blueprint.blueprintDigest ||
+    !Number.isSafeInteger(generationAttempt) || generationAttempt < 0 || generationAttempt > 3
   ) invalid(expectedProjectId);
   const childById = new Map(approvedChildSummariesValue.map((summary) =>
     [summary.pageId, summary]));
@@ -578,6 +637,7 @@ export function createCurrentSessionGenerationRequest(
     blueprintDigest: blueprint.blueprintDigest,
     evidencePackDigest: evidencePack.packDigest,
     generationOrder: blueprint.generationOrder,
+    generationAttempt,
     instructionCodes: Object.freeze([...CURRENT_SESSION_INSTRUCTION_CODES]),
     requiredSections,
     requiredLinkPageIds: requiredLinks,
@@ -693,6 +753,7 @@ function assertCanonicalProposal(
   safeText(proposal.summary, 4_096, projectId, true);
   for (const section of proposal.sections) {
     portableIdentifier(section.sectionId, projectId);
+    if (section.title !== undefined) safeText(section.title, 1_000, projectId);
     safeText(section.body, MAX_PROPOSAL_BYTES, projectId, true);
   }
   for (const claim of proposal.claims) {
@@ -714,6 +775,61 @@ function assertCanonicalProposal(
   }
 }
 
+function tokenWeight(token: string): number {
+  return /\p{N}/u.test(token) || [...token].length >= 8 ? 2 : 1;
+}
+
+function summarySupportingCitationIds(
+  proposal: HierarchicalWikiProposalV1,
+): readonly string[] {
+  const summaryTokens = [...new Set(hierarchyTokens(proposal.summary))];
+  const requiredWeight = Math.ceil(summaryTokens.reduce((sum, token) =>
+    sum + tokenWeight(token), 0) / 2);
+  const covered = new Set<string>();
+  const remaining = new Map(proposal.claims.map((claim) => [claim.claimId, claim]));
+  const selected: HierarchicalProposalClaimV1[] = [];
+  let coveredWeight = 0;
+  while (coveredWeight < requiredWeight && remaining.size > 0) {
+    const ranked = [...remaining.values()].map((claim) => {
+      const claimTokens = new Set(hierarchyTokens(claim.text));
+      const gain = summaryTokens.filter((token) =>
+        !covered.has(token) && claimTokens.has(token))
+        .reduce((sum, token) => sum + tokenWeight(token), 0);
+      return Object.freeze({ claim, gain });
+    }).sort((left, right) =>
+      right.gain - left.gain || left.claim.claimId.localeCompare(right.claim.claimId));
+    const next = ranked[0];
+    if (next === undefined || next.gain === 0) break;
+    remaining.delete(next.claim.claimId);
+    selected.push(next.claim);
+    const claimTokens = new Set(hierarchyTokens(next.claim.text));
+    for (const token of summaryTokens) {
+      if (!covered.has(token) && claimTokens.has(token)) {
+        covered.add(token);
+        coveredWeight += tokenWeight(token);
+      }
+    }
+  }
+  if (selected.length === 0 || coveredWeight < requiredWeight) {
+    return proposal.citationIds;
+  }
+  return Object.freeze([...new Set(selected.flatMap((claim) => claim.citationIds))].sort());
+}
+
+/** Returns the smallest deterministic claim citation set that grounds half of the summary. */
+export function citationIdsForProposalSummary(
+  proposal: HierarchicalWikiProposalV1,
+  expectedProjectId: string,
+): readonly string[] {
+  assertCanonicalProposal(proposal, expectedProjectId);
+  const citationIds = summarySupportingCitationIds(proposal);
+  if (citationIds.length < 1 ||
+      citationIds.some((citationId) => !proposal.citationIds.includes(citationId))) {
+    invalid(expectedProjectId);
+  }
+  return citationIds;
+}
+
 export function submitCurrentSessionProposal(
   blueprint: PageBlueprintV1,
   request: CurrentSessionGenerationRequestV1,
@@ -733,20 +849,30 @@ export function submitCurrentSessionProposal(
     request.evidencePackDigest !== evidencePack.packDigest ||
     request.requestDigest !== digestHierarchyValue(requestWithoutDigest(request))
   ) invalid(expectedProjectId);
-  if (input.claims.length < 1 || input.claims.length > 512 || input.sections.length > 32) {
+  if (input.claims.length < 1 || input.claims.length > 512 || input.sections.length < 1 ||
+      input.sections.length > request.requiredSections.length + 8) {
     invalid(expectedProjectId);
   }
   const sectionById = new Map(input.sections.map((section) => [section.sectionId, section]));
   if (
     sectionById.size !== input.sections.length ||
-    !sameStrings([...sectionById.keys()].sort(), [...request.requiredSections].sort())
+    request.requiredSections.some((sectionId) => !sectionById.has(sectionId))
   ) invalid(expectedProjectId);
-  const sections = Object.freeze(request.requiredSections.map((sectionId) => {
-    const section = sectionById.get(sectionId);
-    if (section === undefined || portableIdentifier(section.sectionId, expectedProjectId) !==
-        sectionId) invalid(expectedProjectId);
+  const optionalSections = input.sections.filter((section) =>
+    !request.requiredSections.includes(section.sectionId));
+  if (optionalSections.length > 8) invalid(expectedProjectId);
+  const orderedSections = [
+    ...request.requiredSections.map((sectionId) => sectionById.get(sectionId)),
+    ...optionalSections,
+  ];
+  const sections = Object.freeze(orderedSections.map((section) => {
+    if (section === undefined) invalid(expectedProjectId);
+    const sectionId = portableIdentifier(section.sectionId, expectedProjectId);
     return Object.freeze({
       sectionId,
+      ...(section.title === undefined
+        ? {}
+        : { title: safeText(section.title, 1_000, expectedProjectId) }),
       body: safeText(section.body, MAX_PROPOSAL_BYTES, expectedProjectId, true),
     });
   }));
@@ -867,7 +993,7 @@ export function approveChildSummaryForSynthesis(
     proposalDigest: proposal.proposalDigest,
     reviewDigest: approval.reviewDigest,
     summary: proposal.summary,
-    citationIds: proposal.citationIds,
+    citationIds: citationIdsForProposalSummary(proposal, expectedProjectId),
     synthesisApproved: true,
   });
   assertCanonicalApprovedChildSummary(summary, expectedProjectId);

@@ -32,7 +32,7 @@ import {
 import type { ApprovedWikiAuthorityV1 } from '../retrieval/index.js';
 
 export const HIERARCHICAL_WORKFLOW_RUN_RECORD_SCHEMA_VERSION =
-  'buildlore.hierarchical-workflow-run-record.v1' as const;
+  'buildlore.hierarchical-workflow-run-record.v2' as const;
 
 const RUNS_DIRECTORY = 'hierarchy-runs';
 const RUN_FILENAME = 'run.json';
@@ -49,6 +49,7 @@ const REASON_CODE_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 
 export type HierarchicalWorkflowPhaseV1 =
   | 'awaiting-proposal'
+  | 'hard-quality-failed'
   | 'awaiting-child-review'
   | 'review-ready'
   | 'finalized'
@@ -72,6 +73,18 @@ export interface HierarchicalWorkflowStoredSubmissionV1 {
   readonly proposalDigest: HierarchySha256Digest;
   readonly receiptDigest: HierarchySha256Digest;
   readonly submission: CurrentSessionProposalSubmissionV1;
+}
+
+export interface HierarchicalWorkflowStoredResubmissionV2
+  extends HierarchicalWorkflowStoredSubmissionV1 {
+  readonly attempt: number;
+  readonly outcome: HierarchicalWorkflowResubmissionOutcomeV2;
+}
+
+export interface HierarchicalWorkflowResubmissionOutcomeV2 {
+  readonly kind: 'accepted' | 'hard-quality-failed';
+  readonly pageQualityReportDigest: HierarchySha256Digest;
+  readonly reasonCodes: readonly string[];
 }
 
 export interface HierarchicalWorkflowStoredChildDecisionV1 {
@@ -121,6 +134,7 @@ export interface HierarchicalWorkflowRunRecordV1 {
   readonly baselineProposals: readonly HierarchicalWikiProposalV1[];
   readonly startDigests: HierarchicalWorkflowStartDigestsV1;
   readonly submissions: readonly HierarchicalWorkflowStoredSubmissionV1[];
+  readonly resubmissions: readonly HierarchicalWorkflowStoredResubmissionV2[];
   readonly childDecisions: readonly HierarchicalWorkflowStoredChildDecisionV1[];
   readonly integratedDecisions: readonly HierarchicalWorkflowStoredIntegratedDecisionV1[];
   readonly relationDecisions: readonly HierarchicalWorkflowStoredRelationDecisionV1[];
@@ -143,6 +157,7 @@ export type HierarchicalWorkflowRunStoreErrorCode =
   | 'HIERARCHICAL_WORKFLOW_RUN_CONFLICT'
   | 'HIERARCHICAL_WORKFLOW_RUN_INVALID'
   | 'HIERARCHICAL_WORKFLOW_RUN_NOT_FOUND'
+  | 'HIERARCHICAL_WORKFLOW_RUN_POLICY_OUTDATED'
   | 'HIERARCHICAL_WORKFLOW_RUN_PROJECT_MISMATCH'
   | 'HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED';
 
@@ -155,6 +170,8 @@ export class HierarchicalWorkflowRunStoreError extends Error {
       ? 'Hierarchical Wiki workflow run is busy.'
       : code === 'HIERARCHICAL_WORKFLOW_RUN_NOT_FOUND'
         ? 'Hierarchical Wiki workflow run is unavailable.'
+        : code === 'HIERARCHICAL_WORKFLOW_RUN_POLICY_OUTDATED'
+          ? 'Hierarchical Wiki workflow run policy is outdated. Start a new run.'
         : code === 'HIERARCHICAL_WORKFLOW_RUN_CONFLICT'
           ? 'Hierarchical Wiki workflow run changed concurrently.'
           : code === 'HIERARCHICAL_WORKFLOW_RUN_PROJECT_MISMATCH'
@@ -169,7 +186,14 @@ export class HierarchicalWorkflowRunStoreError extends Error {
   }
 
   toJSON(): Readonly<Record<string, unknown>> {
-    return Object.freeze({ code: this.code, message: this.message, retryable: this.retryable });
+    return Object.freeze({
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+      ...(this.code === 'HIERARCHICAL_WORKFLOW_RUN_POLICY_OUTDATED'
+        ? { reasonCode: 'policy-outdated', recoveryAction: 'start-new-run' }
+        : {}),
+    });
   }
 }
 
@@ -336,6 +360,74 @@ readonly HierarchicalWorkflowStoredSubmissionV1[] {
   }));
 }
 
+function parseResubmissions(
+  value: unknown,
+  submissions: readonly HierarchicalWorkflowStoredSubmissionV1[],
+  projectId: string,
+): readonly HierarchicalWorkflowStoredResubmissionV2[] {
+  if (!Array.isArray(value) || value.length > 97 * 3) {
+    fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
+  }
+  const initialByOrder = new Map(submissions.map((submission) =>
+    [submission.generationOrder, submission]));
+  const attemptByPage = new Map<string, number>();
+  let previousGenerationOrder = -1;
+  return Object.freeze(value.map((item) => {
+    exactKeys(item, [
+      'attempt', 'expectedExchangeDigest', 'generationOrder', 'pageId', 'proposalDigest',
+      'receiptDigest', 'submission', 'outcome',
+    ]);
+    if (!Number.isSafeInteger(item.attempt) || (item.attempt as number) < 1 ||
+        (item.attempt as number) > 3 || !Number.isSafeInteger(item.generationOrder) ||
+        (item.generationOrder as number) < 0 || (item.generationOrder as number) > 96 ||
+        (item.generationOrder as number) < previousGenerationOrder ||
+        typeof item.pageId !== 'string' || !PAGE_ID_PATTERN.test(item.pageId)) {
+      fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
+    }
+    previousGenerationOrder = item.generationOrder as number;
+    const initial = initialByOrder.get(item.generationOrder as number);
+    const previousAttempt = attemptByPage.get(item.pageId) ?? 0;
+    if (initial === undefined || initial.pageId !== item.pageId ||
+        item.attempt !== previousAttempt + 1) fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
+    attemptByPage.set(item.pageId, item.attempt);
+    const expectedExchangeDigest = digestValue(item.expectedExchangeDigest);
+    const submission = parseCurrentSessionProposalSubmission(item.submission, {
+      projectId,
+      pageId: item.pageId,
+      exchangeDigest: expectedExchangeDigest,
+      requestDigest: isRecord(item.submission)
+        ? digestValue(item.submission.requestDigest)
+        : fail('HIERARCHICAL_WORKFLOW_RUN_INVALID'),
+    });
+    exactKeys(item.outcome, ['kind', 'pageQualityReportDigest', 'reasonCodes']);
+    if (item.outcome.kind !== 'accepted' && item.outcome.kind !== 'hard-quality-failed') {
+      fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
+    }
+    const reasonCodes = parseReasonCodes(
+      item.outcome.reasonCodes,
+      item.outcome.kind === 'hard-quality-failed',
+    );
+    if (item.outcome.kind === 'accepted' && reasonCodes.length !== 0) {
+      fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
+    }
+    const outcome = Object.freeze({
+      kind: item.outcome.kind,
+      pageQualityReportDigest: digestValue(item.outcome.pageQualityReportDigest),
+      reasonCodes,
+    });
+    return Object.freeze({
+      attempt: item.attempt,
+      expectedExchangeDigest,
+      generationOrder: item.generationOrder as number,
+      outcome,
+      pageId: item.pageId,
+      proposalDigest: digestValue(item.proposalDigest),
+      receiptDigest: digestValue(item.receiptDigest),
+      submission,
+    });
+  }));
+}
+
 function parseChildDecisions(value: unknown):
 readonly HierarchicalWorkflowStoredChildDecisionV1[] {
   if (!Array.isArray(value) || value.length > 96) fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
@@ -414,12 +506,39 @@ function parseNullableDigest(value: unknown): HierarchySha256Digest | null {
 
 function parseRecord(value: unknown, expectedProjectId: string, expectedRunId: string):
 HierarchicalWorkflowRunRecordV1 {
+  if (isRecord(value) &&
+      value.schemaVersion === 'buildlore.hierarchical-workflow-run-record.v1') {
+    const legacyKeys = [
+      'approvalDecision', 'baselineAuthorityDigest', 'baselineProposals', 'baselineState',
+      'childDecisions', 'integratedDecisions', 'pendingChildReviewDigest',
+      'pendingExchangeDigest', 'pendingLedgerDigest', 'pendingReviewDigest', 'phase',
+      'projectId', 'purpose', 'recordDigest', 'rejection', 'relationDecisions', 'revision',
+      'runId', 'schemaVersion', 'startDigests', 'submissions',
+    ].sort();
+    const actualKeys = Object.keys(value).sort();
+    const recordDigest = value.recordDigest;
+    const { recordDigest: _recordDigest, ...basis } = value;
+    void _recordDigest;
+    if (
+      actualKeys.length === legacyKeys.length &&
+      actualKeys.every((key, index) => key === legacyKeys[index]) &&
+      value.projectId === expectedProjectId &&
+      value.runId === expectedRunId &&
+      typeof recordDigest === 'string' && DIGEST_PATTERN.test(recordDigest) &&
+      recordDigest === digest(basis) &&
+      Number.isSafeInteger(value.revision) && (value.revision as number) >= 0 &&
+      ['awaiting-proposal', 'awaiting-child-review', 'review-ready', 'finalized']
+        .includes(value.phase as string)
+    ) {
+      fail('HIERARCHICAL_WORKFLOW_RUN_POLICY_OUTDATED');
+    }
+  }
   exactKeys(value, [
     'approvalDecision', 'baselineAuthorityDigest', 'baselineProposals', 'baselineState',
     'childDecisions', 'integratedDecisions', 'pendingChildReviewDigest',
     'pendingExchangeDigest', 'pendingLedgerDigest', 'pendingReviewDigest', 'phase',
     'projectId', 'purpose', 'recordDigest', 'rejection', 'relationDecisions', 'revision',
-    'runId', 'schemaVersion', 'startDigests', 'submissions',
+    'resubmissions', 'runId', 'schemaVersion', 'startDigests', 'submissions',
   ]);
   if (value.schemaVersion !== HIERARCHICAL_WORKFLOW_RUN_RECORD_SCHEMA_VERSION) {
     fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
@@ -432,7 +551,7 @@ HierarchicalWorkflowRunRecordV1 {
       : 'HIERARCHICAL_WORKFLOW_RUN_PROJECT_MISMATCH');
   }
   if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 0 ||
-      !['awaiting-proposal', 'awaiting-child-review', 'review-ready', 'finalized',
+      !['awaiting-proposal', 'hard-quality-failed', 'awaiting-child-review', 'review-ready', 'finalized',
         'rejected', 'approved'].includes(value.phase as string)) {
     fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
   }
@@ -492,6 +611,7 @@ HierarchicalWorkflowRunRecordV1 {
       explicitConfirmation: true,
     });
   }
+  const submissions = parseSubmissions(value.submissions, projectId);
   const basis = Object.freeze({
     schemaVersion: HIERARCHICAL_WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
     projectId,
@@ -503,7 +623,8 @@ HierarchicalWorkflowRunRecordV1 {
     baselineState,
     baselineProposals,
     startDigests,
-    submissions: parseSubmissions(value.submissions, projectId),
+    submissions,
+    resubmissions: parseResubmissions(value.resubmissions, submissions, projectId),
     childDecisions: parseChildDecisions(value.childDecisions),
     integratedDecisions: parseIntegratedDecisions(value.integratedDecisions),
     relationDecisions: parseRelationDecisions(value.relationDecisions),

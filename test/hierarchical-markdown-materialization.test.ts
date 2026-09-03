@@ -85,7 +85,12 @@ describe('hierarchical Markdown materialization renderer', () => {
     }
     expect(pageBodies).not.toMatch(/\[\[page-[a-f0-9]{64}\]\]/u);
     expect(pageBodies).toMatch(/\[[^\]]+\]\(\.\/page-[a-f0-9]{64}\.md\)/u);
-    expect(pageBodies).toMatch(/\[\^[a-z0-9._/-]+\]: source /u);
+    expect(pageBodies).toMatch(/\[\^1\]: "docs\//u);
+    expect(pageBodies).toContain('; excerpt "');
+    expect(rendered.manifest.files.filter((file) => file.kind === 'page')
+      .every((file) => (file.citationMap?.length ?? 0) > 0 &&
+        file.citationMap?.every((entry, index) => entry.number === index + 1) === true))
+      .toBe(true);
     expect(pageBodies).toContain('Direct edits are not authoritative.');
   });
 
@@ -122,6 +127,7 @@ describe('hierarchical Markdown materialization renderer', () => {
         const pageId = `page-${ordinal.toString(16).padStart(64, '0')}`;
         return Object.freeze({
           byteLength: 1,
+          citationMap: Object.freeze([]),
           kind: 'page' as const,
           pageId,
           path: `${pageId}.md`,

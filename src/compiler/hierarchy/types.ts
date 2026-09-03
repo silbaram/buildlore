@@ -18,26 +18,26 @@ export const PLANNING_DISPOSITION_INVENTORY_SCHEMA_VERSION =
   'buildlore.planning-disposition-inventory.v1' as const;
 export const DOCUMENT_INTERPRETATION_RULE_SCHEMA_VERSION =
   'buildlore.document-interpretation-rule.v1' as const;
-export const PAGE_BLUEPRINT_SCHEMA_VERSION = 'buildlore.page-blueprint.v1' as const;
-export const WIKI_OUTLINE_SCHEMA_VERSION = 'buildlore.wiki-outline.v1' as const;
+export const PAGE_BLUEPRINT_SCHEMA_VERSION = 'buildlore.page-blueprint.v2' as const;
+export const WIKI_OUTLINE_SCHEMA_VERSION = 'buildlore.wiki-outline.v2' as const;
 export const WIKI_OUTLINE_DIFF_SCHEMA_VERSION = 'buildlore.wiki-outline-diff.v1' as const;
 export const WIKI_OUTLINE_REVIEW_SCHEMA_VERSION =
   'buildlore.wiki-outline-review.v1' as const;
 export const EVIDENCE_PACK_SCHEMA_VERSION = 'buildlore.evidence-pack.v1' as const;
 export const CURRENT_SESSION_GENERATION_REQUEST_SCHEMA_VERSION =
-  'buildlore.current-session-generation-request.v1' as const;
+  'buildlore.current-session-generation-request.v2' as const;
 export const HIERARCHICAL_WIKI_PROPOSAL_SCHEMA_VERSION =
-  'buildlore.hierarchical-wiki-proposal.v1' as const;
+  'buildlore.hierarchical-wiki-proposal.v2' as const;
 export const WIKI_LINK_RECONCILIATION_SCHEMA_VERSION =
   'buildlore.wiki-link-reconciliation.v1' as const;
 export const EXTERNAL_GENERATION_AUTHORIZATION_SCHEMA_VERSION =
   'buildlore.external-generation-authorization.v1' as const;
 export const SEMANTIC_QUALITY_POLICY_SCHEMA_VERSION =
-  'buildlore.semantic-quality-policy.v1' as const;
+  'buildlore.semantic-quality-policy.v2' as const;
 export const PAGE_QUALITY_REPORT_SCHEMA_VERSION =
-  'buildlore.page-quality-report.v1' as const;
+  'buildlore.page-quality-report.v2' as const;
 export const CORPUS_QUALITY_REPORT_SCHEMA_VERSION =
-  'buildlore.corpus-quality-report.v1' as const;
+  'buildlore.corpus-quality-report.v2' as const;
 export const WIKI_CONTENT_DIFF_SCHEMA_VERSION =
   'buildlore.wiki-content-diff.v1' as const;
 export const INTEGRATED_WIKI_REVIEW_SURFACE_SCHEMA_VERSION =
@@ -65,7 +65,9 @@ export type HierarchySha256Digest = `sha256:${string}`;
 export interface HierarchicalCompilationLimitsV1 {
   readonly maxClusterMembers: 256;
   readonly maxEvidenceBytes: 262144;
+  readonly maxEvidenceSourcesPerPage: 8;
   readonly maxEvidenceUnits: 64;
+  readonly maxEvidenceUnitsPerSource: 8;
   readonly maxPartitionTasks: 256;
   readonly maxPlanBytes: 33554432;
   readonly maxRelationCandidatesPerTask: 32;
@@ -90,6 +92,7 @@ export interface CompilationPurposeV1 {
   readonly excludedTopics: readonly string[];
   readonly outputLanguage: string;
   readonly requestedPageRoles: readonly string[];
+  readonly wikiTitle?: string;
   readonly purposeDigest: HierarchySha256Digest;
 }
 
@@ -307,6 +310,8 @@ export interface BlueprintEvidenceScopeV1 {
   readonly relationSetDigest: HierarchySha256Digest;
   readonly allowedUnitKinds: readonly TextUnitKind[];
   readonly sourceIds: readonly string[];
+  /** Ordered topic-range units to consume before lexical fallback. */
+  readonly preferredUnitIds: readonly string[];
 }
 
 export interface PageBlueprintV1 {
@@ -338,6 +343,8 @@ export interface WikiOutlineV1 {
   readonly activationState: 'candidate';
   readonly rootPageId: string;
   readonly blueprints: readonly PageBlueprintV1[];
+  /** Body-free reasons for requested pages intentionally omitted from the outline. */
+  readonly reviewNotes: readonly string[];
   readonly outlineDigest: HierarchySha256Digest;
 }
 
@@ -436,6 +443,7 @@ export interface CurrentSessionGenerationRequestV1 {
   readonly blueprintDigest: HierarchySha256Digest;
   readonly evidencePackDigest: HierarchySha256Digest;
   readonly generationOrder: number;
+  readonly generationAttempt: number;
   readonly instructionCodes: readonly string[];
   readonly requiredSections: readonly string[];
   readonly requiredLinkPageIds: readonly string[];
@@ -456,6 +464,7 @@ export interface HierarchicalProposalClaimV1 {
 
 export interface HierarchicalProposalSectionV1 {
   readonly sectionId: string;
+  readonly title?: string;
   readonly body: string;
 }
 
@@ -506,12 +515,16 @@ export interface SemanticQualityThresholdsV1 {
   readonly minimumSectionCoverageBasisPoints: 10000;
   readonly minimumClaimGroundingBasisPoints: 10000;
   readonly minimumClaimEvidenceSupportBasisPoints: 10000;
+  readonly minimumClaimTokenOverlapBasisPoints: 2500;
+  readonly minimumSummaryTokenOverlapBasisPoints: 5000;
+  readonly minimumTitleTokenOverlapBasisPoints: 6000;
   readonly minimumQuestionCoverageBasisPoints: 10000;
   readonly maximumRepeatedLineBasisPoints: 5000;
   readonly maximumNearDuplicateBasisPoints: 8500;
   readonly maximumOrphanBasisPoints: 500;
   readonly maximumUncategorizedPages: 0;
   readonly maximumUnresolvedConflicts: 0;
+  readonly maximumOptionalSections: 8;
   readonly minimumSubstantiveUtf8Bytes: 80;
   readonly minimumUniqueTokens: 8;
 }
@@ -533,8 +546,12 @@ export interface PageQualityReportV1 {
   readonly sectionCoverageBasisPoints: number;
   readonly claimGroundingBasisPoints: number;
   readonly claimEvidenceSupportBasisPoints: number;
+  readonly titleGroundingBasisPoints: number;
+  readonly summaryGroundingBasisPoints: number;
   readonly titleGrounded: boolean;
   readonly summaryGrounded: boolean;
+  readonly optionalSectionCount: number;
+  readonly unsupportedParagraphCount: number;
   readonly questionCoverageBasisPoints: number;
   readonly unansweredKeyQuestionCount: number;
   readonly repeatedLineBasisPoints: number;

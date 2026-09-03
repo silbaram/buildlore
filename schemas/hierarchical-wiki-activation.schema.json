@@ -46,7 +46,7 @@
           ],
           "properties": {
             "schemaVersion": {
-              "const": "buildlore.hierarchical-markdown-materialization-status.v1"
+              "const": "buildlore.hierarchical-markdown-materialization-status.v2"
             },
             "projectId": { "$ref": "hierarchical-corpus.schema.json#/$defs/projectId" },
             "state": { "const": "ready" },

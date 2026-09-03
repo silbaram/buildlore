@@ -30,6 +30,7 @@ import {
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const PAGE_ID_PATTERN = /^page-[a-f0-9]{64}$/u;
 const SOURCE_ID_PATTERN = /^source-[a-f0-9]{64}$/u;
+const UNIT_ID_PATTERN = /^unit-[a-f0-9]{64}$/u;
 const PORTABLE_IDENTIFIER_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 const ALL_UNIT_KINDS: readonly TextUnitKind[] = Object.freeze([
   'document', 'fenced-code', 'heading', 'list', 'paragraph', 'table',
@@ -116,6 +117,18 @@ function uniqueSortedIdentifiers(
   return Object.freeze(result);
 }
 
+function uniqueOrderedIdentifiers(
+  value: unknown,
+  pattern: RegExp,
+  maximum: number,
+  projectId: string,
+): readonly string[] {
+  if (!Array.isArray(value) || value.length > maximum) invalid(projectId);
+  const result = value.map((item) => identifier(item, pattern, projectId));
+  if (new Set(result).size !== result.length) invalid(projectId);
+  return Object.freeze(result);
+}
+
 function pageId(
   projectId: string,
   purposeDigest: HierarchySha256Digest,
@@ -166,14 +179,17 @@ function evidenceScope(
   snapshot: CorpusSnapshotV1,
   graph: SparseRelationGraphV1,
   sourceIdsValue: readonly string[],
+  preferredUnitIdsValue: readonly string[] = [],
 ): BlueprintEvidenceScopeV1 {
   const sourceIds = Object.freeze([...sourceIdsValue].sort());
+  const preferredUnitIds = Object.freeze([...preferredUnitIdsValue]);
   return Object.freeze({
     snapshotDigest: snapshot.snapshotDigest,
     taskSetDigest: graph.taskSetDigest,
     relationSetDigest: graph.relationSetDigest,
     allowedUnitKinds: ALL_UNIT_KINDS,
     sourceIds,
+    preferredUnitIds,
   });
 }
 
@@ -182,8 +198,14 @@ interface LeafSeed {
   readonly role: string;
   readonly title: string;
   readonly keyQuestions: readonly string[];
+  readonly preferredUnitIds: readonly string[];
   readonly requiredSections: readonly string[];
   readonly sourceIds: readonly string[];
+}
+
+interface LeafSeedSet {
+  readonly reviewNotes: readonly string[];
+  readonly seeds: readonly LeafSeed[];
 }
 
 function coalesceTopicSeeds(
@@ -201,6 +223,8 @@ function coalesceTopicSeeds(
     if (first === undefined || members.length < 1) invalid(projectId);
     const roles = [...new Set(members.map((seed) => seed.role))].sort();
     const sourceIds = [...new Set(members.flatMap((seed) => [...seed.sourceIds]))].sort();
+    const preferredUnitIds = [...new Set(members.flatMap((seed) =>
+      [...seed.preferredUnitIds]))];
     const memberKeys = members.map((seed) => seed.stableKey);
     return Object.freeze({
       stableKey: `topic.cluster.${digestHierarchyValue(memberKeys).slice('sha256:'.length)}`,
@@ -209,6 +233,7 @@ function coalesceTopicSeeds(
         ? first.title
         : `${first.title} and ${String(members.length - 1)} related topics`,
       keyQuestions: first.keyQuestions,
+      preferredUnitIds: Object.freeze(preferredUnitIds),
       requiredSections: first.requiredSections,
       sourceIds: Object.freeze(sourceIds),
     });
@@ -245,83 +270,65 @@ function leafSeeds(
   snapshot: CorpusSnapshotV1,
   interpretations: readonly DocumentInterpretationV1[],
   projectId: string,
-): readonly LeafSeed[] {
+): LeafSeedSet {
   const interpretationBySource = new Map(interpretations.map((item) => [item.sourceId, item]));
-  const synthesisSourceIds = interpretations
-    .filter((item) => item.synthesisEligibility !== 'excluded')
-    .map((item) => item.sourceId).sort();
-  if (synthesisSourceIds.length === 0) invalid(projectId);
-  const labelsByKey = new Map<string, { labels: string[]; sourceIds: Set<string> }>();
-  for (const unit of snapshot.textUnits) {
-    if ((unit.kind !== 'heading' && unit.kind !== 'document') || unit.topicLabel === null ||
-        interpretationBySource.get(unit.sourceId)?.synthesisEligibility === 'excluded') continue;
-    const key = unit.topicLabel.toLowerCase();
-    const entry = labelsByKey.get(key) ?? { labels: [], sourceIds: new Set<string>() };
-    entry.labels.push(unit.topicLabel);
-    entry.sourceIds.add(unit.sourceId);
-    labelsByKey.set(key, entry);
-  }
-  const topicSeeds = [...labelsByKey.entries()].map(([topicKey, entry]): LeafSeed => {
-    const sourceIds = [...entry.sourceIds].sort();
-    const roles = [...new Set(sourceIds.map((sourceId) => interpretationBySource.get(sourceId)?.role)
-      .filter((role): role is string => role !== undefined && role !== 'unknown'))].sort();
+  const eligibleSources = snapshot.sources.filter((source) =>
+    interpretationBySource.get(source.sourceId)?.synthesisEligibility !== 'excluded')
+    .sort((left, right) => left.sourceRef < right.sourceRef ? -1 :
+      left.sourceRef > right.sourceRef ? 1 : 0);
+  if (eligibleSources.length === 0) invalid(projectId);
+  const topicSeeds = eligibleSources.map((source): LeafSeed => {
+    const units = snapshot.textUnits.filter((unit) => unit.sourceId === source.sourceId)
+      .sort((left, right) => left.ordinal - right.ordinal);
+    const document = units.find((unit) => unit.kind === 'document' && unit.topicLabel !== null) ??
+      units.find((unit) => unit.kind === 'heading' && unit.topicLabel !== null);
+    if (document === undefined || document.topicLabel === null) invalid(projectId);
+    const headings = units.filter((unit) => unit.kind === 'heading' &&
+      unit.topicLabel !== null && unit.unitId !== document.unitId);
+    const firstHeading = headings[0]?.topicLabel;
+    const extraHeadingCount = Math.max(0, headings.length - 1);
+    const title = firstHeading === undefined
+      ? document.topicLabel
+      : purpose.outputLanguage.toLowerCase().startsWith('ko')
+        ? `${document.topicLabel}: ${firstHeading}${extraHeadingCount === 0
+          ? '' : ` 외 ${String(extraHeadingCount)}개`}`
+        : `${document.topicLabel}: ${firstHeading}${extraHeadingCount === 0
+          ? '' : ` and ${String(extraHeadingCount)} more`}`;
+    const interpretation = interpretationBySource.get(source.sourceId);
+    const role = interpretation?.role === undefined || interpretation.role === 'unknown' ||
+        interpretation.role === 'overview'
+      ? 'topic'
+      : interpretation.role;
     return Object.freeze({
-      stableKey: `topic.${digestHierarchyValue({ topicKey }).slice('sha256:'.length)}`,
-      role: roles.length === 1 ? roles[0] as string : 'topic',
-      title: [...entry.labels].sort()[0] as string,
-      keyQuestions: Object.freeze([...purpose.keyQuestions]),
-      requiredSections: Object.freeze(['evidence', 'related-topics', 'summary']),
-      sourceIds: Object.freeze(sourceIds),
-    });
-  }).sort((left, right) => left.stableKey < right.stableKey ? -1 : 1);
-  const representedRoles = new Set(topicSeeds.map((seed) => seed.role));
-  const roleSeeds = purpose.requestedPageRoles.filter((role) =>
-    role !== 'overview' && !representedRoles.has(role)).flatMap((role): readonly LeafSeed[] => {
-    const matchingSourceIds = interpretations.filter((item) =>
-      item.role === role && item.synthesisEligibility !== 'excluded').map((item) => item.sourceId).sort();
-    if (matchingSourceIds.length === 0 && topicSeeds.length > 0) return [];
-    return [Object.freeze({
-      stableKey: `role.${role}`,
+      stableKey: `topic.${digestHierarchyValue({
+        documentTitle: document.topicLabel,
+        sourceRef: source.sourceRef,
+        topics: headings.map((heading) => heading.topicLabel),
+      }).slice('sha256:'.length)}`,
       role,
-      title: role,
+      title,
       keyQuestions: Object.freeze([...purpose.keyQuestions]),
-      requiredSections: Object.freeze(['evidence', 'key-questions', 'summary']),
-      sourceIds: Object.freeze(matchingSourceIds.length > 0 ? matchingSourceIds : synthesisSourceIds),
-    })];
+      preferredUnitIds: Object.freeze(units.filter((unit) => unit.kind !== 'document')
+        .map((unit) => unit.unitId)),
+      requiredSections: Object.freeze(['summary', 'evidence', 'related-topics']),
+      sourceIds: Object.freeze([source.sourceId]),
+    });
   });
-  const coveredSourceIds = new Set([...topicSeeds, ...roleSeeds]
-    .flatMap((seed) => [...seed.sourceIds]));
-  const uncoveredSourceIds = synthesisSourceIds.filter((sourceId) => !coveredSourceIds.has(sourceId));
-  const additionalSeeds: readonly LeafSeed[] = uncoveredSourceIds.length > 0 &&
-      topicSeeds.length + roleSeeds.length > 0
-    ? [Object.freeze({
-        stableKey: 'topic.additional-evidence',
-        role: 'reference',
-        title: (purpose.scopeHints[0] ?? purpose.goals[0]) as string,
-        keyQuestions: Object.freeze([...purpose.keyQuestions]),
-        requiredSections: Object.freeze(['evidence', 'related-topics', 'summary']),
-        sourceIds: Object.freeze(uncoveredSourceIds),
-      })]
-    : [];
-  const fallbackSeeds = topicSeeds.length === 0 && roleSeeds.length === 0
-    ? purpose.keyQuestions.map((question, index): LeafSeed => Object.freeze({
-        stableKey: `topic.q-${String(index).padStart(3, '0')}`,
-        role: 'topic',
-        title: question,
-        keyQuestions: Object.freeze([question]),
-        requiredSections: Object.freeze(['evidence', 'related-topics', 'summary']),
-        sourceIds: Object.freeze(synthesisSourceIds),
-      }))
-    : [];
-  const reservedSeedCount = roleSeeds.length + additionalSeeds.length + fallbackSeeds.length;
+  const representedRoles = new Set(topicSeeds.map((seed) => seed.role));
+  const reviewNotes = purpose.requestedPageRoles.filter((role) =>
+    role !== 'overview' && !representedRoles.has(role))
+    .map((role) => `role-omitted.${role}`).sort();
   const boundedTopicSeeds = coalesceTopicSeeds(
     topicSeeds,
-    MAX_LEAF_BLUEPRINTS - reservedSeedCount,
+    MAX_LEAF_BLUEPRINTS,
     projectId,
   );
-  const seeds = [...boundedTopicSeeds, ...roleSeeds, ...additionalSeeds, ...fallbackSeeds];
+  const seeds = [...boundedTopicSeeds];
   if (seeds.length === 0 || seeds.length > MAX_LEAF_BLUEPRINTS) invalid(projectId);
-  return Object.freeze(seeds);
+  return Object.freeze({
+    reviewNotes: Object.freeze(reviewNotes),
+    seeds: Object.freeze(seeds),
+  });
 }
 
 function relatedLeafIds(
@@ -382,6 +389,7 @@ function outlineWithoutDigest(
     activationState: outline.activationState,
     rootPageId: outline.rootPageId,
     blueprints: outline.blueprints,
+    reviewNotes: outline.reviewNotes,
   };
 }
 
@@ -407,7 +415,8 @@ export function createWikiOutline(
   ) invalid(expectedProjectId);
   const rootStableKey = 'root.overview';
   const rootPageId = pageId(expectedProjectId, purpose.purposeDigest, rootStableKey);
-  const seeds = leafSeeds(purpose, snapshot, interpretations, expectedProjectId);
+  const seedSet = leafSeeds(purpose, snapshot, interpretations, expectedProjectId);
+  const seeds = seedSet.seeds;
   const leafPageIds = seeds.map((seed) =>
     pageId(expectedProjectId, purpose.purposeDigest, seed.stableKey));
   const synthesisSourceIds = interpretations.filter((item) =>
@@ -432,6 +441,8 @@ export function createWikiOutline(
           pageId: pageId(expectedProjectId, purpose.purposeDigest, stableKey),
           title: `${first.title} topic group`,
           sourceIds: Object.freeze(sourceIds),
+          preferredUnitIds: Object.freeze(members.flatMap((seed) =>
+            [...seed.preferredUnitIds])),
           childPageIds: Object.freeze([...childPageIds].sort()),
         });
       })
@@ -442,7 +453,7 @@ export function createWikiOutline(
     if (currentPageId === undefined) invalid(expectedProjectId);
     const group = grouped ? groupSeeds[Math.floor(index / MAX_LEAVES_PER_GROUP)] : undefined;
     if (grouped && group === undefined) invalid(expectedProjectId);
-    const scope = evidenceScope(snapshot, graph, seed.sourceIds);
+    const scope = evidenceScope(snapshot, graph, seed.sourceIds, seed.preferredUnitIds);
     return createBlueprint({
       projectId: expectedProjectId,
       pageId: currentPageId,
@@ -460,7 +471,7 @@ export function createWikiOutline(
     });
   });
   const groups = groupSeeds.map((group, index) => {
-    const scope = evidenceScope(snapshot, graph, group.sourceIds);
+    const scope = evidenceScope(snapshot, graph, group.sourceIds, group.preferredUnitIds);
     return createBlueprint({
       projectId: expectedProjectId,
       pageId: group.pageId,
@@ -482,12 +493,12 @@ export function createWikiOutline(
     pageId: rootPageId,
     stableKey: rootStableKey,
     role: 'overview',
-    title: purpose.goals[0] as string,
+    title: purpose.wikiTitle ?? expectedProjectId,
     parentPageId: null,
     childPageIds: Object.freeze([...(grouped ? groupPageIds : leafPageIds)].sort()),
     relatedPageIds: Object.freeze([]),
     keyQuestions: purpose.keyQuestions,
-    requiredSections: Object.freeze(['goals', 'summary', 'topic-map']),
+    requiredSections: Object.freeze(['summary', 'goals', 'topic-map']),
     evidenceScope: rootScope,
     minimumDistinctSources: Math.min(2, rootScope.sourceIds.length),
     generationOrder: leaves.length + groups.length,
@@ -503,6 +514,7 @@ export function createWikiOutline(
     activationState: 'candidate' as const,
     rootPageId,
     blueprints: Object.freeze([...leaves, ...groups, root]),
+    reviewNotes: seedSet.reviewNotes,
   });
   const outline = Object.freeze({
     ...candidate,
@@ -530,7 +542,7 @@ function parseEvidenceScope(
   const scope = record(value, projectId);
   exactKeys(scope, [
     'allowedUnitKinds', 'relationSetDigest', 'snapshotDigest', 'sourceIds',
-    'taskSetDigest',
+    'taskSetDigest', 'preferredUnitIds',
   ], projectId);
   if (!Array.isArray(scope.allowedUnitKinds)) invalid(projectId);
   const allowedUnitKinds = scope.allowedUnitKinds.map((item) => {
@@ -545,6 +557,19 @@ function parseEvidenceScope(
     HIERARCHICAL_COMPILATION_LIMITS.maxSources,
     projectId,
   );
+  if (!Array.isArray(scope.preferredUnitIds) ||
+      scope.preferredUnitIds.length > HIERARCHICAL_COMPILATION_LIMITS.maxTasks) {
+    invalid(projectId);
+  }
+  const preferredUnitIds = scope.preferredUnitIds.map((item) =>
+    identifier(item, UNIT_ID_PATTERN, projectId));
+  if (new Set(preferredUnitIds).size !== preferredUnitIds.length) invalid(projectId);
+  const unitById = new Map(snapshot.textUnits.map((unit) => [unit.unitId, unit]));
+  if (preferredUnitIds.some((unitId) => {
+    const unit = unitById.get(unitId);
+    return unit === undefined || unit.kind === 'document' ||
+      !sourceIds.includes(unit.sourceId);
+  })) invalid(projectId);
   if (
     !sameStrings(allowedUnitKinds, ALL_UNIT_KINDS) ||
     sourceIds.length === 0 ||
@@ -559,6 +584,7 @@ function parseEvidenceScope(
     relationSetDigest: digest(scope.relationSetDigest, projectId),
     allowedUnitKinds: Object.freeze(allowedUnitKinds),
     sourceIds,
+    preferredUnitIds: Object.freeze(preferredUnitIds),
   });
 }
 
@@ -589,7 +615,7 @@ function parseBlueprint(
   const keyQuestions = Object.freeze(blueprint.keyQuestions.map((item) =>
     safeText(item, 1_000, projectId)));
   if (new Set(keyQuestions).size !== keyQuestions.length) invalid(projectId);
-  const requiredSections = uniqueSortedIdentifiers(
+  const requiredSections = uniqueOrderedIdentifiers(
     blueprint.requiredSections,
     PORTABLE_IDENTIFIER_PATTERN,
     32,
@@ -678,7 +704,7 @@ export function parseWikiOutline(
   exactKeys(outline, [
     'activationState', 'blueprints', 'graphDigest', 'interpretationSetDigest',
     'outlineDigest', 'policyDigest', 'projectId', 'purposeDigest', 'rootPageId',
-    'schemaVersion', 'snapshotDigest',
+    'reviewNotes', 'schemaVersion', 'snapshotDigest',
   ], expectedProjectId);
   if (
     outline.schemaVersion !== WIKI_OUTLINE_SCHEMA_VERSION ||
@@ -695,6 +721,12 @@ export function parseWikiOutline(
   ) invalid(expectedProjectId);
   const blueprints = outline.blueprints.map((item) =>
     parseBlueprint(item, purpose, snapshot, graph, allowedSourceIds, expectedProjectId));
+  const reviewNotes = uniqueSortedIdentifiers(
+    outline.reviewNotes,
+    PORTABLE_IDENTIFIER_PATTERN,
+    64,
+    expectedProjectId,
+  );
   if (
     new Set(blueprints.map((item) => item.pageId)).size !== blueprints.length ||
     new Set(blueprints.map((item) => item.stableKey)).size !== blueprints.length ||
@@ -754,6 +786,7 @@ export function parseWikiOutline(
     activationState: 'candidate' as const,
     rootPageId,
     blueprints: Object.freeze(blueprints),
+    reviewNotes,
   });
   const outlineDigest = digest(outline.outlineDigest, expectedProjectId);
   if (outlineDigest !== digestHierarchyValue(outlineWithoutDigest(parsedWithoutDigest))) {
