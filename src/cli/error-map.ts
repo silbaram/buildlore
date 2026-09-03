@@ -1,5 +1,8 @@
 import { CompilerOperationError } from '../compiler/errors.js';
-import { HierarchyContractError } from '../compiler/hierarchy/errors.js';
+import {
+  HierarchyContractError,
+  HierarchicalWorkflowEvidenceInsufficientError,
+} from '../compiler/hierarchy/errors.js';
 import { SessionCompileError } from '../compiler/session/errors.js';
 import { ProjectCheckError } from '../compiler/check.js';
 import { ProjectCorpusError } from '../compiler/corpus.js';
@@ -169,6 +172,9 @@ export function mapCliError(
   if (error instanceof HierarchyContractError) {
     return baseFailure(context, 3, error.code, error.message);
   }
+  if (error instanceof HierarchicalWorkflowEvidenceInsufficientError) {
+    return baseFailure(context, 3, error.code, error.message);
+  }
   if (error instanceof LocalEmbeddingError) {
     const recoveryCommand = error.reasonCode === null || context.command === 'unknown'
       ? undefined
@@ -192,14 +198,27 @@ export function mapCliError(
     return baseFailure(context, 3, error.code, error.message);
   }
   if (error instanceof HierarchicalWorkflowRunStoreError) {
-    return baseFailure(
+    const failure = baseFailure(
       context,
       error.code === 'HIERARCHICAL_WORKFLOW_RUN_BUSY' ||
         error.code === 'HIERARCHICAL_WORKFLOW_RUN_CONFLICT' ||
         error.code === 'HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED' ? 4 : 3,
       error.code,
       error.message,
+      undefined,
+      error.code === 'HIERARCHICAL_WORKFLOW_RUN_POLICY_OUTDATED'
+        ? 'policy-outdated'
+        : undefined,
     );
+    return error.code === 'HIERARCHICAL_WORKFLOW_RUN_POLICY_OUTDATED'
+      ? Object.freeze({
+          ...failure,
+          data: Object.freeze({
+            recoveryAction: 'start-new-run' as const,
+            state: 'policy-outdated' as const,
+          }),
+        })
+      : failure;
   }
   if (error instanceof HierarchicalWorkflowError) {
     return baseFailure(context, 3, error.code, error.message);

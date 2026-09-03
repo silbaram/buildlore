@@ -9,6 +9,7 @@ import {
   createCorpusSnapshot,
   createDocumentInterpretation,
   createDocumentInterpretationRule,
+  createSubstantiveHierarchyTextUnits,
   createTextUnit,
   createWikiOutline,
   diffWikiOutlines,
@@ -38,6 +39,7 @@ function purpose(questionSuffix = ''): CompilationPurposeV1 {
     excludedTopics: ['Hosted services'],
     outputLanguage: 'en',
     requestedPageRoles: ['architecture', 'overview'],
+    wikiTitle: 'Fixture Knowledge',
   });
 }
 
@@ -189,7 +191,7 @@ describe('explicit-rule-first document interpretation', () => {
 });
 
 describe('purpose-aware reviewable Wiki outline', () => {
-  it('creates a deterministic leaf-first hierarchy independent of source page count', () => {
+  it('creates a deterministic document-scoped leaf for every eligible source', () => {
     const compilationPurpose = purpose();
     const corpus = snapshot(compilationPurpose);
     const graph = buildSparseRelationGraph(corpus, PROJECT_ID);
@@ -225,27 +227,34 @@ describe('purpose-aware reviewable Wiki outline', () => {
       PROJECT_ID,
     )).toEqual(first);
     expect(first.activationState).toBe('candidate');
-    expect(first.blueprints).toHaveLength(3);
-    expect(first.blueprints).not.toHaveLength(corpus.sources.length);
+    expect(first.blueprints).toHaveLength(corpus.sources.length + 1);
     const root = first.blueprints.find((page) => page.pageId === first.rootPageId);
     const leaves = first.blueprints.filter((page) => page.pageId !== first.rootPageId);
     expect(root).toMatchObject({
       role: 'overview',
-      generationOrder: 2,
+      title: 'Fixture Knowledge',
+      generationOrder: 4,
       minimumDistinctSources: 2,
+      requiredSections: ['summary', 'goals', 'topic-map'],
     });
-    expect(root?.childPageIds).toHaveLength(2);
+    expect(root?.childPageIds).toHaveLength(corpus.sources.length);
     expect(leaves.every((page) => page.parentPageId === first.rootPageId)).toBe(true);
     expect(leaves.every((page) => page.generationOrder < (root?.generationOrder ?? 0)))
       .toBe(true);
     expect(leaves.every((page) => page.keyQuestions.length > 0)).toBe(true);
-    expect(leaves.every((page) => page.requiredSections.includes('evidence'))).toBe(true);
-    expect(leaves.map((page) => page.title).sort()).toEqual(['Local retrieval', 'Source integrity']);
-    expect(leaves.every((page) => page.evidenceScope.sourceIds.length === 2)).toBe(true);
+    expect(leaves.every((page) =>
+      JSON.stringify(page.requiredSections) ===
+        JSON.stringify(['summary', 'evidence', 'related-topics'])))
+      .toBe(true);
+    expect(leaves.map((page) => page.title).sort()).toEqual([
+      'Local retrieval', 'Local retrieval', 'Source integrity', 'Source integrity',
+    ]);
+    expect(leaves.every((page) => page.evidenceScope.sourceIds.length === 1)).toBe(true);
     expect(new Set(leaves.flatMap((page) => page.evidenceScope.sourceIds))).toEqual(
       new Set(SOURCE_IDS),
     );
     expect(leaves.every((page) => page.relatedPageIds.length > 0)).toBe(true);
+    expect(first.reviewNotes).toEqual([]);
 
     const original = documentInterpretations[0] as DocumentInterpretationV1;
     const changedInterpretation = createDocumentInterpretation({
@@ -270,6 +279,105 @@ describe('purpose-aware reviewable Wiki outline', () => {
     );
     expect(changed.interpretationSetDigest).not.toBe(first.interpretationSetDigest);
     expect(changed.outlineDigest).not.toBe(first.outlineDigest);
+  });
+
+  it('derives document and H2 topics without creating global generic-heading pages', () => {
+    const compilationPurpose = createCompilationPurpose({
+      projectId: PROJECT_ID,
+      audience: ['Maintainers'],
+      goals: ['Explain supported behavior'],
+      keyQuestions: ['How are topic pages grounded?'],
+      scopeHints: ['Five source documents'],
+      excludedTopics: ['Hosted agents'],
+      outputLanguage: 'ko',
+      requestedPageRoles: ['architecture', 'overview', 'security'],
+      wikiTitle: 'BuildLore 지식 위키',
+    });
+    const hierarchySources = Array.from({ length: 5 }, (_, index) => {
+      const documentTitle = `도메인 ${String(index + 1)}`;
+      const body = `# ${documentTitle}\n\n` +
+        `이 문서는 ${documentTitle}의 검증 가능한 동작을 설명합니다.\n\n` +
+        '## 배경\n\n배경 근거와 현재 제약을 구체적으로 설명합니다.\n\n' +
+        '### 세부사항\n\n세부 구현 근거도 상위 주제 범위에 포함됩니다.\n\n' +
+        '## 결정\n\n결정 근거와 운영상 결과를 구체적으로 설명합니다.\n\n' +
+        '## 검증\n\n검증 절차와 기대 결과를 구체적으로 설명합니다.\n';
+      return Object.freeze({
+        body,
+        sourceId: `source-${hierarchySha256(`topic-source-${String(index)}`)
+          .slice('sha256:'.length)}`,
+        sourceKind: 'markdown' as const,
+        sourceRef: `docs/domain-${String(index + 1)}.md`,
+        sourceRevision: hierarchySha256(body),
+      });
+    });
+    const textUnits = createSubstantiveHierarchyTextUnits(hierarchySources, PROJECT_ID);
+    const corpus = createCorpusSnapshot({
+      projectId: PROJECT_ID,
+      purposeDigest: compilationPurpose.purposeDigest,
+      interpretationRulesDigest: hierarchySha256('topic-rules'),
+      profileDigest: hierarchySha256('topic-profile'),
+      compilerContractDigest: hierarchySha256('topic-compiler'),
+      sanitizerPolicyDigest: hierarchySha256('topic-sanitizer'),
+      sourceManifestDigest: hierarchySha256('topic-manifest'),
+      policyDigest: HIERARCHICAL_COMPILATION_POLICY.policyDigest,
+      sources: hierarchySources.map((source) => Object.freeze({
+        sourceId: source.sourceId,
+        sourceRevision: source.sourceRevision,
+        sourceRef: source.sourceRef,
+        sanitizedContentDigest: hierarchySha256(source.body),
+      })),
+      textUnits,
+    });
+    const graph = buildSparseRelationGraph(corpus, PROJECT_ID);
+    const documentInterpretations = corpus.sources.map((source, index) =>
+      createDocumentInterpretation({
+        projectId: PROJECT_ID,
+        sourceId: source.sourceId,
+        sourceRevision: source.sourceRevision,
+        role: index === 0 ? 'architecture' : 'guide',
+        lifecycle: 'current',
+        authority: 'supporting',
+        synthesisEligibility: 'eligible',
+        basis: ['explicit-metadata'],
+        confidenceBasisPoints: 10_000,
+        reasonCodes: ['topic-fixture'],
+        relations: [],
+      }));
+    const outline = createWikiOutline(
+      compilationPurpose,
+      corpus,
+      graph,
+      documentInterpretations,
+      PROJECT_ID,
+    );
+    const root = outline.blueprints.find((page) => page.pageId === outline.rootPageId);
+    const leaves = outline.blueprints.filter((page) => page.childPageIds.length === 0);
+    expect(root?.title).toBe('BuildLore 지식 위키');
+    expect(root?.requiredSections).toEqual(['summary', 'goals', 'topic-map']);
+    expect(leaves).toHaveLength(hierarchySources.length);
+    expect(new Set(leaves.flatMap((page) => page.evidenceScope.sourceIds))).toEqual(
+      new Set(hierarchySources.map((source) => source.sourceId)),
+    );
+    expect(leaves.every((page) => /도메인 \d: 배경 외 2개/u.test(page.title))).toBe(true);
+    expect(leaves.every((page) => !['배경', '결정', '검증'].includes(page.title))).toBe(true);
+    expect(leaves.every((page) =>
+      JSON.stringify(page.requiredSections) ===
+        JSON.stringify(['summary', 'evidence', 'related-topics'])))
+      .toBe(true);
+    expect(leaves.every((page) => page.evidenceScope.preferredUnitIds !== undefined &&
+      page.evidenceScope.preferredUnitIds.length > 4)).toBe(true);
+    expect(textUnits.filter((unit) => unit.kind === 'document')).toHaveLength(5);
+    expect(textUnits.filter((unit) => unit.kind === 'heading')
+      .every((unit) => unit.topicLabel !== null)).toBe(true);
+    expect(outline.reviewNotes).toEqual(['role-omitted.security']);
+    expect(parseWikiOutline(
+      outline,
+      compilationPurpose,
+      corpus,
+      graph,
+      documentInterpretations,
+      PROJECT_ID,
+    )).toEqual(outline);
   });
 
   it('coalesces more than 96 distinct topics into a bounded multi-level hierarchy', () => {

@@ -1,5 +1,6 @@
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
 import { digestHierarchyValue, parseCorpusSnapshot } from './contracts.js';
+import { citationIdsForProposalSummary } from './evidence.js';
 import {
   verifyCurrentSessionGenerationResult,
   type CurrentSessionGenerationExchangeV1,
@@ -12,6 +13,7 @@ import {
   parseSparseRelationGraph,
 } from './planning.js';
 import {
+  BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE,
   createIntegratedWikiCandidateReview,
   evaluateSemanticQuality,
   verifyIntegratedWikiReviewSurface,
@@ -265,10 +267,8 @@ function verifyReceiptBoundRun(
   if (
     !surface.runCoverage.complete ||
     !surface.hardQualityPassed ||
-    !surface.eligibleForHumanAcceptance ||
     !surface.corpusQualityReport.eligibleForApproval ||
-    surface.canonicalMutationAuthorized !== false ||
-    surface.removedBaselinePages.length !== 0
+    surface.canonicalMutationAuthorized !== false
   ) invalid(projectId);
 
   const generations = Object.freeze(input.generationHandoffs.map((handoff) => {
@@ -343,6 +343,13 @@ function verifyReceiptBoundRun(
     integratedReviewById.size !== input.integratedReviews.length ||
     !sameStrings([...integratedReviewById.keys()].sort(), expectedPageIds)
   ) invalid(projectId);
+  if (
+    surface.removedBaselinePages.length === 0
+      ? !surface.eligibleForHumanAcceptance
+      : surface.eligibleForHumanAcceptance || input.integratedReviews.some((review) =>
+        review.decision !== 'accepted' ||
+        !review.reasonCodes.includes(BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE))
+  ) invalid(projectId);
 
   const expectedChildPageIds: string[] = [];
   for (const generation of generations) {
@@ -370,7 +377,11 @@ function verifyReceiptBoundRun(
         summary.proposalDigest !== child.result.proposal.proposalDigest ||
         summary.reviewDigest !== review.reviewDigest ||
         summary.summary !== child.result.proposal.summary ||
-        !sameStrings(summary.citationIds, child.result.proposal.citationIds)
+        (!sameStrings(summary.citationIds, child.result.proposal.citationIds) &&
+          !sameStrings(
+            summary.citationIds,
+            citationIdsForProposalSummary(child.result.proposal, projectId),
+          ))
       ) invalid(projectId);
     }
   }

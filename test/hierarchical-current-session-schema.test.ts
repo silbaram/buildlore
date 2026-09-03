@@ -124,8 +124,8 @@ describe('hierarchical current-session JSON Schema', () => {
     };
     const serialized = JSON.stringify(schema);
 
-    expect(serialized).toContain('buildlore.current-session-generation-exchange.v1');
-    expect(serialized).toContain('buildlore.current-session-proposal-submission.v1');
+    expect(serialized).toContain('buildlore.current-session-generation-exchange.v2');
+    expect(serialized).toContain('buildlore.current-session-proposal-submission.v2');
     expect(serialized).toContain('buildlore.current-session-generation-receipt.v1');
     expect(serialized).toContain('buildlore.external-generation-payload.v1');
     expect(serialized).toContain('buildlore.external-generation-execution-request.v1');

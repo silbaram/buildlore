@@ -7,6 +7,7 @@ import { addProject } from '../src/knowledge/index.js';
 import { issuePreparedSource } from '../src/sanitizer/approval.js';
 import { readSecurityPolicy, SANITIZER_RULES_VERSION } from '../src/sanitizer/index.js';
 import {
+  BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE,
   HIERARCHICAL_COMPILATION_POLICY,
   HierarchyContractError,
   advanceCompileContinuation,
@@ -68,7 +69,7 @@ function blueprint(input: Readonly<{
   readonly title: string;
 }>): PageBlueprintV1 {
   const candidate = Object.freeze({
-    schemaVersion: 'buildlore.page-blueprint.v1' as const,
+    schemaVersion: 'buildlore.page-blueprint.v2' as const,
     projectId: PROJECT_ID,
     pageId: input.pageId,
     stableKey: input.stableKey,
@@ -87,6 +88,7 @@ function blueprint(input: Readonly<{
         'document', 'fenced-code', 'heading', 'list', 'paragraph', 'table',
       ] as const),
       sourceIds: Object.freeze([...input.sourceIds].sort()),
+      preferredUnitIds: Object.freeze([]),
     }),
     minimumDistinctSources: 1,
     generationOrder: input.generationOrder,
@@ -114,7 +116,7 @@ function submission(
     ...exchange.request.requiredLinkPageIds.map((id) => `[[${id}]]`),
   ].filter((value) => value.length > 0).join(' ');
   return Object.freeze({
-    schemaVersion: 'buildlore.current-session-proposal-submission.v1' as const,
+    schemaVersion: 'buildlore.current-session-proposal-submission.v2' as const,
     projectId: exchange.projectId,
     pageId: exchange.pageId,
     exchangeDigest: exchange.exchangeDigest,
@@ -259,7 +261,7 @@ async function integratedFixture(badLeafTitle = false): Promise<IntegratedFixtur
     }),
   ]);
   const outlineCandidate = Object.freeze({
-    schemaVersion: 'buildlore.wiki-outline.v1' as const,
+    schemaVersion: 'buildlore.wiki-outline.v2' as const,
     projectId: PROJECT_ID,
     snapshotDigest: snapshot.snapshotDigest,
     graphDigest: graph.graphDigest,
@@ -269,6 +271,7 @@ async function integratedFixture(badLeafTitle = false): Promise<IntegratedFixtur
     activationState: 'candidate' as const,
     rootPageId,
     blueprints: pages,
+    reviewNotes: Object.freeze([]),
   });
   const outline: WikiOutlineV1 = Object.freeze({
     ...outlineCandidate,
@@ -556,6 +559,24 @@ describe('integrated current-session Wiki review surface', () => {
       candidate.contentDiff.changeKind === 'unchanged')).toBe(true);
     expect(unchanged.eligibleForHumanAcceptance).toBe(true);
 
+    const legacyBaselines = currentProposals.map((proposal) => redigestProposal(proposal, {
+      schemaVersion: 'buildlore.hierarchical-wiki-proposal.v1',
+      sections: proposal.sections.map((section) => Object.freeze({
+        sectionId: section.sectionId,
+        body: section.body,
+      })),
+    }));
+    const legacy = createIntegratedWikiReviewSurface({
+      ...fixture.input,
+      baselineGenerationDigest: hierarchySha256('authoritative-generation-v1'),
+      baselineProposals: legacyBaselines,
+    }, PROJECT_ID);
+    expect(legacy.candidates.every((candidate) =>
+      (candidate.baselineProposal?.schemaVersion as string | undefined) ===
+        'buildlore.hierarchical-wiki-proposal.v1')).toBe(true);
+    expect(legacy.removedBaselinePages).toHaveLength(0);
+    expect(legacy.eligibleForHumanAcceptance).toBe(true);
+
     const leaf = currentProposals[0] as HierarchicalWikiProposalV1;
     const changedSections = leaf.sections.map((section) => Object.freeze({
       ...section,
@@ -578,6 +599,32 @@ describe('integrated current-session Wiki review surface', () => {
     expect(changed.removedBaselinePages[0]?.baselineProposal).toEqual(removedBaseline);
     expect(changed.reasonCodes).toContain('baseline-page-removal-requires-review');
     expect(changed.eligibleForHumanAcceptance).toBe(false);
+    const changedCandidate = changed.candidates[0];
+    if (changedCandidate === undefined) throw new Error('expected changed candidate');
+    expect(() => createIntegratedWikiCandidateReview(
+      changed,
+      changedCandidate.pageId,
+      'accepted',
+      [],
+      PROJECT_ID,
+    )).toThrow(HierarchyContractError);
+    expect(createIntegratedWikiCandidateReview(
+      changed,
+      changedCandidate.pageId,
+      'accepted',
+      [BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE],
+      PROJECT_ID,
+    )).toMatchObject({
+      decision: 'accepted',
+      reasonCodes: [BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE],
+    });
+    expect(() => createIntegratedWikiCandidateReview(
+      unchanged,
+      unchanged.candidates[0]?.pageId as string,
+      'accepted',
+      [BASELINE_PAGE_REMOVAL_REVIEW_REASON_CODE],
+      PROJECT_ID,
+    )).toThrow(HierarchyContractError);
   });
 
   it('cross-binds the actual outline and rejects non-canonical nested blueprint scope', async () => {

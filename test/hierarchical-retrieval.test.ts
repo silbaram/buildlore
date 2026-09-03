@@ -244,7 +244,7 @@ describe('approved hierarchical Wiki retrieval', () => {
     const ownershipDigest = digest('4');
     const graphDigest = digest('5');
     const proposal: HierarchicalWikiProposalV1 = {
-      schemaVersion: 'buildlore.hierarchical-wiki-proposal.v1',
+      schemaVersion: 'buildlore.hierarchical-wiki-proposal.v2',
       projectId: PROJECT_ID,
       pageId,
       blueprintDigest: digest('6'),

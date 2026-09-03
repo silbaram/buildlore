@@ -74,6 +74,10 @@ describe('CLI argument parser', () => {
       command: 'compile.activate',
     },
     {
+      args: ['compile', 'activate', '--project', 'alpha', '--rematerialize'],
+      command: 'compile.activate',
+    },
+    {
       args: ['compile', 'hierarchy', 'start', '--project', 'alpha', '--purpose', 'purpose.json'],
       command: 'compile.hierarchy.start',
     },
@@ -87,6 +91,14 @@ describe('CLI argument parser', () => {
         '--input', 'handoffs/proposal.json', '--expect-exchange', `sha256:${'b'.repeat(64)}`,
       ],
       command: 'compile.hierarchy.submit',
+    },
+    {
+      args: [
+        'compile', 'hierarchy', 'resubmit', '--project', 'alpha',
+        '--run', `run-${'a'.repeat(64)}`, '--page', `page-${'c'.repeat(64)}`,
+        '--input', 'handoffs/proposal.json', '--expect-exchange', `sha256:${'b'.repeat(64)}`,
+      ],
+      command: 'compile.hierarchy.resubmit',
     },
     {
       args: [
@@ -268,6 +280,11 @@ describe('CLI argument parser', () => {
       'compile', 'hierarchy', 'submit', '--project', 'alpha', '--run', run,
       '--input', maximumPath, '--expect-exchange', digest,
     ])).toMatchObject({ command: 'compile.hierarchy.submit' });
+    expect(parseCliArguments([
+      'compile', 'hierarchy', 'resubmit', '--project', 'alpha', '--run', run,
+      '--page', `page-${'c'.repeat(64)}`, '--input', maximumPath,
+      '--expect-exchange', digest,
+    ])).toMatchObject({ command: 'compile.hierarchy.resubmit' });
 
     for (const invalidRun of ['run-1', `run-${'A'.repeat(64)}`, `other-${'a'.repeat(64)}`]) {
       expectUsageError([
@@ -316,6 +333,10 @@ describe('CLI argument parser', () => {
       'compile', 'hierarchy', 'submit', '--project', 'alpha', '--run', run,
       '--input', 'proposal.json',
     ], 'CLI_OPTION_MISSING');
+    expectUsageError([
+      'compile', 'hierarchy', 'resubmit', '--project', 'alpha', '--run', run,
+      '--page', 'page-invalid', '--input', 'proposal.json', '--expect-exchange', digest,
+    ], 'CLI_ARGUMENT_INVALID');
   });
 
   it.each([1, 50, 51, 184, 8192])(
@@ -373,6 +394,13 @@ describe('CLI argument parser', () => {
     expectUsageError(
       ['compile', 'activate', '--project', 'alpha', '--confirm-approval', 'sha256:wrong'],
       'CLI_ARGUMENT_INVALID',
+    );
+    expectUsageError(
+      [
+        'compile', 'activate', '--project', 'alpha', '--rematerialize',
+        '--confirm-approval', `sha256:${'a'.repeat(64)}`,
+      ],
+      'CLI_OPTION_CONFLICT',
     );
     expectUsageError([
       'source', 'add', '--project', 'alpha', '--id', 'unsafe', '--kind', 'markdown',

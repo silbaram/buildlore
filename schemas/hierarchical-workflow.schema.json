@@ -77,7 +77,8 @@
           "maxItems": 32,
           "uniqueItems": true,
           "items": { "$ref": "hierarchical-corpus.schema.json#/$defs/portableIdentifier" }
-        }
+        },
+        "wikiTitle": { "$ref": "hierarchical-corpus.schema.json#/$defs/purposeText" }
       },
       "x-buildlore-maxUtf8Bytes": 262144
     },
@@ -178,6 +179,42 @@
         }
       }
     },
+    "storedResubmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt", "expectedExchangeDigest", "generationOrder", "pageId",
+        "proposalDigest", "receiptDigest", "submission", "outcome"
+      ],
+      "properties": {
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "expectedExchangeDigest": { "$ref": "#/$defs/digest" },
+        "generationOrder": { "type": "integer", "minimum": 0, "maximum": 96 },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "pageQualityReportDigest", "reasonCodes"],
+          "properties": {
+            "kind": { "enum": ["accepted", "hard-quality-failed"] },
+            "pageQualityReportDigest": { "$ref": "#/$defs/digest" },
+            "reasonCodes": { "$ref": "#/$defs/reasonCodes" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "kind": { "const": "accepted" } } },
+              "then": { "properties": { "reasonCodes": { "maxItems": 0 } } },
+              "else": { "properties": { "reasonCodes": { "minItems": 1 } } }
+            }
+          ]
+        },
+        "pageId": { "$ref": "#/$defs/pageId" },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "receiptDigest": { "$ref": "#/$defs/digest" },
+        "submission": {
+          "$ref": "hierarchical-current-session.schema.json#/$defs/proposalSubmission"
+        }
+      }
+    },
     "storedChildDecision": {
       "type": "object",
       "additionalProperties": false,
@@ -263,13 +300,13 @@
       "required": [
         "schemaVersion", "projectId", "runId", "revision", "phase", "purpose",
         "baselineAuthorityDigest", "baselineState", "baselineProposals", "startDigests",
-        "submissions", "childDecisions", "integratedDecisions", "relationDecisions",
+        "submissions", "resubmissions", "childDecisions", "integratedDecisions", "relationDecisions",
         "rejection", "approvalDecision", "pendingExchangeDigest",
         "pendingChildReviewDigest", "pendingReviewDigest", "pendingLedgerDigest",
         "recordDigest"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.hierarchical-workflow-run-record.v1" },
+        "schemaVersion": { "const": "buildlore.hierarchical-workflow-run-record.v2" },
         "projectId": { "$ref": "#/$defs/projectId" },
         "runId": { "$ref": "#/$defs/runId" },
         "revision": {
@@ -279,7 +316,7 @@
         },
         "phase": {
           "enum": [
-            "awaiting-proposal", "awaiting-child-review", "review-ready", "finalized",
+            "awaiting-proposal", "hard-quality-failed", "awaiting-child-review", "review-ready", "finalized",
             "rejected", "approved"
           ]
         },
@@ -306,6 +343,12 @@
           "maxItems": 97,
           "x-buildlore-canonicalOrder": "generationOrder-ascending-contiguous",
           "items": { "$ref": "#/$defs/storedSubmission" }
+        },
+        "resubmissions": {
+          "type": "array",
+          "maxItems": 291,
+          "x-buildlore-canonicalOrder": "generationOrder-ascending-then-attempt-ascending",
+          "items": { "$ref": "#/$defs/storedResubmission" }
         },
         "childDecisions": {
           "type": "array",
@@ -428,14 +471,14 @@
         },
         "phase": {
           "enum": [
-            "awaiting-proposal", "awaiting-child-review", "review-ready", "finalized",
-            "rejected", "approved"
+            "awaiting-proposal", "hard-quality-failed", "awaiting-child-review",
+            "review-ready", "finalized", "rejected", "approved"
           ]
         },
         "purpose": { "$ref": "hierarchical-corpus.schema.json#/$defs/compilationPurpose" },
         "nextAction": {
           "enum": [
-            "submit-proposal", "review-child", "review-integrated-wiki",
+            "submit-proposal", "resubmit-proposal", "review-child", "review-integrated-wiki",
             "approve-activation", "activate-approved-wiki", "none"
           ]
         },

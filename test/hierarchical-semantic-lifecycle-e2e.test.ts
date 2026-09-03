@@ -275,7 +275,7 @@ function pageBlueprint(input: Readonly<{
   readonly title: string;
 }>): WikiOutlineV1['blueprints'][number] {
   const candidate = Object.freeze({
-    schemaVersion: 'buildlore.page-blueprint.v1' as const,
+    schemaVersion: 'buildlore.page-blueprint.v2' as const,
     projectId: PROJECT_ID,
     pageId: input.pageId,
     stableKey: input.stableKey,
@@ -294,6 +294,7 @@ function pageBlueprint(input: Readonly<{
         'document', 'fenced-code', 'heading', 'list', 'paragraph', 'table',
       ] as const),
       sourceIds: Object.freeze([...input.sourceIds].sort()),
+      preferredUnitIds: Object.freeze([]),
     }),
     minimumDistinctSources: 1,
     generationOrder: input.generationOrder,
@@ -345,7 +346,7 @@ function proposalSubmission(
     `${summary.summary} ${summary.citationIds.map((citationId) =>
       `[^${citationId}]`).join(' ')}`).join(' ');
   const candidate = Object.freeze({
-    schemaVersion: 'buildlore.current-session-proposal-submission.v1' as const,
+    schemaVersion: 'buildlore.current-session-proposal-submission.v2' as const,
     projectId: PROJECT_ID,
     pageId: page.pageId,
     exchangeDigest: exchange.exchangeDigest,
@@ -484,7 +485,7 @@ async function approvedAuthority(
     }),
   ]);
   const outlineBasis = Object.freeze({
-    schemaVersion: 'buildlore.wiki-outline.v1' as const,
+    schemaVersion: 'buildlore.wiki-outline.v2' as const,
     projectId: PROJECT_ID,
     snapshotDigest: snapshot.snapshotDigest,
     graphDigest: graph.graphDigest,
@@ -494,6 +495,7 @@ async function approvedAuthority(
     activationState: 'candidate' as const,
     rootPageId: ROOT_PAGE,
     blueprints,
+    reviewNotes: Object.freeze([]),
   });
   const outline: WikiOutlineV1 = Object.freeze({
     ...outlineBasis,

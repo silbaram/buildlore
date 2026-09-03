@@ -685,7 +685,7 @@ function shallowQualityInput(
     if (pageId === undefined) throw new Error('missing negative baseline page');
     const isRoot = pageId === rootPageId;
     const candidate = Object.freeze({
-      schemaVersion: 'buildlore.page-blueprint.v1' as const,
+      schemaVersion: 'buildlore.page-blueprint.v2' as const,
       projectId: fixture.projectId,
       pageId,
       stableKey: `negative-baseline.${String(index).padStart(3, '0')}`,
@@ -704,6 +704,7 @@ function shallowQualityInput(
           'document', 'fenced-code', 'heading', 'list', 'paragraph', 'table',
         ] as const),
         sourceIds: Object.freeze([source.sourceId]),
+        preferredUnitIds: Object.freeze([]),
       }),
       minimumDistinctSources: 1,
       generationOrder: index,
@@ -711,7 +712,7 @@ function shallowQualityInput(
     return Object.freeze({ ...candidate, blueprintDigest: digestHierarchyValue(candidate) });
   }));
   const outlineCandidate = Object.freeze({
-    schemaVersion: 'buildlore.wiki-outline.v1' as const,
+    schemaVersion: 'buildlore.wiki-outline.v2' as const,
     projectId: fixture.projectId,
     snapshotDigest,
     graphDigest: hierarchySha256('negative-baseline-graph'),
@@ -721,6 +722,7 @@ function shallowQualityInput(
     activationState: 'candidate' as const,
     rootPageId,
     blueprints,
+    reviewNotes: Object.freeze([]),
   });
   const outline: WikiOutlineV1 = Object.freeze({
     ...outlineCandidate,
@@ -787,7 +789,7 @@ function shallowQualityInput(
         citationIds: Object.freeze([unit.citation.citationId]),
       });
       const proposalCandidate = Object.freeze({
-        schemaVersion: 'buildlore.hierarchical-wiki-proposal.v1' as const,
+        schemaVersion: 'buildlore.hierarchical-wiki-proposal.v2' as const,
         projectId: fixture.projectId,
         pageId: blueprint.pageId,
         blueprintDigest: blueprint.blueprintDigest,
@@ -1032,6 +1034,8 @@ describe('hierarchical corpus contracts', () => {
       maxPartitionTasks: 256,
       maxEvidenceUnits: 64,
       maxEvidenceBytes: 262144,
+      maxEvidenceSourcesPerPage: 8,
+      maxEvidenceUnitsPerSource: 8,
     });
     expect(HIERARCHICAL_COMPILATION_LIMITS.maxSources)
       .toBe(SESSION_COMPILE_LIMITS.maxSources);

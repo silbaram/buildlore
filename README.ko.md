@@ -325,6 +325,16 @@ node dist/cli/bin.js compile hierarchy submit \
   --expect-exchange sha256:<exchange-digest> \
   --json
 
+# page hard-quality 실패는 run을 폐기하지 않습니다. status가 반환한 새 exchange로
+# 해당 page만 고치며 page별 재제출은 최대 세 번입니다.
+node dist/cli/bin.js compile hierarchy resubmit \
+  --project example \
+  --run run-<소문자-16진수-64자리> \
+  --page page-<소문자-16진수-64자리> \
+  --input handoffs/corrected-page-submission.json \
+  --expect-exchange sha256:<새-exchange-digest> \
+  --json
+
 # child synthesis를 명시적으로 검토한 뒤 통합 콘텐츠 diff와 품질을 검토합니다.
 node dist/cli/bin.js compile hierarchy child-review \
   --project example \
@@ -376,6 +386,9 @@ run을 Git에서 제외된 로컬 `.buildlore/hierarchy-runs/`에 보관하고, 
 결정론적으로 재생합니다. `review` 결과는 통합 콘텐츠 diff와 결정론적 품질 보고서를
 보여줄 뿐 candidate를 승인하지 않습니다. `approve`는 명시적인 사람의 결정을
 기록하지만 활성화, Git 게시 또는 암묵적 승인을 수행하지 않습니다.
+이전 계층 계약에서 생성된 미완료 run은 현재 계약으로 변환하지 않습니다. `status`는
+`policy-outdated`와 `start-new-run` 복구 동작을 반환합니다. 반면 이전 계약에서 이미
+활성화된 authority는 계속 읽을 수 있고 Markdown을 다시 materialize할 수 있습니다.
 
 이 흐름에서 BuildLore는 Codex, Claude, 모델 provider, agent SDK 또는 agent/provider
 하위 process를 실행하지 않습니다. Proposal을 직접 작성하거나 review를 자동 수락하거나 암묵적으로
@@ -384,9 +397,10 @@ run을 Git에서 제외된 로컬 `.buildlore/hierarchy-runs/`에 보관하고, 
 
 #### 라이브러리 API
 
-제품 수준 라이브러리 경계는
+purpose의 선택적 `wikiTitle`은 루트 위키 제목이 되며, 생략하면 등록된 프로젝트 표시
+이름을 사용합니다. 제품 수준 라이브러리 경계는
 `createHierarchicalWorkflowService({ hubRoot, knowledgeRoot })`입니다.
-`start/status/submit/childReview/review/finalize/approve` 메서드는 CLI와 같은 흐름을
+`start/status/submit/resubmit/childReview/review/finalize/approve` 메서드는 CLI와 같은 흐름을
 제공하면서 Git에서 제외된 프로젝트 격리 로컬 run을 저장하고 재생합니다. `approve`는
 정확한 `activationBundlePath`, approval digest와 `activationArgs`를 반환합니다. 사람이
 검토된 generation을 활성화하려는 경우에만 이 값을 별도 activation service에
@@ -397,7 +411,7 @@ run을 Git에서 제외된 로컬 `.buildlore/hierarchy-runs/`에 보관하고, 
 `prepare(...)`는 작성 목적, 정제된 evidence, 검토된 하위 문서 요약, 작성 지침과
 정확한 proposal 계약을 하나의 bounded JSON exchange로 반환합니다. 현재 agent에는
 이 exchange만 전달하고, agent가 반환한 versioned
-`buildlore.current-session-proposal-submission.v1` 응답을 `session.submit(...)`에
+`buildlore.current-session-proposal-submission.v2` 응답을 `session.submit(...)`에
 전달합니다. `prepare(...)`에는 같은 process에서 `createEvidencePack(...)`이 반환한
 원본 `EvidencePackV1`만 사용할 수 있으며, prepare 전에 pack을 JSON round-trip하면
 거부됩니다. Leaf부터 parent까지 하나의 service instance를 재사용해야 검증된 하위
@@ -406,6 +420,11 @@ snapshot·현재 sanitizer 정책 binding을 다시 검사하고 생성 문장�
 claim/proposal digest를 직접 계산합니다. 결과는
 게시 문서가 아니라 검토할 candidate와 generation receipt입니다. 공개 JSON 계약은
 `schemas/hierarchical-current-session.schema.json`입니다.
+Exchange v2는 실제 적용되는 rule code와 required/optional section guide를 제공합니다.
+응답은 모든 required section을 포함해야 하고 고유한 optional section은 최대 8개까지
+추가할 수 있으며 각 section에 사람이 읽는 `title`을 둘 수 있습니다. 실질적인 각
+문단은 citation을 포함하거나 선언된 grounded claim을 담아야 하며, claim·독립 요약·
+비범용 제목은 공통 의미 token 정책으로 검사됩니다.
 
 `createIntegratedWikiReviewSurface(...)`는 검증된 `{ exchange, result }` handoff만
 실제 outline, planning inventory, 링크 reconciliation, 결정론적 의미 품질 보고서,
@@ -456,6 +475,14 @@ node dist/cli/bin.js compile activate \
 materialization drift로만 보고되고 검색이나 semantic index 입력으로 채택되지 않습니다.
 활성화는 LLM 호출, embedding 실행, index 재구축, Git commit/push 또는 knowledge
 submodule pin을 수행하지 않습니다.
+
+기존 materialization이 변조되지 않았지만 status가 `renderer-outdated`를 보고하면 이미
+검증된 authority에서 파생 Markdown만 다시 생성할 수 있습니다. generation, review,
+approval 또는 semantic indexing을 반복하지 않으며 authority identity도 바꾸지 않습니다.
+
+```sh
+node dist/cli/bin.js compile activate --project example --rematerialize --json
+```
 
 ## 지식 검색 및 활용
 

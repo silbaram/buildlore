@@ -137,10 +137,12 @@ export function splitMarkdownStructures(body: string): readonly MarkdownBlock[] 
 function citationLocatorsForStructure(
   text: string,
   values: readonly ApprovedWikiCitationLocatorV1[],
+  structureKind: RetrievalStructureKind,
 ): readonly ApprovedWikiCitationLocatorV1[] {
+  if (structureKind === 'fenced-code') return Object.freeze([]);
   const byId = new Map(values.map((value) => [value.citationId, value]));
   const selected = new Map<string, ApprovedWikiCitationLocatorV1>();
-  const marker = /\[\^([a-z0-9]+(?:[._/-][a-z0-9]+)*)\]/gu;
+  const marker = /(?<!\\)\[\^(citation-[a-z0-9]+(?:-[a-z0-9]+)*)\]/gu;
   for (const match of text.matchAll(marker)) {
     const citationId = match[1];
     const locator = citationId === undefined ? undefined : byId.get(citationId);
@@ -317,7 +319,11 @@ export async function chunkApprovedWikiCorpus(
           throw new SemanticIndexError('SEMANTIC_INDEX_LIMIT_EXCEEDED', 'limit-exceeded');
         }
         const structure = block.text.normalize('NFC');
-        const citations = citationLocatorsForStructure(structure, section.citationLocators);
+        const citations = citationLocatorsForStructure(
+          structure,
+          section.citationLocators,
+          block.kind,
+        );
         const planningSegments = splitToPlanningBound(structure);
         let segmentOrdinal = 0;
         if (planningSegments.length === 0) {

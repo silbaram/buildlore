@@ -31,7 +31,9 @@ export const HIERARCHICAL_COMPILATION_LIMITS: HierarchicalCompilationLimitsV1 =
   Object.freeze({
     maxClusterMembers: 256,
     maxEvidenceBytes: 262144,
+    maxEvidenceSourcesPerPage: 8,
     maxEvidenceUnits: 64,
+    maxEvidenceUnitsPerSource: 8,
     maxPartitionTasks: 256,
     maxPlanBytes: 33554432,
     maxRelationCandidatesPerTask: 32,
@@ -222,7 +224,9 @@ export function parseHierarchicalCompilationPolicy(
   exactKeys(policy.limits, [
     'maxClusterMembers',
     'maxEvidenceBytes',
+    'maxEvidenceSourcesPerPage',
     'maxEvidenceUnits',
+    'maxEvidenceUnitsPerSource',
     'maxPartitionTasks',
     'maxPlanBytes',
     'maxRelationCandidatesPerTask',
@@ -253,6 +257,7 @@ Readonly<Record<string, unknown>> {
     excludedTopics: purpose.excludedTopics,
     outputLanguage: purpose.outputLanguage,
     requestedPageRoles: purpose.requestedPageRoles,
+    ...(purpose.wikiTitle === undefined ? {} : { wikiTitle: purpose.wikiTitle }),
   };
 }
 
@@ -267,6 +272,7 @@ export function createCompilationPurpose(input: CompilationPurposeInput): Compil
     excludedTopics: input.excludedTopics,
     outputLanguage: input.outputLanguage,
     requestedPageRoles: input.requestedPageRoles,
+    ...(input.wikiTitle === undefined ? {} : { wikiTitle: input.wikiTitle }),
   } as const;
   return parseCompilationPurpose({
     ...candidate,
@@ -280,7 +286,7 @@ export function parseCompilationPurpose(
 ): CompilationPurposeV1 {
   const projectId = project(expectedProjectId, 'unknown');
   const purpose = record(value, projectId);
-  exactKeys(purpose, [
+  const purposeKeys = [
     'audience',
     'excludedTopics',
     'goals',
@@ -291,7 +297,12 @@ export function parseCompilationPurpose(
     'requestedPageRoles',
     'schemaVersion',
     'scopeHints',
-  ], projectId);
+  ];
+  const actualPurposeKeys = Object.keys(purpose).sort();
+  const legacyPurposeKeys = [...purposeKeys].sort();
+  const titledPurposeKeys = [...purposeKeys, 'wikiTitle'].sort();
+  if (actualPurposeKeys.join('\0') !== legacyPurposeKeys.join('\0') &&
+      actualPurposeKeys.join('\0') !== titledPurposeKeys.join('\0')) invalid(projectId);
   if (purpose.schemaVersion !== COMPILATION_PURPOSE_SCHEMA_VERSION) invalid(projectId);
   const parsedWithoutDigest = Object.freeze({
     schemaVersion: COMPILATION_PURPOSE_SCHEMA_VERSION,
@@ -328,6 +339,9 @@ export function parseCompilationPurpose(
       maxText: 64,
       pattern: PORTABLE_IDENTIFIER_PATTERN,
       requireNonEmpty: true,
+    }),
+    ...(purpose.wikiTitle === undefined ? {} : {
+      wikiTitle: text(purpose.wikiTitle, projectId, { max: MAX_PURPOSE_TEXT }),
     }),
   });
   if (Buffer.byteLength(serializeCanonicalJson(parsedWithoutDigest), 'utf8') >

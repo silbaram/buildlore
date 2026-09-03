@@ -3,7 +3,11 @@ import {
   createTextUnit,
   hierarchySha256,
 } from './contracts.js';
-import { HierarchyContractError } from './errors.js';
+import {
+  HierarchyContractError,
+  HierarchicalWorkflowEvidenceInsufficientError,
+} from './errors.js';
+import { hierarchyTokens } from './tokens.js';
 import type {
   CorpusSnapshotV1,
   PageBlueprintV1,
@@ -14,7 +18,6 @@ import type {
 
 const MAXIMUM_UNIT_UTF8_BYTES = 16_384;
 const MAXIMUM_UNITS_PER_SOURCE = 64;
-const MAXIMUM_SELECTED_UNITS_PER_SOURCE = 2;
 const MAXIMUM_CODE_BLOCK_LINES = 24;
 
 const QUERY_STOP_WORDS = new Set([
@@ -45,6 +48,10 @@ interface BoundedBlock extends SourceBlock {
   readonly content: string;
   readonly endColumn: number;
   readonly startColumn: number;
+}
+
+interface HeadingBlock extends BoundedBlock {
+  readonly level: number;
 }
 
 interface RankedUnit {
@@ -104,6 +111,7 @@ function codeBlocks(lines: readonly string[]): readonly SourceBlock[] {
     let lineCount = 0;
     while (index < lines.length && (lines[index]?.trim() ?? '') !== '' &&
         lineCount < MAXIMUM_CODE_BLOCK_LINES) {
+      if (lineCount > 0 && isTopLevelDeclaration(lines[index] ?? '')) break;
       index += 1;
       lineCount += 1;
     }
@@ -114,6 +122,12 @@ function codeBlocks(lines: readonly string[]): readonly SourceBlock[] {
     }));
   }
   return Object.freeze(blocks);
+}
+
+function isTopLevelDeclaration(line: string): boolean {
+  if (/^\s/u.test(line)) return false;
+  return /^(?:(?:export|declare|public|private|protected|static|final|abstract|async)\s+)*(?:class|const|def|enum|fn|func|function|impl|interface|let|module|namespace|package|record|struct|trait|type|var)\b/u
+    .test(line);
 }
 
 function markdownBlocks(lines: readonly string[]): readonly SourceBlock[] {
@@ -161,8 +175,8 @@ function markdownBlocks(lines: readonly string[]): readonly SourceBlock[] {
   return Object.freeze(blocks);
 }
 
-function markdownHeadings(lines: readonly string[]): readonly BoundedBlock[] {
-  const headings: BoundedBlock[] = [];
+function markdownHeadings(lines: readonly string[]): readonly HeadingBlock[] {
+  const headings: HeadingBlock[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (line === undefined) continue;
@@ -170,6 +184,8 @@ function markdownHeadings(lines: readonly string[]): readonly BoundedBlock[] {
     const prefix = match?.[1];
     const rawLabel = match?.[2];
     if (prefix === undefined || rawLabel === undefined || rawLabel.length === 0) continue;
+    const level = /#{1,6}/u.exec(prefix)?.[0].length;
+    if (level === undefined) continue;
     const content = [...rawLabel].slice(0, 1_000).join('');
     const startColumn = scalarLength(prefix) + 1;
     headings.push(Object.freeze({
@@ -177,11 +193,31 @@ function markdownHeadings(lines: readonly string[]): readonly BoundedBlock[] {
       endColumn: startColumn + scalarLength(content) - 1,
       endLine: index + 1,
       kind: 'heading',
+      level,
       startColumn,
       startLine: index + 1,
     }));
   }
   return Object.freeze(headings);
+}
+
+function documentTitle(sourceRef: string): string {
+  const filename = sourceRef.split('/').at(-1) ?? sourceRef;
+  const withoutExtension = filename.replace(/\.[^.]+$/u, '');
+  const normalized = withoutExtension.replace(/[-_]+/gu, ' ').trim().normalize('NFC');
+  const title = [...(normalized.length > 0 ? normalized : filename)].slice(0, 1_000).join('');
+  return title.length > 0 ? title : 'Document';
+}
+
+function virtualDocumentBlock(sourceRef: string): BoundedBlock {
+  return Object.freeze({
+    content: documentTitle(sourceRef),
+    endColumn: 1,
+    endLine: 1,
+    kind: 'document',
+    startColumn: 1,
+    startLine: 1,
+  });
 }
 
 function boundedPrefix(value: string): string {
@@ -224,27 +260,9 @@ function boundBlock(lines: readonly string[], block: SourceBlock): BoundedBlock 
   });
 }
 
-function englishTokenVariants(token: string): readonly string[] {
-  if (!/^[a-z]+$/u.test(token) || token.length < 5) return Object.freeze([token]);
-  const variants = new Set([token]);
-  if (token.endsWith('ies') && token.length > 5) variants.add(`${token.slice(0, -3)}y`);
-  if (token.endsWith('s') && !token.endsWith('ss')) variants.add(token.slice(0, -1));
-  if (token.endsWith('al') && token.length > 6) variants.add(token.slice(0, -2));
-  if (token.endsWith('ing') && token.length > 7) variants.add(token.slice(0, -3));
-  if (token.endsWith('ed') && token.length > 6) variants.add(token.slice(0, -2));
-  return Object.freeze([...variants]);
-}
-
 function contentTokens(value: string): readonly string[] {
-  const separated = value.normalize('NFC')
-    .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
-    .replace(/([A-Za-z0-9])(\P{ASCII})/gu, '$1 $2')
-    .replace(/(\P{ASCII})([A-Za-z0-9])/gu, '$1 $2')
-    .toLowerCase();
-  const tokens = separated.match(/[\p{L}\p{N}]+/gu) ?? [];
-  return Object.freeze(tokens
-    .filter((token) => scalarLength(token) > 1 && !QUERY_STOP_WORDS.has(token))
-    .flatMap(englishTokenVariants));
+  return Object.freeze(hierarchyTokens(value)
+    .filter((token) => scalarLength(token) > 1 && !QUERY_STOP_WORDS.has(token)));
 }
 
 function isSubstantive(block: BoundedBlock): boolean {
@@ -253,18 +271,54 @@ function isSubstantive(block: BoundedBlock): boolean {
   return tokens.length >= minimumTokens && Buffer.byteLength(block.content, 'utf8') >= 24;
 }
 
-function representativeBlocks(
-  blocks: readonly BoundedBlock[],
+function representativeBlocks<T extends BoundedBlock>(
+  blocks: readonly T[],
   maximum: number,
-): readonly BoundedBlock[] {
+): readonly T[] {
   if (blocks.length <= maximum) return Object.freeze([...blocks]);
-  if (maximum === 1) return Object.freeze([blocks[0] as BoundedBlock]);
-  const selected = new Map<number, BoundedBlock>();
+  if (maximum === 1) {
+    const first = blocks[0];
+    return first === undefined ? Object.freeze([]) : Object.freeze([first]);
+  }
+  const selected = new Map<number, T>();
   for (let index = 0; index < maximum; index += 1) {
     const sourceIndex = Math.floor(index * (blocks.length - 1) / (maximum - 1));
     const block = blocks[sourceIndex];
     if (block !== undefined) selected.set(sourceIndex, block);
   }
+  return Object.freeze([...selected.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map((entry) => entry[1]));
+}
+
+function representativeMarkdownBlocks(
+  blocks: readonly BoundedBlock[],
+  topicHeadings: readonly HeadingBlock[],
+  maximum: number,
+): readonly BoundedBlock[] {
+  if (maximum < 1) return Object.freeze([]);
+  if (blocks.length <= maximum) return Object.freeze([...blocks]);
+  const selected = new Map<number, BoundedBlock>();
+  const blockIndex = new Map(blocks.map((block, index) => [block, index]));
+  const add = (block: BoundedBlock | undefined): void => {
+    if (block === undefined || selected.size >= maximum) return;
+    const index = blockIndex.get(block);
+    if (index !== undefined) selected.set(index, block);
+  };
+  for (let offset = 0; offset < 2; offset += 1) {
+    for (let index = 0; index < topicHeadings.length; index += 1) {
+      const heading = topicHeadings[index];
+      const next = topicHeadings[index + 1];
+      add(blocks.filter((block) =>
+        heading !== undefined && block.startLine > heading.startLine &&
+        (next === undefined || block.startLine < next.startLine))[offset]);
+    }
+  }
+  for (const block of blocks) {
+    if (block.kind === 'list' || block.kind === 'table') add(block);
+  }
+  for (const block of representativeBlocks(blocks, maximum)) add(block);
+  for (const block of blocks) add(block);
   return Object.freeze([...selected.entries()]
     .sort((left, right) => left[0] - right[0])
     .map((entry) => entry[1]));
@@ -293,16 +347,24 @@ export function createSubstantiveHierarchyTextUnits(
       .filter((block): block is BoundedBlock => block !== null && isSubstantive(block));
     if (availableSubstantive.length < 1) invalid(projectId);
     const headings = source.sourceKind === 'code' ? Object.freeze([]) : markdownHeadings(lines);
-    const maximumBodyUnits = headings.length === 0
-      ? maximumPerSource
-      : Math.max(1, Math.floor(maximumPerSource / 2));
-    const substantive = representativeBlocks(availableSubstantive, maximumBodyUnits);
-    const contextualHeadings = new Map<number, BoundedBlock>();
-    for (const block of substantive) {
-      const heading = headings.findLast((candidate) => candidate.startLine < block.startLine);
-      if (heading !== undefined) contextualHeadings.set(heading.startLine, heading);
-    }
-    const selectedBlocks = [...contextualHeadings.values(), ...substantive]
+    const documentHeading = headings.find((heading) => heading.level === 1);
+    const document = documentHeading === undefined
+      ? virtualDocumentBlock(source.sourceRef)
+      : Object.freeze({ ...documentHeading, kind: 'document' as const });
+    const topicHeadings = headings.filter((heading) => heading.level === 2);
+    const maximumHeadingUnits = Math.max(0, Math.floor((maximumPerSource - 1) / 3));
+    const retainedTopicHeadings = representativeBlocks(
+      topicHeadings,
+      Math.min(topicHeadings.length, maximumHeadingUnits),
+    );
+    const maximumBodyUnits = Math.max(
+      1,
+      maximumPerSource - 1 - retainedTopicHeadings.length,
+    );
+    const substantive = source.sourceKind === 'code'
+      ? representativeBlocks(availableSubstantive, maximumBodyUnits)
+      : representativeMarkdownBlocks(availableSubstantive, topicHeadings, maximumBodyUnits);
+    const selectedBlocks = [document, ...retainedTopicHeadings, ...substantive]
       .sort((left, right) => left.startLine - right.startLine ||
         left.startColumn - right.startColumn)
       .slice(0, maximumPerSource);
@@ -323,6 +385,9 @@ export function createSubstantiveHierarchyTextUnits(
         sourceId: source.sourceId,
         sourceRef: source.sourceRef,
         sourceRevision: source.sourceRevision,
+        ...((block.kind === 'heading' || block.kind === 'document')
+          ? { topicLabel: block.content }
+          : {}),
       }));
     }
   }
@@ -406,11 +471,14 @@ export function selectRelevantHierarchyEvidenceUnitIds(
   const sourceById = new Map(sourceValues.map((source) => [source.sourceId, source]));
   if (sourceById.size !== sourceValues.length) invalid(projectId);
   const query = queryProfile(blueprint);
-  if (query.primary.size === 0 || query.weights.size === 0) invalid(projectId);
+  if (query.weights.size === 0) invalid(projectId);
+  const preferredUnitIds = blueprint.evidenceScope.preferredUnitIds ?? Object.freeze([]);
+  const preferredOrder = new Map(preferredUnitIds.map((unitId, index) => [unitId, index]));
+  if (preferredOrder.size !== preferredUnitIds.length) invalid(projectId);
   const bySource = new Map<string, RankedUnit[]>();
   for (const unit of snapshot.textUnits) {
     if (!blueprint.evidenceScope.sourceIds.includes(unit.sourceId) ||
-        !blueprint.evidenceScope.allowedUnitKinds.includes(unit.kind) || unit.kind === 'heading') {
+        !blueprint.evidenceScope.allowedUnitKinds.includes(unit.kind) || unit.kind === 'document') {
       continue;
     }
     const source = sourceById.get(unit.sourceId);
@@ -419,10 +487,12 @@ export function selectRelevantHierarchyEvidenceUnitIds(
     const content = extractHierarchyTextUnitContent(source.body, unit.range, projectId);
     if (hierarchySha256(content) !== unit.contentDigest) invalid(projectId);
     const tokens = new Set(contentTokens(content));
-    const heading = snapshot.textUnits.filter((candidate) =>
-      candidate.sourceId === unit.sourceId && candidate.kind === 'heading' &&
-      candidate.range.startLine < unit.range.startLine)
-      .sort((left, right) => right.range.startLine - left.range.startLine)[0];
+    const heading = unit.kind === 'heading'
+      ? unit
+      : snapshot.textUnits.filter((candidate) =>
+        candidate.sourceId === unit.sourceId && candidate.kind === 'heading' &&
+        candidate.range.startLine < unit.range.startLine)
+        .sort((left, right) => right.range.startLine - left.range.startLine)[0];
     const contextTokens = heading === undefined
       ? new Set<string>()
       : new Set(contentTokens(extractHierarchyTextUnitContent(source.body, heading.range, projectId)));
@@ -467,7 +537,11 @@ export function selectRelevantHierarchyEvidenceUnitIds(
       sourceId,
       units: Object.freeze(units),
     });
-  }).filter((source) => source.bestPrimaryRelevance > 0)
+  });
+  const aggregatePage = blueprint.role === 'overview' || blueprint.role === 'topic-group';
+  const eligibleSources = rankedSources.filter((source) =>
+    aggregatePage || source.bestPrimaryRelevance > 0 ||
+      source.units.some((ranked) => preferredOrder.has(ranked.unit.unitId)))
     .sort((left, right) => {
       if (left.bestPrimaryRelevance !== right.bestPrimaryRelevance) {
         return right.bestPrimaryRelevance - left.bestPrimaryRelevance;
@@ -481,14 +555,39 @@ export function selectRelevantHierarchyEvidenceUnitIds(
       }
       return left.sourceId < right.sourceId ? -1 : left.sourceId > right.sourceId ? 1 : 0;
     });
-  const selectedSources = rankedSources.slice(0, blueprint.minimumDistinctSources);
-  if (selectedSources.length !== blueprint.minimumDistinctSources) invalid(projectId);
-  const selectedUnitIds = selectedSources.flatMap((source) => source.units
-    .filter((ranked) => ranked.primaryRelevance > 0)
-    .slice(0, MAXIMUM_SELECTED_UNITS_PER_SOURCE)
-    .map((ranked) => ranked.unit.unitId));
-  if (selectedUnitIds.length < blueprint.minimumDistinctSources ||
-      selectedUnitIds.length > HIERARCHICAL_COMPILATION_LIMITS.maxEvidenceUnits ||
-      new Set(selectedUnitIds).size !== selectedUnitIds.length) invalid(projectId);
-  return Object.freeze(selectedUnitIds);
+  const selected = new Set<string>();
+  const selectedSources = new Set<string>();
+  const sourceUnitCounts = new Map<string, number>();
+  const trySelect = (unit: TextUnitV1): void => {
+    if (selected.has(unit.unitId) ||
+        selected.size >= HIERARCHICAL_COMPILATION_LIMITS.maxEvidenceUnits) return;
+    const existingCount = sourceUnitCounts.get(unit.sourceId) ?? 0;
+    if (existingCount >= HIERARCHICAL_COMPILATION_LIMITS.maxEvidenceUnitsPerSource ||
+        (!selectedSources.has(unit.sourceId) &&
+          selectedSources.size >= HIERARCHICAL_COMPILATION_LIMITS.maxEvidenceSourcesPerPage)) {
+      return;
+    }
+    selected.add(unit.unitId);
+    selectedSources.add(unit.sourceId);
+    sourceUnitCounts.set(unit.sourceId, existingCount + 1);
+  };
+  const unitById = new Map(snapshot.textUnits.map((unit) => [unit.unitId, unit]));
+  for (const unitId of preferredUnitIds) {
+    const unit = unitById.get(unitId);
+    if (unit === undefined || unit.kind === 'document' ||
+        !blueprint.evidenceScope.sourceIds.includes(unit.sourceId) ||
+        !blueprint.evidenceScope.allowedUnitKinds.includes(unit.kind)) invalid(projectId);
+    trySelect(unit);
+  }
+  for (const source of eligibleSources) {
+    for (const ranked of source.units) trySelect(ranked.unit);
+  }
+  if (selected.size === 0 || selectedSources.size < blueprint.minimumDistinctSources) {
+    throw new HierarchicalWorkflowEvidenceInsufficientError(
+      blueprint.pageId,
+      blueprint.title,
+      Object.freeze([...query.primary].sort()),
+    );
+  }
+  return Object.freeze([...selected]);
 }

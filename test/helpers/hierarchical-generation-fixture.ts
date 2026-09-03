@@ -47,8 +47,16 @@ import { writeSecurityPolicy } from '../fixtures/security-policy.js';
 const QUESTION = 'How does local evidence remain reviewable before Wiki activation?';
 const INSTRUCTIONS = Object.freeze([
   Object.freeze({
-    code: 'cite-substantive-claims',
-    text: 'Bind every substantive claim to allowed evidence unit and citation identifiers.',
+    code: 'cite-each-paragraph',
+    text: 'Give every substantive Markdown paragraph a citation marker or a declared claim.',
+  }),
+  Object.freeze({
+    code: 'ground-claims-25pct',
+    text: 'Bind each claim to evidence whose weighted shared-token coverage is at least 25 percent.',
+  }),
+  Object.freeze({
+    code: 'optional-sections-allowed',
+    text: 'You may add at most eight unique optional sections after all required sections.',
   }),
   Object.freeze({
     code: 'preserve-evidence-bytes',
@@ -67,12 +75,24 @@ const INSTRUCTIONS = Object.freeze([
     text: 'Return only a candidate submission; do not claim review, approval, or activation.',
   }),
   Object.freeze({
+    code: 'summary-from-claims',
+    text: 'Write an independent summary with at least 50 percent token coverage from grounded claims.',
+  }),
+  Object.freeze({
+    code: 'title-may-paraphrase',
+    text: 'You may paraphrase a non-generic title while retaining at least 60 percent of its tokens.',
+  }),
+  Object.freeze({
     code: 'use-required-sections',
-    text: 'Return every required section exactly once and do not invent section identifiers.',
+    text: 'Return every required section exactly once; optional section identifiers must be unique.',
   }),
   Object.freeze({
     code: 'use-required-wikilinks',
     text: 'Return exactly the required Wiki page identifiers and no undeclared links.',
+  }),
+  Object.freeze({
+    code: 'write-in-output-language',
+    text: 'Write human-facing prose and optional section titles in the requested output language.',
   }),
 ]);
 const REQUIRED_SUBMISSION_PROPERTIES = Object.freeze([
@@ -131,7 +151,7 @@ function createBlueprint(
   }>,
 ): PageBlueprintV1 {
   const candidate = Object.freeze({
-    schemaVersion: 'buildlore.page-blueprint.v1' as const,
+    schemaVersion: 'buildlore.page-blueprint.v2' as const,
     projectId,
     pageId: pageId(projectId, purposeDigest, input.stableKey),
     stableKey: input.stableKey,
@@ -148,6 +168,7 @@ function createBlueprint(
       relationSetDigest: graph.relationSetDigest,
       allowedUnitKinds: ALL_UNIT_KINDS,
       sourceIds: Object.freeze([...input.sourceIds].sort()),
+      preferredUnitIds: Object.freeze([]),
     }),
     minimumDistinctSources: 1,
     generationOrder: input.generationOrder,
@@ -286,7 +307,7 @@ function createCore(
     },
   );
   const outlineBasis = Object.freeze({
-    schemaVersion: 'buildlore.wiki-outline.v1' as const,
+    schemaVersion: 'buildlore.wiki-outline.v2' as const,
     projectId,
     snapshotDigest: snapshot.snapshotDigest,
     graphDigest: graph.graphDigest,
@@ -296,6 +317,7 @@ function createCore(
     activationState: 'candidate' as const,
     rootPageId,
     blueprints: Object.freeze([leaf, root]),
+    reviewNotes: Object.freeze([]),
   });
   const outline = Object.freeze({
     ...outlineBasis,
@@ -395,7 +417,7 @@ function createExchange(
   request: CurrentSessionGenerationRequestV1,
 ): CurrentSessionGenerationExchangeV1 {
   const candidate = Object.freeze({
-    schemaVersion: 'buildlore.current-session-generation-exchange.v1' as const,
+    schemaVersion: 'buildlore.current-session-generation-exchange.v2' as const,
     projectId: core.projectId,
     pageId: blueprint.pageId,
     purposeDigest: core.purpose.purposeDigest,
@@ -410,14 +432,31 @@ function createExchange(
       role: blueprint.role,
       keyQuestions: blueprint.keyQuestions,
       minimumDistinctSources: blueprint.minimumDistinctSources,
+      sectionGuide: Object.freeze([
+        ...blueprint.requiredSections.map((sectionId) => Object.freeze({
+          sectionId,
+          requirement: 'required' as const,
+          description: `Required ${sectionId} content grounded in the supplied evidence.`,
+        })),
+        ...[
+          ['examples', 'Concrete evidence-backed examples that help the reader apply this page.'],
+          ['limitations', 'Known evidence-backed limits or boundaries of the described behavior.'],
+          ['maintenance-notes', 'Evidence-backed notes useful to future maintainers.'],
+        ].filter(([sectionId]) => !blueprint.requiredSections.includes(sectionId as string))
+          .map(([sectionId, description]) => Object.freeze({
+            sectionId: sectionId as string,
+            requirement: 'optional' as const,
+            description: description as string,
+          })),
+      ]),
     }),
     request,
     evidencePack: pack,
     instructions: INSTRUCTIONS,
     proposalContract: Object.freeze({
-      schemaVersion: 'buildlore.current-session-proposal-submission.v1' as const,
+      schemaVersion: 'buildlore.current-session-proposal-submission.v2' as const,
       requiredProperties: REQUIRED_SUBMISSION_PROPERTIES,
-      sectionProperties: Object.freeze(['sectionId', 'body'] as const),
+      sectionProperties: Object.freeze(['sectionId', 'title', 'body'] as const),
       claimProperties: Object.freeze(['text', 'evidenceUnitIds', 'citationIds'] as const),
       citationMarkerSyntax: '[^<citationId>]' as const,
       wikilinkSyntax: '[[<pageId>]]' as const,
@@ -431,6 +470,7 @@ function createExchange(
       providerUsed: null,
       processSpawned: false as const,
     }),
+    truncatedUnitCount: 0,
   });
   return Object.freeze({ ...candidate, exchangeDigest: digestHierarchyValue(candidate) });
 }
@@ -614,7 +654,7 @@ function currentSessionSubmission(
   exchange: CurrentSessionGenerationExchangeV1,
 ): CurrentSessionProposalSubmissionV1 {
   return Object.freeze({
-    schemaVersion: 'buildlore.current-session-proposal-submission.v1',
+    schemaVersion: 'buildlore.current-session-proposal-submission.v2',
     projectId: exchange.projectId,
     pageId: exchange.pageId,
     exchangeDigest: exchange.exchangeDigest,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://buildlore.local/schemas/hierarchical-current-session.schema.json",
-  "title": "BuildLore Agent Session and Authorized External Wiki Generation Contracts v1",
+  "title": "BuildLore Agent Session and Authorized External Wiki Generation Contracts v2",
   "oneOf": [
     { "$ref": "#/$defs/generationExchange" },
     { "$ref": "#/$defs/proposalSubmission" },
@@ -28,11 +28,12 @@
         "instructions",
         "proposalContract",
         "boundary",
+        "truncatedUnitCount",
         "exchangeDigest"
       ],
       "properties": {
         "schemaVersion": {
-          "const": "buildlore.current-session-generation-exchange.v1"
+          "const": "buildlore.current-session-generation-exchange.v2"
         },
         "projectId": {
           "type": "string",
@@ -64,7 +65,8 @@
             "title",
             "role",
             "keyQuestions",
-            "minimumDistinctSources"
+            "minimumDistinctSources",
+            "sectionGuide"
           ],
           "properties": {
             "audience": {
@@ -147,6 +149,33 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 4096
+            },
+            "sectionGuide": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 35,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["sectionId", "requirement", "description"],
+                "properties": {
+                  "sectionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+                  },
+                  "requirement": { "enum": ["optional", "required"] },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "x-buildlore-normalization": "NFC"
+                  }
+                }
+              },
+              "x-buildlore-uniqueBy": "sectionId"
             }
           }
         },
@@ -158,8 +187,8 @@
         },
         "instructions": {
           "type": "array",
-          "minItems": 7,
-          "maxItems": 7,
+          "minItems": 12,
+          "maxItems": 12,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -167,13 +196,18 @@
             "properties": {
               "code": {
                 "enum": [
-                  "cite-substantive-claims",
+                  "cite-each-paragraph",
+                  "ground-claims-25pct",
+                  "optional-sections-allowed",
                   "preserve-evidence-bytes",
                   "render-citation-markers",
                   "render-wikilinks",
                   "submit-candidate-only",
+                  "summary-from-claims",
+                  "title-may-paraphrase",
                   "use-required-sections",
-                  "use-required-wikilinks"
+                  "use-required-wikilinks",
+                  "write-in-output-language"
                 ]
               },
               "text": {
@@ -202,7 +236,7 @@
           ],
           "properties": {
             "schemaVersion": {
-              "const": "buildlore.current-session-proposal-submission.v1"
+              "const": "buildlore.current-session-proposal-submission.v2"
             },
             "requiredProperties": {
               "type": "array",
@@ -221,7 +255,7 @@
             },
             "sectionProperties": {
               "type": "array",
-              "const": ["sectionId", "body"]
+              "const": ["sectionId", "title", "body"]
             },
             "claimProperties": {
               "type": "array",
@@ -251,6 +285,7 @@
             "processSpawned": { "const": false }
           }
         },
+        "truncatedUnitCount": { "type": "integer", "minimum": 0, "maximum": 64 },
         "exchangeDigest": {
           "type": "string",
           "pattern": "^sha256:[a-f0-9]{64}$"
@@ -276,7 +311,7 @@
       ],
       "properties": {
         "schemaVersion": {
-          "const": "buildlore.current-session-proposal-submission.v1"
+          "const": "buildlore.current-session-proposal-submission.v2"
         },
         "projectId": {
           "type": "string",
@@ -323,6 +358,12 @@
                 "minLength": 1,
                 "maxLength": 64,
                 "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "x-buildlore-normalization": "NFC"
               },
               "body": {
                 "type": "string",
@@ -492,6 +533,7 @@
         "snapshotDigest",
         "sanitizerPolicyDigest",
         "generationOrder",
+        "generationAttempt",
         "writingBrief",
         "instructions",
         "requiredSections",
@@ -522,6 +564,7 @@
           "pattern": "^sha256:[a-f0-9]{64}$"
         },
         "generationOrder": { "type": "integer", "minimum": 0, "maximum": 96 },
+        "generationAttempt": { "type": "integer", "minimum": 0, "maximum": 3 },
         "writingBrief": { "$ref": "#/$defs/generationExchange/properties/writingBrief" },
         "instructions": { "$ref": "#/$defs/generationExchange/properties/instructions" },
         "requiredSections": {
@@ -568,7 +611,7 @@
                 "wikilinks"
               ]
             },
-            "sectionProperties": { "const": ["sectionId", "body"] },
+            "sectionProperties": { "const": ["sectionId", "title", "body"] },
             "claimProperties": { "const": ["text", "evidenceUnitIds", "citationIds"] },
             "citationMarkerSyntax": { "const": "[^<citationId>]" },
             "wikilinkSyntax": { "const": "[[<pageId>]]" },

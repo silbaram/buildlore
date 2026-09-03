@@ -9,6 +9,8 @@ import {
   type CliFailureResult,
   type CliSuccessResult,
 } from '../src/cli/index.js';
+import { HierarchicalWorkflowRunStoreError } from
+  '../src/cli/hierarchical-run-store.js';
 import {
   CompilerOperationError,
   HierarchyContractError,
@@ -29,7 +31,7 @@ import { WikiOperationError } from '../src/wiki/errors.js';
 describe('CLI presentation and exit taxonomy', () => {
   it('documents the current-session hierarchy handoff without implying approval activates', () => {
     for (const command of [
-      'start', 'status', 'submit', 'child-review', 'review', 'finalize', 'approve',
+      'start', 'status', 'submit', 'resubmit', 'child-review', 'review', 'finalize', 'approve',
     ]) {
       expect(HELP_TEXT).toContain(`buildlore compile hierarchy ${command}`);
     }
@@ -49,6 +51,24 @@ describe('CLI presentation and exit taxonomy', () => {
       ok: false,
       projectId: 'alpha',
     });
+  });
+
+  it('reports an old hierarchy run as policy-outdated with start-new-run recovery', () => {
+    const failure = mapCliError(
+      new HierarchicalWorkflowRunStoreError('HIERARCHICAL_WORKFLOW_RUN_POLICY_OUTDATED'),
+      { command: 'compile.hierarchy.status', projectId: 'alpha' },
+    );
+
+    expect(failure).toMatchObject({
+      data: { recoveryAction: 'start-new-run', state: 'policy-outdated' },
+      errors: [{
+        code: 'HIERARCHICAL_WORKFLOW_RUN_POLICY_OUTDATED',
+        reasonCode: 'policy-outdated',
+      }],
+      exitCode: 3,
+      ok: false,
+    });
+    expect(renderCliResult(failure, 'human').message).toContain('outcome: policy-outdated\n');
   });
 
   it('preserves possible Wiki export side effects as a partial failure', () => {

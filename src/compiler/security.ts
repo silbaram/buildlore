@@ -217,6 +217,10 @@ async function listGeneratedFiles(workspace: string, directory: '.llmwiki' | 'wi
     )) {
       if (entry.isSymbolicLink()) return denied();
       const path = join(current, entry.name);
+      if (entry.isDirectory() && directory === '.llmwiki' && current === root &&
+          entry.name === 'buildlore-hierarchy') {
+        continue;
+      }
       if (entry.isDirectory()) pending.push(path);
       else if (entry.isFile() && SAFE_GENERATED_EXTENSIONS.has(extname(entry.name))) files.push(path);
       else if (!entry.isFile()) return denied();

@@ -39,7 +39,7 @@ function blueprint(
   generationOrder: number,
 ): PageBlueprintV1 {
   const candidate = Object.freeze({
-    schemaVersion: 'buildlore.page-blueprint.v1',
+    schemaVersion: 'buildlore.page-blueprint.v2',
     projectId: PROJECT_ID,
     pageId: id,
     stableKey: `quality.${String(generationOrder)}`,
@@ -58,6 +58,7 @@ function blueprint(
         'document', 'fenced-code', 'heading', 'list', 'paragraph', 'table',
       ] as const),
       sourceIds: Object.freeze([sourceId('a'), sourceId('b')].sort()),
+      preferredUnitIds: Object.freeze([]),
     }),
     minimumDistinctSources: 2,
     generationOrder,
@@ -203,7 +204,7 @@ function proposal(
   const secondMarker = `[^${second.citation.citationId}]`;
   const linkMarkers = requiredLinks(page).map((id) => `[[${id}]]`).join(' ');
   return canonicalProposal({
-    schemaVersion: 'buildlore.hierarchical-wiki-proposal.v1',
+    schemaVersion: 'buildlore.hierarchical-wiki-proposal.v2',
     projectId: PROJECT_ID,
     pageId: page.pageId,
     blueprintDigest: page.blueprintDigest,
@@ -260,7 +261,7 @@ function qualityFixture(betaRole = 'architecture'): QualityFixture {
     packs[index] as EvidencePackV1,
   ));
   const outlineCandidate = Object.freeze({
-    schemaVersion: 'buildlore.wiki-outline.v1',
+    schemaVersion: 'buildlore.wiki-outline.v2',
     projectId: PROJECT_ID,
     snapshotDigest: digest('snapshot'),
     graphDigest: digest('graph'),
@@ -270,6 +271,7 @@ function qualityFixture(betaRole = 'architecture'): QualityFixture {
     activationState: 'candidate',
     rootPageId: ROOT,
     blueprints: Object.freeze(pages),
+    reviewNotes: Object.freeze([]),
   });
   const outline: WikiOutlineV1 = Object.freeze({
     ...outlineCandidate,
@@ -496,7 +498,7 @@ describe('deterministic semantic quality gate', () => {
       sections: Object.freeze(first.sections.map((section, index) => index === 0
         ? Object.freeze({
             ...section,
-            body: `${section.body}\nThis additional assertion has no evidence claim or citation mapping.`,
+            body: `${section.body}\n\nThis additional assertion has no evidence claim or citation mapping.`,
           })
         : section)),
     });
@@ -511,14 +513,84 @@ describe('deterministic semantic quality gate', () => {
     expect(result.corpus.eligibleForApproval).toBe(false);
   });
 
+  it('accepts paraphrased titles, independent summaries, cited prose, and optional sections', () => {
+    const value = qualityFixture();
+    const first = value.proposals[0] as HierarchicalWikiProposalV1;
+    const citation = (value.packs[0] as EvidencePackV1).units[0]?.citation.citationId;
+    if (citation === undefined) throw new Error('Missing fixture citation.');
+    const natural = canonicalProposal({
+      ...first,
+      title: 'Quality 0 knowledge',
+      summary: 'Grounded harbor sanitizer evidence explains the verified boundary.',
+      sections: Object.freeze([
+        ...first.sections.map((section, index) => index === 0
+          ? Object.freeze({
+              ...section,
+              body: `${section.body} This paragraph also explains why maintainers can rely ` +
+                'on the verified local boundary.',
+            })
+          : section),
+        Object.freeze({
+          sectionId: 'maintenance-notes',
+          body: `Maintainers can trace this supporting explanation to local evidence ` +
+            `without copying a claim verbatim. [^${citation}]`,
+        }),
+      ]),
+    });
+    const result = evaluateSemanticQuality({
+      outline: value.outline,
+      proposals: [natural, ...value.proposals.slice(1)],
+      evidencePacks: value.packs,
+      reconciliation: value.reconciliation,
+    }, PROJECT_ID);
+    const report = result.pages.find((page) => page.pageId === natural.pageId);
+    expect(report).toMatchObject({
+      hardQualityPassed: true,
+      optionalSectionCount: 1,
+      summaryGrounded: true,
+      titleGrounded: true,
+      unsupportedParagraphCount: 0,
+    });
+    expect(report?.summaryGroundingBasisPoints).toBeGreaterThanOrEqual(5_000);
+    expect(report?.titleGroundingBasisPoints).toBeGreaterThanOrEqual(6_000);
+    expect(first.claims.every((claim) => claim.text !== natural.summary)).toBe(true);
+  });
+
+  it('rejects more than eight optional sections', () => {
+    const value = qualityFixture();
+    const first = value.proposals[0] as HierarchicalWikiProposalV1;
+    const excessive = canonicalProposal({
+      ...first,
+      sections: Object.freeze([
+        ...first.sections,
+        ...Array.from({ length: 9 }, (_, index) => Object.freeze({
+          sectionId: `optional-${String(index + 1)}`,
+          body: 'Brief optional note.',
+        })),
+      ]),
+    });
+    const result = evaluateSemanticQuality({
+      outline: value.outline,
+      proposals: [excessive, ...value.proposals.slice(1)],
+      evidencePacks: value.packs,
+      reconciliation: value.reconciliation,
+    }, PROJECT_ID);
+    expect(result.pages.find((page) => page.pageId === excessive.pageId)?.reasonCodes)
+      .toContain('optional-section-limit-exceeded');
+  });
+
   it('binds every deterministic threshold into the policy digest', () => {
     expect(SEMANTIC_QUALITY_POLICY).toMatchObject({
-      schemaVersion: 'buildlore.semantic-quality-policy.v1',
+      schemaVersion: 'buildlore.semantic-quality-policy.v2',
       thresholds: {
         minimumSectionCoverageBasisPoints: 10_000,
         minimumQuestionCoverageBasisPoints: 10_000,
         minimumClaimGroundingBasisPoints: 10_000,
         minimumClaimEvidenceSupportBasisPoints: 10_000,
+        minimumClaimTokenOverlapBasisPoints: 2_500,
+        minimumSummaryTokenOverlapBasisPoints: 5_000,
+        minimumTitleTokenOverlapBasisPoints: 6_000,
+        maximumOptionalSections: 8,
         maximumNearDuplicateBasisPoints: 8_500,
         maximumOrphanBasisPoints: 500,
         maximumUncategorizedPages: 0,

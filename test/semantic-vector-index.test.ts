@@ -136,7 +136,9 @@ function page(
   body: string,
   revisionCharacter: string,
 ): ApprovedWikiRetrievalPageV1 {
-  const citationIds = [...body.matchAll(/\[\^([a-z0-9]+(?:[._/-][a-z0-9]+)*)\]/gu)]
+  const citationIds = [...body.matchAll(
+    /(?<!\\)\[\^(citation-[a-z0-9]+(?:-[a-z0-9]+)*)\]/gu,
+  )]
     .flatMap((match) => match[1] === undefined ? [] : [match[1]]);
   const uniqueCitationIds = [...new Set(citationIds)];
   return Object.freeze({
@@ -251,6 +253,69 @@ describe('project-scoped flat-file semantic index', () => {
       'Atomic semantic storage',
     );
   });
+
+  it('[SFM-SC-01][SFM-SC-03] distinguishes evidence citations from Markdown examples',
+    async () => {
+      const body = `Ordinary [^id], escaped \\[^citation-escaped], and approved
+[^citation-evidence] markers coexist.
+
+\`\`\`md
+[^citation-code-example]
+\`\`\``;
+      const base = page('semantic-fixture/footnotes', body, 'a');
+      const section = base.sections[0];
+      if (section === undefined) throw new Error('Fixture is incomplete.');
+      const value = corpus([Object.freeze({
+        ...base,
+        sections: Object.freeze([Object.freeze({
+          ...section,
+          citationLocators: Object.freeze([Object.freeze({
+            citationId: 'citation-evidence',
+            sourceId: 'source-semantic-fixture-footnotes',
+          })]),
+        })]),
+      })], 'b');
+      const result = await chunkApprovedWikiCorpus(value, PROJECT_ID, (texts) =>
+        Promise.resolve(texts.map((text) => Math.max(1, Array.from(text).length))));
+
+      expect(result.chunks).toHaveLength(2);
+      expect(result.chunks[0]?.chunk.citationLocators).toEqual([{
+        citationId: 'citation-evidence',
+        sourceId: 'source-semantic-fixture-footnotes',
+      }]);
+      expect(result.chunks[1]?.chunk).toMatchObject({
+        citationLocators: [],
+        structureKind: 'fenced-code',
+      });
+    });
+
+  it('[SFM-SC-02] rejects an unresolved reserved evidence citation without reflecting text',
+    async () => {
+      const base = page(
+        'semantic-fixture/unresolved',
+        'Sensitive-looking prose uses [^citation-missing].',
+        'a',
+      );
+      const section = base.sections[0];
+      if (section === undefined) throw new Error('Fixture is incomplete.');
+      const value = corpus([Object.freeze({
+        ...base,
+        sections: Object.freeze([Object.freeze({
+          ...section,
+          citationLocators: Object.freeze([Object.freeze({
+            citationId: 'citation-approved',
+            sourceId: 'source-semantic-fixture-unresolved',
+          })]),
+        })]),
+      })], 'b');
+
+      await expect(chunkApprovedWikiCorpus(value, PROJECT_ID, (texts) =>
+        Promise.resolve(texts.map(() => 3)))).rejects.toMatchObject({
+        code: 'SEMANTIC_INDEX_CONFIG_INVALID',
+        message: 'Semantic index contract is invalid.',
+        reasonCode: 'artifact-invalid',
+      });
+    });
 
   it('[HSW-A-12] deterministically bounds long structures without token truncation', async () => {
     const body = Array.from({ length: 160 }, (_value, index) =>

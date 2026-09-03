@@ -177,6 +177,7 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/portableIdentifier" }
         },
+        "wikiTitle": { "$ref": "#/$defs/purposeText" },
         "purposeDigest": { "$ref": "#/$defs/digest" }
       },
       "x-buildlore-digestExcludes": ["purposeDigest"],
@@ -674,7 +675,8 @@
         "taskSetDigest",
         "relationSetDigest",
         "allowedUnitKinds",
-        "sourceIds"
+        "sourceIds",
+        "preferredUnitIds"
       ],
       "properties": {
         "snapshotDigest": { "$ref": "#/$defs/digest" },
@@ -691,6 +693,13 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/sourceId" },
           "x-buildlore-canonicalOrder": "ascending"
+        },
+        "preferredUnitIds": {
+          "type": "array",
+          "maxItems": 8192,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/unitId" },
+          "x-buildlore-canonicalOrder": "document-order"
         }
       }
     },
@@ -715,7 +724,7 @@
         "blueprintDigest"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.page-blueprint.v1" },
+        "schemaVersion": { "const": "buildlore.page-blueprint.v2" },
         "projectId": { "$ref": "#/$defs/projectId" },
         "pageId": { "$ref": "#/$defs/pageId" },
         "stableKey": { "$ref": "#/$defs/portableIdentifier" },
@@ -751,7 +760,7 @@
           "maxItems": 32,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/portableIdentifier" },
-          "x-buildlore-canonicalOrder": "ascending"
+          "x-buildlore-canonicalOrder": "blueprint-semantic-order"
         },
         "evidenceScope": { "$ref": "#/$defs/blueprintEvidenceScope" },
         "minimumDistinctSources": { "type": "integer", "minimum": 1, "maximum": 4096 },
@@ -774,10 +783,11 @@
         "activationState",
         "rootPageId",
         "blueprints",
+        "reviewNotes",
         "outlineDigest"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.wiki-outline.v1" },
+        "schemaVersion": { "const": "buildlore.wiki-outline.v2" },
         "projectId": { "$ref": "#/$defs/projectId" },
         "snapshotDigest": { "$ref": "#/$defs/digest" },
         "graphDigest": { "$ref": "#/$defs/digest" },
@@ -793,6 +803,13 @@
           "items": { "$ref": "#/$defs/pageBlueprint" },
           "x-buildlore-canonicalOrderBy": "generationOrder",
           "x-buildlore-uniqueBy": "pageId"
+        },
+        "reviewNotes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableIdentifier" },
+          "x-buildlore-canonicalOrder": "ascending"
         },
         "outlineDigest": { "$ref": "#/$defs/digest" }
       },
@@ -988,23 +1005,25 @@
       "additionalProperties": false,
       "required": [
         "schemaVersion", "projectId", "pageId", "blueprintDigest", "evidencePackDigest",
-        "generationOrder", "instructionCodes", "requiredSections", "requiredLinkPageIds",
+        "generationOrder", "generationAttempt", "instructionCodes", "requiredSections", "requiredLinkPageIds",
         "approvedChildSummaries", "executionMode", "egress", "providerUsed",
         "processSpawned", "requestDigest"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.current-session-generation-request.v1" },
+        "schemaVersion": { "const": "buildlore.current-session-generation-request.v2" },
         "projectId": { "$ref": "#/$defs/projectId" },
         "pageId": { "$ref": "#/$defs/pageId" },
         "blueprintDigest": { "$ref": "#/$defs/digest" },
         "evidencePackDigest": { "$ref": "#/$defs/digest" },
         "generationOrder": { "type": "integer", "minimum": 0, "maximum": 96 },
+        "generationAttempt": { "type": "integer", "minimum": 0, "maximum": 3 },
         "instructionCodes": {
           "type": "array",
           "const": [
-            "cite-substantive-claims", "preserve-evidence-bytes", "render-citation-markers",
-            "render-wikilinks", "submit-candidate-only", "use-required-sections",
-            "use-required-wikilinks"
+            "cite-each-paragraph", "ground-claims-25pct", "optional-sections-allowed",
+            "preserve-evidence-bytes", "render-citation-markers", "render-wikilinks",
+            "submit-candidate-only", "summary-from-claims", "title-may-paraphrase",
+            "use-required-sections", "use-required-wikilinks", "write-in-output-language"
           ]
         },
         "requiredSections": {
@@ -1036,6 +1055,7 @@
       "required": ["sectionId", "body"],
       "properties": {
         "sectionId": { "$ref": "#/$defs/portableIdentifier" },
+        "title": { "$ref": "#/$defs/purposeText" },
         "body": { "type": "string", "minLength": 1, "maxLength": 524288 }
       }
     },
@@ -1068,7 +1088,7 @@
         "citationIds", "lifecycle", "proposalDigest"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.hierarchical-wiki-proposal.v1" },
+        "schemaVersion": { "const": "buildlore.hierarchical-wiki-proposal.v2" },
         "projectId": { "$ref": "#/$defs/projectId" },
         "pageId": { "$ref": "#/$defs/pageId" },
         "blueprintDigest": { "$ref": "#/$defs/digest" },
@@ -1164,12 +1184,16 @@
         "minimumSectionCoverageBasisPoints",
         "minimumClaimGroundingBasisPoints",
         "minimumClaimEvidenceSupportBasisPoints",
+        "minimumClaimTokenOverlapBasisPoints",
+        "minimumSummaryTokenOverlapBasisPoints",
+        "minimumTitleTokenOverlapBasisPoints",
         "minimumQuestionCoverageBasisPoints",
         "maximumRepeatedLineBasisPoints",
         "maximumNearDuplicateBasisPoints",
         "maximumOrphanBasisPoints",
         "maximumUncategorizedPages",
         "maximumUnresolvedConflicts",
+        "maximumOptionalSections",
         "minimumSubstantiveUtf8Bytes",
         "minimumUniqueTokens"
       ],
@@ -1177,12 +1201,16 @@
         "minimumSectionCoverageBasisPoints": { "const": 10000 },
         "minimumClaimGroundingBasisPoints": { "const": 10000 },
         "minimumClaimEvidenceSupportBasisPoints": { "const": 10000 },
+        "minimumClaimTokenOverlapBasisPoints": { "const": 2500 },
+        "minimumSummaryTokenOverlapBasisPoints": { "const": 5000 },
+        "minimumTitleTokenOverlapBasisPoints": { "const": 6000 },
         "minimumQuestionCoverageBasisPoints": { "const": 10000 },
         "maximumRepeatedLineBasisPoints": { "const": 5000 },
         "maximumNearDuplicateBasisPoints": { "const": 8500 },
         "maximumOrphanBasisPoints": { "const": 500 },
         "maximumUncategorizedPages": { "const": 0 },
         "maximumUnresolvedConflicts": { "const": 0 },
+        "maximumOptionalSections": { "const": 8 },
         "minimumSubstantiveUtf8Bytes": { "const": 80 },
         "minimumUniqueTokens": { "const": 8 }
       }
@@ -1192,7 +1220,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "thresholds", "policyDigest"],
       "properties": {
-        "schemaVersion": { "const": "buildlore.semantic-quality-policy.v1" },
+        "schemaVersion": { "const": "buildlore.semantic-quality-policy.v2" },
         "thresholds": { "$ref": "#/$defs/semanticQualityThresholds" },
         "policyDigest": { "$ref": "#/$defs/digest" }
       },
@@ -1205,7 +1233,9 @@
         "schemaVersion", "projectId", "pageId", "blueprintDigest", "proposalDigest",
         "evidencePackDigest", "policyDigest", "sectionCoverageBasisPoints",
         "claimGroundingBasisPoints", "claimEvidenceSupportBasisPoints",
-        "titleGrounded", "summaryGrounded", "repeatedLineBasisPoints",
+        "titleGroundingBasisPoints", "summaryGroundingBasisPoints",
+        "titleGrounded", "summaryGrounded", "optionalSectionCount",
+        "unsupportedParagraphCount", "repeatedLineBasisPoints",
         "questionCoverageBasisPoints", "unansweredKeyQuestionCount",
         "maximumNearDuplicateBasisPoints", "requiredDistinctSources",
         "observedDistinctSources", "unresolvedConflictCount", "unresolvedGapCount",
@@ -1215,7 +1245,7 @@
         "reportDigest"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.page-quality-report.v1" },
+        "schemaVersion": { "const": "buildlore.page-quality-report.v2" },
         "projectId": { "$ref": "#/$defs/projectId" },
         "pageId": { "$ref": "#/$defs/pageId" },
         "blueprintDigest": { "$ref": "#/$defs/digest" },
@@ -1225,8 +1255,12 @@
         "sectionCoverageBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
         "claimGroundingBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
         "claimEvidenceSupportBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "titleGroundingBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "summaryGroundingBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
         "titleGrounded": { "type": "boolean" },
         "summaryGrounded": { "type": "boolean" },
+        "optionalSectionCount": { "type": "integer", "minimum": 0, "maximum": 32 },
+        "unsupportedParagraphCount": { "type": "integer", "minimum": 0 },
         "questionCoverageBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
         "unansweredKeyQuestionCount": { "type": "integer", "minimum": 0, "maximum": 64 },
         "repeatedLineBasisPoints": { "type": "integer", "minimum": 0, "maximum": 10000 },
@@ -1269,7 +1303,7 @@
         "embeddingSimilarityCanOverride", "canonicalMutationAuthorized", "reportDigest"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.corpus-quality-report.v1" },
+        "schemaVersion": { "const": "buildlore.corpus-quality-report.v2" },
         "projectId": { "$ref": "#/$defs/projectId" },
         "outlineDigest": { "$ref": "#/$defs/digest" },
         "reconciliationDigest": { "$ref": "#/$defs/digest" },
@@ -2090,7 +2124,9 @@
       "required": [
         "maxClusterMembers",
         "maxEvidenceBytes",
+        "maxEvidenceSourcesPerPage",
         "maxEvidenceUnits",
+        "maxEvidenceUnitsPerSource",
         "maxPartitionTasks",
         "maxPlanBytes",
         "maxRelationCandidatesPerTask",
@@ -2101,7 +2137,9 @@
       "properties": {
         "maxClusterMembers": { "const": 256 },
         "maxEvidenceBytes": { "const": 262144 },
+        "maxEvidenceSourcesPerPage": { "const": 8 },
         "maxEvidenceUnits": { "const": 64 },
+        "maxEvidenceUnitsPerSource": { "const": 8 },
         "maxPartitionTasks": { "const": 256 },
         "maxPlanBytes": { "const": 33554432 },
         "maxRelationCandidatesPerTask": { "const": 32 },

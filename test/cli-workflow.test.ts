@@ -1345,6 +1345,11 @@ describe('canonical CLI workflow', () => {
         '--input', 'proposal.json', '--expect-exchange', digest('1'),
       ],
       [
+        'compile', 'hierarchy', 'resubmit', '--project', 'alpha', '--run', runId,
+        '--page', `page-${'b'.repeat(64)}`, '--input', 'proposal-retry.json',
+        '--expect-exchange', digest('5'),
+      ],
+      [
         'compile', 'hierarchy', 'child-review', '--project', 'alpha', '--run', runId,
         '--input', 'child-review.json', '--expect-review', digest('2'),
       ],
@@ -1367,6 +1372,10 @@ describe('canonical CLI workflow', () => {
       { args: ['alpha', 'purpose.json'], operation: 'start' },
       { args: ['alpha', runId], operation: 'status' },
       { args: ['alpha', runId, 'proposal.json', digest('1')], operation: 'submit' },
+      {
+        args: ['alpha', runId, `page-${'b'.repeat(64)}`, 'proposal-retry.json', digest('5')],
+        operation: 'resubmit',
+      },
       { args: ['alpha', runId, 'child-review.json', digest('2')], operation: 'childReview' },
       { args: ['alpha', runId], operation: 'review' },
       { args: ['alpha', runId, 'final-review.json', digest('3')], operation: 'finalize' },
@@ -1487,7 +1496,7 @@ describe('canonical CLI workflow', () => {
               materializationDigest: digest('5'),
               pageCount: 1,
               projectId: input.projectId,
-              schemaVersion: 'buildlore.hierarchical-markdown-materialization-status.v1',
+              schemaVersion: 'buildlore.hierarchical-markdown-materialization-status.v2',
               state: 'ready',
             },
             pageCount: 1,
@@ -1509,6 +1518,14 @@ describe('canonical CLI workflow', () => {
       command: 'compile.activate',
       data: { egress: 'none', pageCount: 1, providerUsed: 'none' },
       ok: true,
+    });
+    const rematerialized = await capture([
+      'compile', 'activate', '--project', 'alpha', '--rematerialize', '--json',
+    ], runtime);
+    expect(rematerialized.exitCode).toBe(0);
+    expect(calls).toContainEqual({
+      input: { projectId: 'alpha', rematerialize: true },
+      operation: 'activate',
     });
 
     const status = await capture(['index', 'status', '--project', 'alpha', '--json'], runtime);
@@ -1556,6 +1573,10 @@ describe('canonical CLI workflow', () => {
           inputFile: '.buildlore/approved-wiki.json',
           projectId: 'alpha',
         },
+        operation: 'activate',
+      },
+      {
+        input: { projectId: 'alpha', rematerialize: true },
         operation: 'activate',
       },
       { operation: 'status', projectId: 'alpha' },
