@@ -61,6 +61,7 @@ import {
   createProjectRetrieval,
   LocalWikiRetrievalError,
   type LocalWikiOperatorPort,
+  type LocalWikiRetrievalIntent,
   type LocalWikiRetrievalMode,
   type ProjectRetrievalPort,
 } from '../retrieval/index.js';
@@ -275,6 +276,22 @@ function retrievalMode(command: ParsedCliCommand): LocalWikiRetrievalMode {
   }
 }
 
+function retrievalIntent(command: ParsedCliCommand): LocalWikiRetrievalIntent {
+  switch (stringOption(command, '--intent')) {
+    case 'current':
+      return 'current';
+    case 'historical':
+      return 'historical';
+    case 'neutral':
+      return 'neutral';
+    case 'auto':
+    case undefined:
+      return 'auto';
+    default:
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+}
+
 function createDefaultLocalWiki(runtime: CliRuntime): LocalWikiOperatorPort {
   return createLocalWikiOperator({
     hubRoot: runtime.cwd,
@@ -363,12 +380,14 @@ async function searchWithApprovedWiki(
   projectId: string,
 ): Promise<unknown> {
   const mode = retrievalMode(command);
+  const intent = retrievalIntent(command);
   const query = requiredStringOption(command, '--query');
-  if (runtime.retrieval !== undefined && mode !== 'graph') {
+  if (runtime.retrieval !== undefined && mode !== 'graph' && intent === 'auto') {
     return runtime.retrieval.search({ mode, projectId, query });
   }
   try {
     return await (runtime.localWiki ?? createDefaultLocalWiki(runtime)).search({
+      ...(intent === 'auto' ? {} : { intent }),
       mode,
       projectId,
       query,

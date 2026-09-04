@@ -185,6 +185,32 @@ async function finalizeAccepted(current: HierarchicalWorkflowTestFixtureV1) {
 }
 
 describe('restart-safe hierarchical workflow service', () => {
+  it('accepts distinct P2A projections derived from the same selected artifact', async () => {
+    const current = await createHierarchicalWorkflowTestFixture(
+      'hierarchy-shared-artifact',
+      (plan) => {
+        const first = plan.sources[0];
+        const second = plan.sources[1];
+        if (first === undefined || second === undefined) {
+          throw new Error('Expected two planned sources.');
+        }
+        return Object.freeze({
+          ...plan,
+          sources: Object.freeze([
+            first,
+            Object.freeze({ ...second, sourceRef: first.sourceRef }),
+          ]),
+        });
+      },
+    );
+    fixtures.push(current);
+
+    const started = await start(current);
+
+    expect(started.status.currentExchange).not.toBeNull();
+    expect(current.plannerCalls).toEqual([current.projectId]);
+  });
+
   it('packs substantive body passages with exact diverse citations instead of title headings',
     async () => {
       const current = await fixture();

@@ -7,7 +7,7 @@
   "repeatedHeadingSourceCount": 33,
   "permutationSeed": 1592594996,
   "repeatedHeadingPairCount": 528,
-  "expectedPlanDigest": "sha256:fd3b6c7b529cb0aa1827a9e176d66534f1bd64500d48d5fc1929a64d6f866240",
+  "expectedPlanDigest": "sha256:b7edd5939625e850b5aed41d22ff889bb903e8fdb8208567ec0fd147043007cc",
   "provenance": {
     "schemaVersion": "buildlore.historical-baseline-provenance.v1",
     "entrySnapshot": {

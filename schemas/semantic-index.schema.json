@@ -35,23 +35,53 @@
         "sourceId": { "$ref": "#/$defs/id" }
       }
     },
+    "meaningSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority", "evidenceKind", "iterationGroup", "lifecycle", "origin",
+        "revisionOrdinal", "sourceId", "topicGroup"
+      ],
+      "properties": {
+        "authority": { "enum": ["canonical", "historical", "supporting", "unknown"] },
+        "evidenceKind": {
+          "enum": [
+            "architecture", "decision", "execution", "failure", "implementation",
+            "other", "overview", "planning", "verification"
+          ]
+        },
+        "iterationGroup": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }]
+        },
+        "lifecycle": { "enum": ["current", "deprecated", "draft", "superseded", "unknown"] },
+        "origin": { "enum": ["adapter", "legacy-default", "manifest", "profile"] },
+        "revisionOrdinal": { "type": "integer", "minimum": 0 },
+        "sourceId": { "$ref": "#/$defs/id" },
+        "topicGroup": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }]
+        }
+      }
+    },
     "chunker": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "contractVersion", "identityDigest", "kind", "maximumPlanningUtf8Bytes",
-        "maximumTokens", "preserves", "unicodeBoundary"
+        "maximumTokens", "preserves", "semanticContentPolicyDigest", "unicodeBoundary"
       ],
       "properties": {
-        "contractVersion": { "const": 1 },
+        "contractVersion": { "const": 2 },
         "identityDigest": {
-          "const": "sha256:dd3957ce328b6bd0301546bbfda8a99d36f11fb313387ff4aa70ffd78da61315"
+          "const": "sha256:5d398f733a70fa63745da7496394e40e62a90bed728761be6fbaa01ac056b305"
         },
-        "kind": { "const": "markdown-structure-token-aware" },
+        "kind": { "const": "markdown-semantic-text-token-aware" },
         "maximumPlanningUtf8Bytes": { "const": 8192 },
         "maximumTokens": { "const": 512 },
         "preserves": {
           "const": ["heading", "paragraph", "list", "table", "fenced-code"]
+        },
+        "semanticContentPolicyDigest": {
+          "const": "sha256:b66ef9f7a0f65fba9365c0160b18b3ed007bb55a46703059e20ed7601fa72e7a"
         },
         "unicodeBoundary": { "const": "unicode-cluster-safe-v1" }
       }
@@ -63,10 +93,10 @@
         "schemaVersion", "projectId", "pageId", "pageRevision", "sectionId", "chunkId",
         "rowOrdinal", "segmentOrdinal", "structureOrdinal", "structureKind", "contentDigest",
         "utf8Bytes", "maximumTokens", "tokenCount", "tokenTruncated", "chunkerDigest",
-        "citationLocators", "eligibility", "skipReason"
+        "citationLocators", "meaningSignals", "eligibility", "skipReason"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.retrieval-chunk.v1" },
+        "schemaVersion": { "const": "buildlore.retrieval-chunk.v2" },
         "projectId": { "$ref": "#/$defs/projectId" },
         "pageId": { "$ref": "#/$defs/id" },
         "pageRevision": { "$ref": "#/$defs/digest" },
@@ -82,13 +112,19 @@
         "tokenCount": { "type": "integer", "minimum": 1, "maximum": 512 },
         "tokenTruncated": { "const": false },
         "chunkerDigest": {
-          "const": "sha256:dd3957ce328b6bd0301546bbfda8a99d36f11fb313387ff4aa70ffd78da61315"
+          "const": "sha256:5d398f733a70fa63745da7496394e40e62a90bed728761be6fbaa01ac056b305"
         },
         "citationLocators": {
           "type": "array",
           "maxItems": 100,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/citationLocator" }
+        },
+        "meaningSignals": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/meaningSignal" },
+          "x-buildlore-uniqueBy": "sourceId"
         },
         "eligibility": { "const": "eligible" },
         "skipReason": { "type": "null" }
@@ -130,7 +166,7 @@
         "componentChecksums", "checksumsDigest", "manifestDigest"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.semantic-index-manifest.v1" },
+        "schemaVersion": { "const": "buildlore.semantic-index-manifest.v2" },
         "projectId": { "$ref": "#/$defs/projectId" },
         "generationId": { "type": "string", "pattern": "^generation-[a-f0-9]{64}$" },
         "corpusDigest": { "$ref": "#/$defs/digest" },

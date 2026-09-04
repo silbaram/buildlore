@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
-import { createApprovedWikiRetrieval } from '../hierarchical.js';
+import {
+  SEMANTIC_CONTENT_POLICY_DIGEST,
+  createApprovedWikiRetrieval,
+  projectApprovedWikiSemanticText,
+} from '../hierarchical.js';
 import type {
   ApprovedWikiCitationLocatorV1,
   ApprovedWikiRetrievalCorpusV1,
@@ -28,8 +32,8 @@ export type DocumentTokenCounter = (
 ) => Promise<readonly number[]>;
 
 const CHUNKER_BASIS = Object.freeze({
-  contractVersion: 1 as const,
-  kind: 'markdown-structure-token-aware' as const,
+  contractVersion: 2 as const,
+  kind: 'markdown-semantic-text-token-aware' as const,
   maximumPlanningUtf8Bytes: SEMANTIC_INDEX_LIMITS.maximumChunkUtf8Bytes,
   maximumTokens: 512 as const,
   preserves: Object.freeze([
@@ -39,6 +43,7 @@ const CHUNKER_BASIS = Object.freeze({
     'table',
     'fenced-code',
   ] as const),
+  semanticContentPolicyDigest: SEMANTIC_CONTENT_POLICY_DIGEST,
   unicodeBoundary: 'unicode-cluster-safe-v1' as const,
 });
 
@@ -139,21 +144,51 @@ function citationLocatorsForStructure(
   values: readonly ApprovedWikiCitationLocatorV1[],
   structureKind: RetrievalStructureKind,
 ): readonly ApprovedWikiCitationLocatorV1[] {
-  if (structureKind === 'fenced-code') return Object.freeze([]);
   const byId = new Map(values.map((value) => [value.citationId, value]));
   const selected = new Map<string, ApprovedWikiCitationLocatorV1>();
-  const marker = /(?<!\\)\[\^(citation-[a-z0-9]+(?:-[a-z0-9]+)*)\]/gu;
-  for (const match of text.matchAll(marker)) {
-    const citationId = match[1];
-    const locator = citationId === undefined ? undefined : byId.get(citationId);
-    if (locator === undefined) {
-      throw new SemanticIndexError('SEMANTIC_INDEX_CONFIG_INVALID', 'artifact-invalid');
+  if (structureKind !== 'fenced-code') {
+    const marker = /(?<!\\)\[\^(citation-[a-z0-9]+(?:-[a-z0-9]+)*)\]/gu;
+    for (const match of text.matchAll(marker)) {
+      const citationId = match[1];
+      const locator = citationId === undefined ? undefined : byId.get(citationId);
+      if (locator === undefined) {
+        throw new SemanticIndexError('SEMANTIC_INDEX_CONFIG_INVALID', 'artifact-invalid');
+      }
+      selected.set(`${locator.citationId}\u0000${locator.sourceId}`, locator);
     }
-    selected.set(`${locator.citationId}\u0000${locator.sourceId}`, locator);
+  }
+  // Headings, fenced examples, and other uncited structures inherit their approved
+  // section locators so every semantic hit remains provenance-expandable.
+  if (selected.size === 0) {
+    for (const locator of values) {
+      selected.set(`${locator.citationId}\u0000${locator.sourceId}`, locator);
+    }
   }
   return Object.freeze([...selected.values()].sort((left, right) =>
     compareText(left.citationId, right.citationId) || compareText(left.sourceId, right.sourceId))
     .map((value) => Object.freeze({ ...value })));
+}
+
+function semanticCitationQueues(
+  body: string,
+  values: readonly ApprovedWikiCitationLocatorV1[],
+): ReadonlyMap<string, readonly (readonly ApprovedWikiCitationLocatorV1[])[]> {
+  const collected = new Map<string, Array<readonly ApprovedWikiCitationLocatorV1[]>>();
+  for (const rawBlock of iterateMarkdownStructures(body)) {
+    const semantic = projectApprovedWikiSemanticText(rawBlock.text, '').semanticText;
+    if (semantic === '') continue;
+    const citations = citationLocatorsForStructure(rawBlock.text, values, rawBlock.kind);
+    for (const projectedBlock of iterateMarkdownStructures(semantic)) {
+      const key = `${projectedBlock.kind}\u0000${projectedBlock.text.normalize('NFC')}`;
+      const queue = collected.get(key) ?? [];
+      queue.push(citations);
+      collected.set(key, queue);
+    }
+  }
+  return new Map([...collected.entries()].map(([key, queue]) => [
+    key,
+    Object.freeze(queue),
+  ]));
 }
 
 function scalarWidth(value: number): 1 | 2 {
@@ -314,16 +349,22 @@ export async function chunkApprovedWikiCorpus(
     for (const section of [...page.sections].sort((left, right) =>
       compareText(left.sectionId, right.sectionId))) {
       let structureOrdinal = 0;
-      for (const block of iterateMarkdownStructures(section.body)) {
+      const semanticBody = section.semanticText ?? section.body;
+      const citationQueues = section.semanticText === undefined
+        ? null
+        : semanticCitationQueues(section.body, section.citationLocators);
+      const consumedCitationQueues = new Map<string, number>();
+      for (const block of iterateMarkdownStructures(semanticBody)) {
         if (chunks.length >= SEMANTIC_INDEX_LIMITS.maximumChunks) {
           throw new SemanticIndexError('SEMANTIC_INDEX_LIMIT_EXCEEDED', 'limit-exceeded');
         }
         const structure = block.text.normalize('NFC');
-        const citations = citationLocatorsForStructure(
-          structure,
-          section.citationLocators,
-          block.kind,
-        );
+        const citationKey = `${block.kind}\u0000${structure}`;
+        const citationQueueIndex = consumedCitationQueues.get(citationKey) ?? 0;
+        const citations = citationQueues === null
+          ? citationLocatorsForStructure(structure, section.citationLocators, block.kind)
+          : citationQueues.get(citationKey)?.[citationQueueIndex] ?? Object.freeze([]);
+        consumedCitationQueues.set(citationKey, citationQueueIndex + 1);
         const planningSegments = splitToPlanningBound(structure);
         let segmentOrdinal = 0;
         if (planningSegments.length === 0) {
@@ -393,6 +434,8 @@ export async function chunkApprovedWikiCorpus(
                 tokenTruncated: false,
                 chunkerDigest: SEMANTIC_CHUNKER_IDENTITY.identityDigest,
                 citationLocators: citations,
+                meaningSignals: Object.freeze((section.meaningSignals ?? []).filter((signal) =>
+                  citations.some((citation) => citation.sourceId === signal.sourceId))),
                 eligibility: 'eligible',
                 skipReason: null,
               }),

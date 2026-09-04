@@ -2,13 +2,20 @@ import { createHash } from 'node:crypto';
 
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
 import { validateProjectId } from '../../knowledge/validation.js';
-import { validatePortableSourceRef } from '../../projector/source-contracts.js';
+import {
+  neutralSourceRetrievalMeaning,
+  parseSourceRetrievalMeaning,
+  validatePortableSourceRef,
+  validateSourceRetrievalSupersessionGraph,
+  type SourceRetrievalMeaningOrigin,
+} from '../../projector/source-contracts.js';
 import { HierarchyContractError } from './errors.js';
 import {
   COMPILATION_PURPOSE_SCHEMA_VERSION,
   CORPUS_SNAPSHOT_SCHEMA_VERSION,
   DOCUMENT_INTERPRETATION_SCHEMA_VERSION,
   HIERARCHICAL_COMPILATION_POLICY_SCHEMA_VERSION,
+  LEGACY_CORPUS_SNAPSHOT_SCHEMA_VERSION,
   TEXT_UNIT_SCHEMA_VERSION,
   type CompilationPurposeV1,
   type CorpusSnapshotSourceV1,
@@ -656,21 +663,49 @@ export function parseDocumentInterpretation(
   return Object.freeze({ ...parsedWithoutDigest, interpretationDigest });
 }
 
-function parseSnapshotSource(value: unknown, projectId: string): CorpusSnapshotSourceV1 {
+function parseSnapshotSource(
+  value: unknown,
+  projectId: string,
+  allowMeaning: boolean,
+): CorpusSnapshotSourceV1 {
   const source = record(value, projectId);
-  exactKeys(source, [
+  const baseKeys = [
     'sanitizedContentDigest',
     'sourceId',
     'sourceRef',
     'sourceRevision',
-  ], projectId);
+  ];
+  const hasMeaning = Object.hasOwn(source, 'retrievalMeaning') ||
+    Object.hasOwn(source, 'retrievalMeaningOrigin');
+  if (hasMeaning && !allowMeaning) invalid(projectId);
+  if (!hasMeaning && allowMeaning) invalid(projectId);
+  exactKeys(source, hasMeaning
+    ? [...baseKeys, 'retrievalMeaning', 'retrievalMeaningOrigin']
+    : baseKeys, projectId);
   let sourceRef: string;
   try {
     sourceRef = validatePortableSourceRef(source.sourceRef);
   } catch {
     return invalid(projectId);
   }
+  let retrievalMeaning: Readonly<{
+    readonly meaning: ReturnType<typeof parseSourceRetrievalMeaning>;
+    readonly origin: SourceRetrievalMeaningOrigin;
+  }> | undefined;
+  if (hasMeaning) {
+    const origin = source.retrievalMeaningOrigin;
+    if (origin !== 'adapter' && origin !== 'legacy-default' &&
+        origin !== 'manifest' && origin !== 'profile') invalid(projectId);
+    retrievalMeaning = Object.freeze({
+      meaning: parseSourceRetrievalMeaning(source.retrievalMeaning),
+      origin,
+    });
+  }
   return Object.freeze({
+    ...(retrievalMeaning === undefined ? {} : {
+      retrievalMeaning: retrievalMeaning.meaning,
+      retrievalMeaningOrigin: retrievalMeaning.origin,
+    }),
     sourceId: text(source.sourceId, projectId, {
       max: 71,
       pattern: GENERATED_SOURCE_ID_PATTERN,
@@ -715,8 +750,19 @@ export function createCorpusSnapshot(input: CorpusSnapshotInput): CorpusSnapshot
     input.textUnits.length < 1 ||
     input.textUnits.length > HIERARCHICAL_COMPILATION_LIMITS.maxTasks
   ) invalid(projectId);
-  const sources = Object.freeze(input.sources
-    .map((source) => parseSnapshotSource(source, projectId))
+  const sourceInputs: readonly CorpusSnapshotSourceV1[] = input.sources;
+  const sources = Object.freeze(sourceInputs
+    .map((source) => parseSnapshotSource(
+      source.retrievalMeaning === undefined
+        ? {
+            ...source,
+            retrievalMeaning: neutralSourceRetrievalMeaning(),
+            retrievalMeaningOrigin: 'legacy-default',
+          }
+        : source,
+      projectId,
+      true,
+    ))
     .sort((left, right) => left.sourceId < right.sourceId ? -1 : left.sourceId > right.sourceId ? 1 : 0));
   const textUnits = Object.freeze(input.textUnits
     .map((unit) => parseTextUnit(unit, projectId))
@@ -769,8 +815,10 @@ export function parseCorpusSnapshot(
     'sources',
     'textUnits',
   ], projectId);
+  const schemaVersion = snapshot.schemaVersion;
   if (
-    snapshot.schemaVersion !== CORPUS_SNAPSHOT_SCHEMA_VERSION ||
+    schemaVersion !== CORPUS_SNAPSHOT_SCHEMA_VERSION &&
+      schemaVersion !== LEGACY_CORPUS_SNAPSHOT_SCHEMA_VERSION ||
     !Array.isArray(snapshot.sources) ||
     snapshot.sources.length < 1 ||
     snapshot.sources.length > HIERARCHICAL_COMPILATION_LIMITS.maxSources ||
@@ -778,12 +826,26 @@ export function parseCorpusSnapshot(
     snapshot.textUnits.length < 1 ||
     snapshot.textUnits.length > HIERARCHICAL_COMPILATION_LIMITS.maxTasks
   ) invalid(projectId);
-  const sources = snapshot.sources.map((item) => parseSnapshotSource(item, projectId));
+  const sources = snapshot.sources.map((item) => parseSnapshotSource(
+    item,
+    projectId,
+    schemaVersion === CORPUS_SNAPSHOT_SCHEMA_VERSION,
+  ));
   if (
     new Set(sources.map((source) => source.sourceId)).size !== sources.length ||
     sources.some((source, index) =>
       index > 0 && (sources[index - 1]?.sourceId ?? '') >= source.sourceId)
   ) invalid(projectId);
+  try {
+    validateSourceRetrievalSupersessionGraph(sources.map((source) => Object.freeze({
+      ...(source.retrievalMeaning === undefined
+        ? {}
+        : { retrievalMeaning: source.retrievalMeaning }),
+      sourceRef: source.sourceRef,
+    })));
+  } catch {
+    invalid(projectId);
+  }
   const sourceById = new Map(sources.map((source) => [source.sourceId, source]));
   const textUnits = snapshot.textUnits.map((item) => parseTextUnit(item, projectId));
   const ordinalBySource = new Map<string, number>();
@@ -813,7 +875,7 @@ export function parseCorpusSnapshot(
   const expectedCorpusDigest = digestHierarchyValue({ sources, textUnits });
   if (parsedCorpusDigest !== expectedCorpusDigest) invalid(projectId);
   const parsedWithoutSnapshotDigest = Object.freeze({
-    schemaVersion: CORPUS_SNAPSHOT_SCHEMA_VERSION,
+    schemaVersion,
     projectId: expectedProject(snapshot.projectId, projectId),
     purposeDigest: digest(snapshot.purposeDigest, projectId),
     interpretationRulesDigest: digest(snapshot.interpretationRulesDigest, projectId),

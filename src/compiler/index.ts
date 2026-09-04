@@ -45,6 +45,7 @@ export type {
   CompilerRequest,
   CompilerResultData,
   CompilerWarning,
+  ContextPrimarySummary,
   CompilerWikiBackend,
   ContextRequest,
   ContextSummary,

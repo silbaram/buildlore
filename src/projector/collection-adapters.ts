@@ -16,11 +16,14 @@ import {
   p2aSourceAdapter,
   type SourceAdapterRegistry,
 } from './source-adapter-registry.js';
-import type {
-  RegisteredMediaType,
-  SourceAdapterRegistrationV1,
-  SourceOriginRangeV1,
-  SourceRangeMappingV1,
+import {
+  sourceRetrievalMeaningFromDescriptor,
+  validateSourceRetrievalSupersessionGraph,
+  type BoundSourceRetrievalMeaningV1,
+  type RegisteredMediaType,
+  type SourceAdapterRegistrationV1,
+  type SourceOriginRangeV1,
+  type SourceRangeMappingV1,
 } from './source-contracts.js';
 import {
   sourceDeclarationDocumentKind,
@@ -45,6 +48,7 @@ export interface CollectionCandidate extends ProjectSourceInput {
   readonly producer: ProjectSourceProducer;
   readonly projectId: string;
   readonly rangeMappings?: readonly SourceRangeMappingV1[];
+  readonly retrievalMeaning?: BoundSourceRetrievalMeaningV1;
   readonly sourceRef: string;
 }
 
@@ -286,6 +290,11 @@ export function createSourceCollectionAdapter(
         }
         targets.add(candidate.target);
       }
+      validateSourceRetrievalSupersessionGraph(candidates.map((candidate) => Object.freeze({
+        retrievalMeaning: (candidate.retrievalMeaning ??
+          sourceRetrievalMeaningFromDescriptor(candidate.descriptor)).meaning,
+        sourceRef: candidate.sourceRef,
+      })));
       return Object.freeze({
         candidates: Object.freeze(candidates),
         entries: Object.freeze([...entries].sort((left, right) =>

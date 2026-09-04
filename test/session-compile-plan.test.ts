@@ -31,7 +31,10 @@ import {
   resolveLocalProjectBinding,
 } from '../src/knowledge/local-project-registry.js';
 import { addProject } from '../src/knowledge/index.js';
-import { createProjectSyncService } from '../src/projector/index.js';
+import {
+  createProjectSyncService,
+  sourceRetrievalMeaningFromDescriptor,
+} from '../src/projector/index.js';
 import {
   createSourceDocument,
   parseSourceDocument,
@@ -98,6 +101,7 @@ function source(idCharacter: string, sourceRef: string, body: string): SessionPl
     compilerSourceId: `planning--${idCharacter.repeat(64)}.md`,
     originalContentDigest: DIGEST,
     revision: DIGEST,
+    retrievalMeaning: sourceRetrievalMeaningFromDescriptor(undefined),
     sanitizedBody: body,
     sanitizedContentDigest: DIGEST,
     sourceId,
@@ -123,6 +127,7 @@ function numberedSource(index: number, body: string): SessionPlannedSource {
     compilerSourceId: `planning--${identity}.md`,
     originalContentDigest: contentDigest,
     revision: contentDigest,
+    retrievalMeaning: sourceRetrievalMeaningFromDescriptor(undefined),
     sanitizedBody: body,
     sanitizedContentDigest: contentDigest,
     sourceId,

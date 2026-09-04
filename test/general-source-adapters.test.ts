@@ -23,6 +23,7 @@ import {
   initializeSingleProjectQuickstart,
   parseSourceCollectionManifestV2,
   parseSourceDocument,
+  SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
 } from '../src/projector/index.js';
 import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
@@ -110,6 +111,33 @@ describe('generic source pipeline', () => {
       path: 'docs/notes.txt',
       projectId: 'alpha',
     });
+    const manifestPath = join(current.sourceRoot, '.buildlore/sources.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      sources: Array<Record<string, unknown>>;
+    };
+    const markdownDeclaration = manifest.sources.find((entry) => entry.id === 'markdown');
+    if (markdownDeclaration === undefined) throw new Error('markdown declaration is missing');
+    markdownDeclaration.metadata = {
+      namespace: 'buildlore.generic',
+      schemaVersion: 'buildlore.generic-metadata.v1',
+      values: {
+        retrievalMeaning: {
+          authority: 'canonical',
+          evidenceKind: 'overview',
+          iterationGroup: null,
+          lifecycle: 'current',
+          revisionOrdinal: 2,
+          schemaVersion: SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+          supersededBySourceRefs: [],
+          supersedesSourceRefs: [],
+          topicGroup: 'project-overview',
+        },
+      },
+    };
+    await writeFile(
+      manifestPath,
+      serializeCanonicalJson(parseSourceCollectionManifestV2(manifest)),
+    );
     const synchronized = await createProjectSyncService().sync({
       dryRun: false,
       hubRoot: current.hubRoot,
@@ -152,6 +180,27 @@ describe('generic source pipeline', () => {
       'text',
     ]);
     const code = plan.sources.find((source) => source.sourceKind === 'code');
+    const markdown = plan.sources.find((source) => source.sourceKind === 'markdown');
+    expect(markdown?.retrievalMeaning).toEqual({
+      meaning: {
+        authority: 'canonical',
+        evidenceKind: 'overview',
+        iterationGroup: null,
+        lifecycle: 'current',
+        revisionOrdinal: 2,
+        schemaVersion: SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+        supersededBySourceRefs: [],
+        supersedesSourceRefs: [],
+        topicGroup: 'project-overview',
+      },
+      origin: 'manifest',
+    });
+    expect(code?.retrievalMeaning?.meaning).toMatchObject({
+      authority: 'unknown',
+      evidenceKind: 'other',
+      lifecycle: 'unknown',
+    });
+    expect(code?.retrievalMeaning?.origin).toBe('legacy-default');
     expect(code?.sanitizedBody).toContain('```typescript\n');
     expect(code?.citationAnchors).toEqual(expect.arrayContaining([
       expect.objectContaining({

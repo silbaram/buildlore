@@ -82,7 +82,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 function sessionPlanFrom(output: string): SessionCompilePlanV1 {
   const envelope: unknown = JSON.parse(output);
   const data = isRecord(envelope) ? envelope.data : undefined;
-  if (!isRecord(data) || data.schemaVersion !== 'buildlore.compile-plan.v4' ||
+  if (!isRecord(data) || data.schemaVersion !== 'buildlore.compile-plan.v5' ||
       !Array.isArray(data.sources) || !Array.isArray(data.tasks)) {
     throw new Error('invalid session plan CLI envelope');
   }
@@ -504,7 +504,7 @@ describe('canonical CLI workflow', () => {
       plan: (request) => {
         planRequests.push(request);
         return Promise.resolve({
-          schemaVersion: 'buildlore.compile-plan.v4',
+          schemaVersion: 'buildlore.compile-plan.v5',
           projectId: request.projectId,
           planDigest: digest('1'),
           contractDigest: digest('2'),
@@ -513,7 +513,7 @@ describe('canonical CLI workflow', () => {
           selectionDigest: digest('5'),
           sourceManifestDigest: digest('6'),
           existingKnowledgeDigest: digest('7'),
-          algorithmVersion: 'buildlore.session-planner.v3',
+          algorithmVersion: 'buildlore.session-planner.v4',
           limits: {
             maxCitationsPerPage: 512,
             maxLinksPerPage: 256,
@@ -612,7 +612,7 @@ describe('canonical CLI workflow', () => {
 
     expect(JSON.parse(planned.stdout)).toMatchObject({
       command: 'compile.plan',
-      data: { schemaVersion: 'buildlore.compile-plan.v4' },
+      data: { schemaVersion: 'buildlore.compile-plan.v5' },
       ok: true,
     });
     expect(JSON.parse(applied.stdout)).toMatchObject({
@@ -1545,7 +1545,8 @@ describe('canonical CLI workflow', () => {
       ok: true,
     });
     const searched = await capture([
-      'search', '--project', 'alpha', '--query', 'related design', '--mode', 'graph', '--json',
+      'search', '--project', 'alpha', '--query', 'related design', '--mode', 'graph',
+      '--intent', 'current', '--json',
     ], runtime);
     expect(searched.exitCode).toBe(0);
     expect(JSON.parse(searched.stdout)).toMatchObject({
@@ -1583,7 +1584,7 @@ describe('canonical CLI workflow', () => {
       { input: { full: true, projectId: 'alpha' }, operation: 'rebuild' },
       {
         operation: 'search',
-        request: { mode: 'graph', projectId: 'alpha', query: 'related design' },
+        request: { intent: 'current', mode: 'graph', projectId: 'alpha', query: 'related design' },
       },
       {
         operation: 'search',

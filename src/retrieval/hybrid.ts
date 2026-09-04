@@ -7,25 +7,37 @@ import {
   type LocalEmbeddingRecoveryAction,
 } from './embedding/index.js';
 import {
+  LEGACY_APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION,
   createApprovedWikiRetrieval,
+  type ApprovedWikiMeaningSignalV1,
   type ApprovedWikiRetrievalCorpusV1,
   type HierarchicalRetrievalHitV1,
   type HierarchicalRetrievalLocatorV1,
 } from './hierarchical.js';
 import {
   RETRIEVAL_FUSION_POLICY_SCHEMA_VERSION,
+  RETRIEVAL_RANKING_POLICY_SCHEMA_VERSION,
   RETRIEVAL_RESULT_V2_SCHEMA_VERSION,
+  RETRIEVAL_RESULT_V3_SCHEMA_VERSION,
   LocalWikiRetrievalError,
   type LocalWikiRetrievalChannel,
   type LocalWikiRetrievalChannelScoreV2,
   type LocalWikiRetrievalFallbackReason,
   type LocalWikiRetrievalHitV2,
+  type LocalWikiRetrievalHitV3,
+  type LocalWikiRetrievalEffectiveIntent,
+  type LocalWikiRetrievalIntent,
+  type LocalWikiRetrievalIntentReasonCode,
   type LocalWikiRetrievalMode,
   type LocalWikiRetrievalPortV2,
+  type LocalWikiRetrievalPortV3,
   type LocalWikiRetrievalRecoveryAction,
   type LocalWikiRetrievalRequestV2,
+  type LocalWikiRetrievalRequestV3,
   type RetrievalFusionPolicyV1,
+  type RetrievalRankingPolicyV2,
   type RetrievalResultV2,
+  type RetrievalResultV3,
 } from './hybrid-types.js';
 import type { LexicalScoreComponents, MatchedRetrievalEvidence } from './strategy.js';
 import {
@@ -55,6 +67,26 @@ export const RETRIEVAL_FUSION_POLICY_V1: RetrievalFusionPolicyV1 = Object.freeze
   ).digest('hex')}`,
 });
 
+const RANKING_POLICY_BASIS = Object.freeze({
+  schemaVersion: RETRIEVAL_RANKING_POLICY_SCHEMA_VERSION,
+  algorithmVersion: 2 as const,
+  authorityAdjustmentLimit: 0.0015 as const,
+  conflictHandling: 'axis-neutral-with-reason' as const,
+  currentFloor: 'all-current-before-draft-or-superseded' as const,
+  diversification: 'two-pass-page-topic-iteration' as const,
+  evidenceAdjustmentLimit: 0.001 as const,
+  lifecycleAdjustmentLimit: 0.003 as const,
+  semanticCandidateUnit: 'best-chunk-per-section' as const,
+  tieBreak: Object.freeze(['finalScore', 'pageId', 'sectionId', 'chunkId'] as const),
+});
+
+export const RETRIEVAL_RANKING_POLICY_V2: RetrievalRankingPolicyV2 = Object.freeze({
+  ...RANKING_POLICY_BASIS,
+  policyDigest: `sha256:${createHash('sha256').update(
+    serializeCanonicalJson(RANKING_POLICY_BASIS),
+  ).digest('hex')}`,
+});
+
 export interface CreateApprovedWikiHybridRetrievalOptions {
   readonly corpus: ApprovedWikiRetrievalCorpusV1;
   readonly projectId: string;
@@ -77,7 +109,14 @@ interface Candidate {
   lexical?: LexicalScoreComponents;
   locator: HierarchicalRetrievalLocatorV1;
   matchedEvidence: readonly MatchedRetrievalEvidence[];
+  meaningSignals: readonly ApprovedWikiMeaningSignalV1[];
   title: string;
+}
+
+interface NormalizedIntent {
+  readonly effective: LocalWikiRetrievalEffectiveIntent;
+  readonly reasons: readonly LocalWikiRetrievalIntentReasonCode[];
+  readonly requested: LocalWikiRetrievalIntent;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -141,7 +180,19 @@ function sortedChannels(
   }));
 }
 
-function fromBaselineHit(hit: HierarchicalRetrievalHitV1): Candidate {
+function meaningForLocator(
+  corpus: ApprovedWikiRetrievalCorpusV1,
+  locator: HierarchicalRetrievalLocatorV1,
+): readonly ApprovedWikiMeaningSignalV1[] {
+  const page = corpus.pages.find((candidate) => candidate.pageId === locator.pageId);
+  return page?.sections.find((section) => section.sectionId === locator.sectionId)?.meaningSignals ??
+    page?.meaningSignals ?? Object.freeze([]);
+}
+
+function fromBaselineHit(
+  hit: HierarchicalRetrievalHitV1,
+  corpus: ApprovedWikiRetrievalCorpusV1,
+): Candidate {
   return {
     channels: new Map(hit.channels.map((channel) => [channel.channel, {
       rank: channel.rank,
@@ -153,12 +204,16 @@ function fromBaselineHit(hit: HierarchicalRetrievalHitV1): Candidate {
       : { lexical: hit.scoreComponents.lexical }),
     locator: hit.locator,
     matchedEvidence: hit.matchedEvidence,
+    meaningSignals: meaningForLocator(corpus, hit.locator),
     title: hit.title,
   };
 }
 
-function baselineCandidates(hits: readonly HierarchicalRetrievalHitV1[]): Map<string, Candidate> {
-  return new Map(hits.map((hit) => [candidateKey(hit.locator), fromBaselineHit(hit)]));
+function baselineCandidates(
+  hits: readonly HierarchicalRetrievalHitV1[],
+  corpus: ApprovedWikiRetrievalCorpusV1,
+): Map<string, Candidate> {
+  return new Map(hits.map((hit) => [candidateKey(hit.locator), fromBaselineHit(hit, corpus)]));
 }
 
 function semanticLocator(
@@ -204,10 +259,10 @@ function addSemanticCandidates(
           actual.citationId === canonical.citationId && actual.sourceId === canonical.sourceId))) {
       throw new LocalWikiRetrievalError('LOCAL_WIKI_RETRIEVAL_CONTRACT_INVALID');
     }
-    const locator = semanticLocator(corpus.projectId, Object.freeze({
-      ...hit,
-      citationLocators: expected.citations,
-    }));
+    const locator = semanticLocator(corpus.projectId,
+      corpus.schemaVersion === LEGACY_APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION
+        ? Object.freeze({ ...hit, citationLocators: expected.citations })
+        : hit);
     const key = candidateKey(locator);
     const prior = candidates.get(key);
     const semantic = Object.freeze({
@@ -224,6 +279,7 @@ function addSemanticCandidates(
         chunkId: hit.chunkId,
         locator,
         matchedEvidence: Object.freeze([]),
+        meaningSignals: meaningForLocator(corpus, locator),
         title,
       });
     } else if (!prior.channels.has('semantic')) {
@@ -234,31 +290,236 @@ function addSemanticCandidates(
   }
 }
 
+function normalizeIntent(
+  requested: LocalWikiRetrievalIntent,
+  query: string,
+): NormalizedIntent {
+  if (requested !== 'auto') return Object.freeze({
+    effective: requested,
+    reasons: Object.freeze([`explicit-${requested}` as LocalWikiRetrievalIntentReasonCode]),
+    requested,
+  });
+  if (/\bgate(?:[ \t]+[a-z0-9]+)?\b/iu.test(query)) return Object.freeze({
+    effective: 'historical',
+    reasons: Object.freeze(['auto-historical-gate-marker'] as const),
+    requested,
+  });
+  if (/\b(?:iteration|v[0-9]{1,4})\b|반복[ \t]*개발|이터레이션/iu.test(query)) {
+    return Object.freeze({
+      effective: 'historical',
+      reasons: Object.freeze(['auto-historical-iteration-marker'] as const),
+      requested,
+    });
+  }
+  if (/\b(?:deprecated|historical|history|past|previous|superseded)\b|과거|이전|당시|폐기|대체/iu
+    .test(query)) return Object.freeze({
+    effective: 'historical',
+    reasons: Object.freeze(['auto-historical-history-marker'] as const),
+    requested,
+  });
+  return Object.freeze({
+    effective: 'current',
+    reasons: Object.freeze(['auto-current-default'] as const),
+    requested,
+  });
+}
+
+function meaningAdjustment(
+  signals: readonly ApprovedWikiMeaningSignalV1[],
+  intent: LocalWikiRetrievalEffectiveIntent,
+): LocalWikiRetrievalHitV3['meaningAdjustment'] {
+  const authorities = new Set(signals.map((signal) => signal.authority));
+  const lifecycles = new Set(signals.map((signal) => signal.lifecycle));
+  const evidenceKinds = new Set(signals.map((signal) => signal.evidenceKind));
+  const reasons = new Set<string>();
+  let authority = 0;
+  let evidenceKind = 0;
+  let lifecycle = 0;
+  if (signals.length === 0 || signals.every((signal) => signal.origin === 'legacy-default')) {
+    reasons.add('legacy-default-neutral');
+  }
+  if (intent === 'neutral') {
+    reasons.add('neutral-intent');
+  } else if (intent === 'current') {
+    const authorityPositive = authorities.has('canonical') || authorities.has('supporting');
+    const authorityNegative = authorities.has('historical');
+    if (authorityPositive && authorityNegative) reasons.add('conflicting-authority-neutral');
+    else if (authorities.has('canonical')) {
+      authority = 0.0015;
+      reasons.add('canonical-authority-boost');
+    } else if (authorities.has('supporting')) {
+      authority = 0.001;
+      reasons.add('supporting-authority-boost');
+    } else if (authorityNegative) {
+      authority = -0.0015;
+      reasons.add('historical-authority-demotion');
+    }
+
+    const lifecyclePositive = lifecycles.has('current');
+    const lifecycleNegative = ['deprecated', 'draft', 'superseded'].some((value) =>
+      lifecycles.has(value as 'deprecated' | 'draft' | 'superseded'));
+    if (lifecyclePositive && lifecycleNegative) reasons.add('conflicting-lifecycle-neutral');
+    else if (lifecyclePositive) {
+      lifecycle = 0.003;
+      reasons.add('current-lifecycle-boost');
+    } else if (lifecycles.has('draft')) {
+      lifecycle = -0.003;
+      reasons.add('draft-lifecycle-demotion');
+    } else if (lifecycles.has('superseded')) {
+      lifecycle = -0.003;
+      reasons.add('superseded-lifecycle-demotion');
+    } else if (lifecycles.has('deprecated')) {
+      lifecycle = -0.0025;
+      reasons.add('deprecated-lifecycle-demotion');
+    }
+
+    const preferred = ['architecture', 'decision', 'implementation', 'overview', 'verification']
+      .some((value) => evidenceKinds.has(value as ApprovedWikiMeaningSignalV1['evidenceKind']));
+    const historical = ['execution', 'planning']
+      .some((value) => evidenceKinds.has(value as ApprovedWikiMeaningSignalV1['evidenceKind']));
+    if (preferred && historical) reasons.add('conflicting-evidence-kind-neutral');
+    else if (preferred) {
+      evidenceKind = 0.001;
+      reasons.add('current-evidence-boost');
+    } else if (historical) {
+      evidenceKind = -0.0005;
+      reasons.add('historical-evidence-demotion');
+    }
+  } else {
+    const authorityPositive = authorities.has('historical');
+    const authorityNegative = authorities.has('canonical') || authorities.has('supporting');
+    if (authorityPositive && authorityNegative) reasons.add('conflicting-authority-neutral');
+    else if (authorityPositive) {
+      authority = 0.0015;
+      reasons.add('historical-authority-boost');
+    }
+    const lifecyclePositive = lifecycles.has('superseded') || lifecycles.has('deprecated');
+    const lifecycleNegative = lifecycles.has('current');
+    if (lifecyclePositive && lifecycleNegative) reasons.add('conflicting-lifecycle-neutral');
+    else if (lifecyclePositive) {
+      lifecycle = 0.003;
+      reasons.add('historical-lifecycle-boost');
+    }
+    const historicalEvidence = ['decision', 'execution', 'planning'].some((value) =>
+      evidenceKinds.has(value as ApprovedWikiMeaningSignalV1['evidenceKind']));
+    const currentEvidence = ['architecture', 'implementation', 'overview', 'verification']
+      .some((value) => evidenceKinds.has(value as ApprovedWikiMeaningSignalV1['evidenceKind']));
+    if (historicalEvidence && currentEvidence) reasons.add('conflicting-evidence-kind-neutral');
+    else if (historicalEvidence) {
+      evidenceKind = 0.001;
+      reasons.add('historical-evidence-boost');
+    }
+  }
+  const total = roundTwelve(authority + lifecycle + evidenceKind);
+  return Object.freeze({
+    authority,
+    evidenceKind,
+    lifecycle,
+    reasonCodes: Object.freeze([...reasons].sort(compareText)),
+    total,
+  });
+}
+
 function rankCandidates(
   candidates: ReadonlyMap<string, Candidate>,
   topK: number,
   fused: boolean,
-): readonly LocalWikiRetrievalHitV2[] {
+  intent: LocalWikiRetrievalEffectiveIntent,
+): readonly LocalWikiRetrievalHitV3[] {
   const ranked = [...candidates.values()].map((candidate) => {
     const channels = sortedChannels(candidate.channels, fused);
-    const score = fused
+    const baseScore = fused
       ? roundTwelve(channels.reduce((sum, channel) => sum + channel.contribution, 0))
       : channels[0]?.score ?? 0;
-    return { candidate, channels, score };
-  }).sort((left, right) => right.score - left.score ||
+    const adjustment = meaningAdjustment(candidate.meaningSignals, intent);
+    const finalScore = roundTwelve(baseScore + adjustment.total);
+    return { adjustment, baseScore, candidate, channels, finalScore };
+  }).sort((left, right) => right.finalScore - left.finalScore ||
     compareText(left.candidate.locator.pageId, right.candidate.locator.pageId) ||
     compareText(left.candidate.locator.sectionId, right.candidate.locator.sectionId) ||
     compareText(left.candidate.chunkId, right.candidate.chunkId));
-  return Object.freeze(ranked.slice(0, topK).map(({ candidate, channels, score }, index) =>
+  const isCurrent = (item: (typeof ranked)[number]): boolean =>
+    item.candidate.meaningSignals.some((signal) => signal.lifecycle === 'current');
+  const isStale = (item: (typeof ranked)[number]): boolean =>
+    item.candidate.meaningSignals.some((signal) =>
+      signal.lifecycle === 'draft' || signal.lifecycle === 'superseded');
+  const applyCurrentFloor = <T extends (typeof ranked)[number]>(items: readonly T[]): T[] => {
+    const ordered = [...items];
+    if (intent !== 'current') return ordered;
+    const firstStale = ordered.findIndex(isStale);
+    if (firstStale < 0) return ordered;
+    const beforeStale = ordered.slice(0, firstStale);
+    const afterStale = ordered.slice(firstStale);
+    return [
+      ...beforeStale,
+      ...afterStale.filter(isCurrent),
+      ...afterStale.filter((item) => !isCurrent(item)),
+    ];
+  };
+  const ordered = applyCurrentFloor(ranked);
+  const selected: Array<(typeof ranked)[number] & Readonly<{
+    readonly diversificationReason: LocalWikiRetrievalHitV3['diversificationReason'];
+  }>> = [];
+  const selectedKeys = new Set<string>();
+  const pages = new Set<string>();
+  const topics = new Set<string>();
+  const iterations = new Set<string>();
+  for (const item of ordered) {
+    const topicGroups = item.candidate.meaningSignals.flatMap((signal) =>
+      signal.topicGroup === null ? [] : [signal.topicGroup]);
+    const iterationGroups = item.candidate.meaningSignals.flatMap((signal) =>
+      signal.iterationGroup === null ? [] : [signal.iterationGroup]);
+    if (pages.has(item.candidate.locator.pageId) || topicGroups.some((group) => topics.has(group)) ||
+        iterationGroups.some((group) => iterations.has(group))) continue;
+    selected.push({ ...item, diversificationReason: 'primary-distinct-groups' });
+    selectedKeys.add(candidateKey(item.candidate.locator));
+    pages.add(item.candidate.locator.pageId);
+    for (const group of topicGroups) topics.add(group);
+    for (const group of iterationGroups) iterations.add(group);
+    if (selected.length === topK) break;
+  }
+  if (selected.length < topK) {
+    for (const item of ordered) {
+      if (selectedKeys.has(candidateKey(item.candidate.locator))) continue;
+      selected.push({ ...item, diversificationReason: 'secondary-fill' });
+      if (selected.length === topK) break;
+    }
+  }
+  if (intent === 'current') {
+    const selectedKeysAfterDiversification = new Set(selected.map((item) =>
+      candidateKey(item.candidate.locator)));
+    for (const current of ordered.filter(isCurrent)) {
+      const currentKey = candidateKey(current.candidate.locator);
+      if (selectedKeysAfterDiversification.has(currentKey)) continue;
+      const firstStale = selected.findIndex(isStale);
+      if (firstStale < 0) break;
+      const replaced = selected[firstStale];
+      if (replaced === undefined) break;
+      selected.splice(firstStale, 1, {
+        ...current,
+        diversificationReason: 'secondary-fill',
+      });
+      selectedKeysAfterDiversification.delete(candidateKey(replaced.candidate.locator));
+      selectedKeysAfterDiversification.add(currentKey);
+    }
+    selected.splice(0, selected.length, ...applyCurrentFloor(selected));
+  }
+  return Object.freeze(selected.map(({
+    adjustment, baseScore, candidate, channels, diversificationReason, finalScore,
+  }, index) =>
     Object.freeze({
+      baseScore,
       channels,
       chunkId: candidate.chunkId,
+      diversificationReason,
+      finalScore,
       locator: candidate.locator,
       matchedEvidence: candidate.matchedEvidence,
+      meaningAdjustment: adjustment,
       rank: index + 1,
-      score,
+      score: finalScore,
       scoreComponents: Object.freeze({
-        combinedScore: score,
+        combinedScore: finalScore,
         ...(candidate.lexical === undefined ? {} : { lexical: candidate.lexical }),
       }),
       scoreKind: fused ? 'rrf-v1' as const : candidate.channels.has('semantic')
@@ -269,9 +530,9 @@ function rankCandidates(
 }
 
 function validateRequest(
-  request: LocalWikiRetrievalRequestV2,
+  request: LocalWikiRetrievalRequestV3,
   expectedProjectId: string,
-): Readonly<Required<LocalWikiRetrievalRequestV2>> {
+): Readonly<Required<LocalWikiRetrievalRequestV3>> {
   let value: unknown;
   try {
     value = { ...request };
@@ -280,16 +541,19 @@ function validateRequest(
   }
   if (!isRecord(value) || typeof value.projectId !== 'string' ||
       typeof value.query !== 'string' || Object.keys(value).some((key) =>
-        !['mode', 'projectId', 'query', 'topK'].includes(key))) {
+        !['intent', 'mode', 'projectId', 'query', 'topK'].includes(key))) {
     throw new LocalWikiRetrievalError('LOCAL_WIKI_RETRIEVAL_CONFIG_INVALID');
   }
   if (value.projectId !== expectedProjectId) {
     throw new LocalWikiRetrievalError('LOCAL_WIKI_RETRIEVAL_PROJECT_MISMATCH');
   }
   const mode = value.mode ?? 'hybrid';
+  const intent = value.intent ?? 'auto';
   const topK = value.topK ?? 10;
   const normalized = value.query.normalize('NFC');
-  if (typeof mode !== 'string' ||
+  if (typeof intent !== 'string' ||
+      !['auto', 'current', 'historical', 'neutral'].includes(intent) ||
+      typeof mode !== 'string' ||
       !['graph', 'hybrid', 'lexical', 'semantic'].includes(mode) ||
       normalized.trim() === '' || normalized !== value.query ||
       Buffer.byteLength(normalized, 'utf8') > MAXIMUM_QUERY_UTF8_BYTES ||
@@ -301,6 +565,7 @@ function validateRequest(
     throw new LocalWikiRetrievalError('LOCAL_WIKI_RETRIEVAL_CONFIG_INVALID');
   }
   return Object.freeze({
+    intent: intent as LocalWikiRetrievalIntent,
     mode: mode as LocalWikiRetrievalMode,
     projectId: expectedProjectId,
     query: normalized,
@@ -435,7 +700,7 @@ async function semanticSearch(
   let searched;
   let after;
   try {
-    searched = await options.vectorIndex.searchExact(
+    searched = await options.vectorIndex.searchExactDistinctSections(
       options.projectId,
       queryVector,
       topK,
@@ -459,16 +724,18 @@ async function semanticSearch(
 }
 
 function fallbackResult(
-  projectId: string,
+  corpus: ApprovedWikiRetrievalCorpusV1,
   topK: number,
   baselineHits: readonly HierarchicalRetrievalHitV1[],
   reasonCode: LocalWikiRetrievalFallbackReason,
-): RetrievalResultV2 {
+  intent: NormalizedIntent,
+): RetrievalResultV3 {
   return Object.freeze({
-    schemaVersion: RETRIEVAL_RESULT_V2_SCHEMA_VERSION,
-    projectId,
+    schemaVersion: RETRIEVAL_RESULT_V3_SCHEMA_VERSION,
+    projectId: corpus.projectId,
     requestedMode: 'hybrid',
     effectiveMode: 'lexical-graph',
+    effectiveIntent: intent.effective,
     effectiveChannels: Object.freeze(['lexical', 'graph'] as const),
     fallback: Object.freeze({
       excludedChannel: 'semantic',
@@ -477,41 +744,49 @@ function fallbackResult(
       toMode: 'lexical-graph',
     }),
     fusionPolicy: RETRIEVAL_FUSION_POLICY_V1,
-    hits: rankCandidates(baselineCandidates(baselineHits), topK, true),
+    intentReasonCodes: intent.reasons,
+    hits: rankCandidates(baselineCandidates(baselineHits, corpus), topK, true, intent.effective),
     identity: Object.freeze({
       embeddingIdentityDigest: null,
       indexGenerationId: null,
       indexManifestDigest: null,
     }),
     providerUsed: 'none',
+    rankingPolicy: RETRIEVAL_RANKING_POLICY_V2,
+    requestedIntent: intent.requested,
     egress: 'none',
   });
 }
 
 function baselineResult(
-  projectId: string,
+  corpus: ApprovedWikiRetrievalCorpusV1,
   mode: 'graph' | 'lexical',
   topK: number,
   baselineHits: readonly HierarchicalRetrievalHitV1[],
-): RetrievalResultV2 {
+  intent: NormalizedIntent,
+): RetrievalResultV3 {
   const fused = mode === 'graph';
   return Object.freeze({
-    schemaVersion: RETRIEVAL_RESULT_V2_SCHEMA_VERSION,
-    projectId,
+    schemaVersion: RETRIEVAL_RESULT_V3_SCHEMA_VERSION,
+    projectId: corpus.projectId,
     requestedMode: mode,
     effectiveMode: mode === 'graph' ? 'lexical-graph' : 'lexical',
+    effectiveIntent: intent.effective,
     effectiveChannels: mode === 'graph'
       ? Object.freeze(['lexical', 'graph'] as const)
       : Object.freeze(['lexical'] as const),
     fallback: null,
     fusionPolicy: fused ? RETRIEVAL_FUSION_POLICY_V1 : null,
-    hits: rankCandidates(baselineCandidates(baselineHits), topK, fused),
+    intentReasonCodes: intent.reasons,
+    hits: rankCandidates(baselineCandidates(baselineHits, corpus), topK, fused, intent.effective),
     identity: Object.freeze({
       embeddingIdentityDigest: null,
       indexGenerationId: null,
       indexManifestDigest: null,
     }),
     providerUsed: 'none',
+    rankingPolicy: RETRIEVAL_RANKING_POLICY_V2,
+    requestedIntent: intent.requested,
     egress: 'none',
   });
 }
@@ -522,50 +797,56 @@ function semanticResult(
   topK: number,
   semantic: SemanticSearch,
   baselineHits: readonly HierarchicalRetrievalHitV1[],
-): RetrievalResultV2 {
+  intent: NormalizedIntent,
+): RetrievalResultV3 {
   const candidates = requestedMode === 'hybrid'
-    ? baselineCandidates(baselineHits)
+    ? baselineCandidates(baselineHits, options.corpus)
     : new Map<string, Candidate>();
   addSemanticCandidates(candidates, semantic.hits, options.corpus);
   const fused = requestedMode === 'hybrid';
   return Object.freeze({
-    schemaVersion: RETRIEVAL_RESULT_V2_SCHEMA_VERSION,
+    schemaVersion: RETRIEVAL_RESULT_V3_SCHEMA_VERSION,
     projectId: options.projectId,
     requestedMode,
     effectiveMode: requestedMode,
+    effectiveIntent: intent.effective,
     effectiveChannels: requestedMode === 'hybrid'
       ? Object.freeze(['lexical', 'graph', 'semantic'] as const)
       : Object.freeze(['semantic'] as const),
     fallback: null,
     fusionPolicy: fused ? RETRIEVAL_FUSION_POLICY_V1 : null,
-    hits: rankCandidates(candidates, topK, fused),
+    intentReasonCodes: intent.reasons,
+    hits: rankCandidates(candidates, topK, fused, intent.effective),
     identity: Object.freeze({
       embeddingIdentityDigest: semantic.manifest.embeddingIdentity.identityDigest,
       indexGenerationId: semantic.manifest.generationId,
       indexManifestDigest: semantic.manifest.manifestDigest,
     }),
     providerUsed: 'local-in-process',
+    rankingPolicy: RETRIEVAL_RANKING_POLICY_V2,
+    requestedIntent: intent.requested,
     egress: 'none',
   });
 }
 
-export function createApprovedWikiHybridRetrieval(
+export function createApprovedWikiHybridRetrievalV3(
   options: CreateApprovedWikiHybridRetrievalOptions,
-): LocalWikiRetrievalPortV2 {
+): LocalWikiRetrievalPortV3 {
   if (!/^sha256:[a-f0-9]{64}$/u.test(options.sanitizerPolicyDigest)) {
     throw new LocalWikiRetrievalError('LOCAL_WIKI_RETRIEVAL_CONFIG_INVALID');
   }
   const baseline = createApprovedWikiRetrieval(options.corpus, options.projectId);
   return Object.freeze({
-    async search(input: LocalWikiRetrievalRequestV2): Promise<RetrievalResultV2> {
+    async search(input: LocalWikiRetrievalRequestV3): Promise<RetrievalResultV3> {
       const request = validateRequest(input, options.projectId);
+      const intent = normalizeIntent(request.intent, request.query);
       if (request.mode === 'lexical' || request.mode === 'graph') {
         const result = baseline.search({
           mode: request.mode,
           projectId: request.projectId,
           query: request.query,
         });
-        return baselineResult(options.projectId, request.mode, request.topK, result.hits);
+        return baselineResult(options.corpus, request.mode, request.topK, result.hits, intent);
       }
       const graph = baseline.search({
         mode: 'graph',
@@ -574,7 +855,7 @@ export function createApprovedWikiHybridRetrieval(
       });
       try {
         const semantic = await semanticSearch(options, request.query, request.topK);
-        return semanticResult(options, request.mode, request.topK, semantic, graph.hits);
+        return semanticResult(options, request.mode, request.topK, semantic, graph.hits, intent);
       } catch (error) {
         if (!(error instanceof LocalWikiRetrievalError) ||
             error.code !== 'LOCAL_WIKI_SEMANTIC_UNAVAILABLE') throw error;
@@ -583,8 +864,50 @@ export function createApprovedWikiHybridRetrieval(
         if (reasonCode === null) {
           throw new LocalWikiRetrievalError('LOCAL_WIKI_RETRIEVAL_CONTRACT_INVALID');
         }
-        return fallbackResult(options.projectId, request.topK, graph.hits, reasonCode);
+        return fallbackResult(options.corpus, request.topK, graph.hits, reasonCode, intent);
       }
+    },
+  });
+}
+
+function retrievalHitV2(hit: LocalWikiRetrievalHitV3): LocalWikiRetrievalHitV2 {
+  return Object.freeze({
+    channels: hit.channels,
+    chunkId: hit.chunkId,
+    locator: hit.locator,
+    matchedEvidence: hit.matchedEvidence,
+    rank: hit.rank,
+    score: hit.score,
+    scoreComponents: hit.scoreComponents,
+    scoreKind: hit.scoreKind,
+    title: hit.title,
+  });
+}
+
+function retrievalResultV2(result: RetrievalResultV3): RetrievalResultV2 {
+  return Object.freeze({
+    effectiveChannels: result.effectiveChannels,
+    effectiveMode: result.effectiveMode,
+    egress: result.egress,
+    fallback: result.fallback,
+    fusionPolicy: result.fusionPolicy,
+    hits: Object.freeze(result.hits.map(retrievalHitV2)),
+    identity: result.identity,
+    projectId: result.projectId,
+    providerUsed: result.providerUsed,
+    requestedMode: result.requestedMode,
+    schemaVersion: RETRIEVAL_RESULT_V2_SCHEMA_VERSION,
+  });
+}
+
+/** Compatibility facade for the published v2 request and result contract. */
+export function createApprovedWikiHybridRetrieval(
+  options: CreateApprovedWikiHybridRetrievalOptions,
+): LocalWikiRetrievalPortV2 {
+  const current = createApprovedWikiHybridRetrievalV3(options);
+  return Object.freeze({
+    async search(input: LocalWikiRetrievalRequestV2): Promise<RetrievalResultV2> {
+      return retrievalResultV2(await current.search(input));
     },
   });
 }

@@ -131,7 +131,10 @@ describe('CLI argument parser', () => {
     { args: ['index', 'status', '--project', 'alpha'], command: 'index.status' },
     { args: ['index', 'rebuild', '--project', 'alpha', '--full'], command: 'index.rebuild' },
     {
-      args: ['search', '--project', 'alpha', '--query', 'failure', '--mode', 'hybrid'],
+      args: [
+        'search', '--project', 'alpha', '--query', 'failure', '--mode', 'hybrid',
+        '--intent', 'current',
+      ],
       command: 'search',
     },
     { args: ['query', '--project', 'alpha', '--question', 'why'], command: 'query' },
@@ -433,7 +436,7 @@ describe('CLI argument parser', () => {
     );
   });
 
-  it('requires explicit project selection and validates search mode', () => {
+  it('requires explicit project selection and validates search mode and intent', () => {
     expectUsageError(
       ['project', 'add', '--id', 'alpha', '--source-repo', '../alpha'],
       'CLI_OPTION_MISSING',
@@ -442,6 +445,10 @@ describe('CLI argument parser', () => {
     expectUsageError(['check', '--project', 'TOKEN=do-not-reflect'], 'CLI_ARGUMENT_INVALID');
     expectUsageError(
       ['search', '--project', 'alpha', '--query', 'failure', '--mode', 'future'],
+      'CLI_ARGUMENT_INVALID',
+    );
+    expectUsageError(
+      ['search', '--project', 'alpha', '--query', 'failure', '--intent', 'future'],
       'CLI_ARGUMENT_INVALID',
     );
   });

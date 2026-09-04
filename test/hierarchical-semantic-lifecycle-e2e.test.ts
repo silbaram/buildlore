@@ -1016,14 +1016,34 @@ describe('hierarchical semantic lifecycle handoff integration', () => {
         result: { ledger: { effectiveMode: 'full', egress: 'none' }, outcome: 'activated' },
       });
     const updated = await operator.search({
+      intent: 'current',
       mode: 'hybrid',
       projectId: PROJECT_ID,
       query: 'Novacycle',
       topK: 20,
     });
-    expect(updated).toMatchObject({ effectiveMode: 'hybrid', fallback: null });
+    expect(updated).toMatchObject({
+      effectiveIntent: 'current',
+      effectiveMode: 'hybrid',
+      fallback: null,
+      requestedIntent: 'current',
+    });
     expect(updated.hits.map((hit) => hit.locator.pageId)).toContain(AFFECTED_PAGE);
     expect(updated.hits.map((hit) => hit.locator.pageId)).toContain(UNAFFECTED_PAGE);
+    const historical = await operator.search({
+      intent: 'historical',
+      mode: 'hybrid',
+      projectId: PROJECT_ID,
+      query: 'Gate B Novacycle',
+      topK: 20,
+    });
+    expect(historical).toMatchObject({
+      effectiveIntent: 'historical',
+      effectiveMode: 'hybrid',
+      fallback: null,
+      requestedIntent: 'historical',
+    });
+    expect(historical.hits.map((hit) => hit.locator.pageId)).toContain(AFFECTED_PAGE);
 
     await rm(join(
       current.knowledgeRoot,
@@ -1039,6 +1059,7 @@ describe('hierarchical semantic lifecycle handoff integration', () => {
     });
     await operator.rebuildIndex({ full: true, projectId: PROJECT_ID });
     const regenerated = await operator.search({
+      intent: 'current',
       mode: 'hybrid',
       projectId: PROJECT_ID,
       query: 'Novacycle',

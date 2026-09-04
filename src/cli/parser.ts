@@ -333,7 +333,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     ['search'],
     'search',
     'search',
-    ['--project', '--query', '--mode'],
+    ['--project', '--query', '--mode', '--intent'],
     ['--project', '--query'],
     [],
     {},
@@ -577,6 +577,13 @@ function parseOptions(
     spec.command === 'search' &&
     values['--mode'] !== undefined &&
     !['graph', 'hybrid', 'lexical', 'semantic'].includes(String(values['--mode']))
+  ) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+  if (
+    spec.command === 'search' &&
+    values['--intent'] !== undefined &&
+    !['auto', 'current', 'historical', 'neutral'].includes(String(values['--intent']))
   ) {
     throw new CliUsageError('CLI_ARGUMENT_INVALID');
   }

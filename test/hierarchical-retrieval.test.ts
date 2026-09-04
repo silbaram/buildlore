@@ -59,6 +59,66 @@ function authorityCheck(
 }
 
 describe('approved hierarchical Wiki retrieval', () => {
+  it('[RQ-V-08][RQ-SC-10] replays 79 legacy pages and all 423 citation locators', () => {
+    const rootPageId = 'baseline/page-000';
+    const pageIds = Array.from({ length: 79 }, (_, index) =>
+      `baseline/page-${String(index).padStart(3, '0')}`);
+    const pages = pageIds.map((pageId, pageIndex) => {
+      const citationCount = pageIndex < 28 ? 6 : 5;
+      const citationLocators = Array.from({ length: citationCount }, (_, citationIndex) => {
+        const suffix = `${String(pageIndex).padStart(3, '0')}-` +
+          String(citationIndex).padStart(2, '0');
+        return Object.freeze({
+          citationId: `citation-${suffix}`,
+          sourceId: `source-${suffix}`,
+        });
+      });
+      const body = citationLocators.map((locator) =>
+        `Grounded baseline claim ${locator.citationId}. [^${locator.citationId}]`).join('\n\n');
+      return Object.freeze({
+        childPageIds: pageIndex === 0 ? Object.freeze(pageIds.slice(1)) : Object.freeze([]),
+        pageId,
+        parentPageId: pageIndex === 0 ? null : rootPageId,
+        proposalDigest: digestHierarchyValue({ pageId, pageIndex }),
+        relationPageIds: Object.freeze([]),
+        sections: Object.freeze([Object.freeze({
+          body,
+          citationLocators: Object.freeze(citationLocators),
+          sectionId: 'evidence',
+        })]),
+        status: 'active' as const,
+        summary: `Approved baseline page ${pageIndex}.`,
+        title: `Baseline page ${pageIndex}`,
+      });
+    });
+    const basis = Object.freeze({
+      generationDigest: digestHierarchyValue('79-page-baseline-generation'),
+      pages: Object.freeze(pages),
+      projectId: PROJECT_ID,
+      schemaVersion: 'buildlore.approved-wiki-retrieval-corpus.v1' as const,
+    });
+    const corpus = Object.freeze({ ...basis, corpusDigest: digestHierarchyValue(basis) });
+    const retrieval = createApprovedWikiRetrieval(corpus, PROJECT_ID);
+    const listed = retrieval.list(PROJECT_ID);
+    const listedIds = new Set(listed.map((page) => page.pageId));
+    const replayed = listed.map((page) => {
+      const value = retrieval.read(PROJECT_ID, page.pageId);
+      if (value === undefined) throw new Error('Approved baseline page could not be replayed.');
+      return value;
+    });
+    const citationCount = replayed.reduce((sum, page) => sum + page.sections.reduce(
+      (sectionSum, section) => sectionSum + section.citationLocators.length,
+      0,
+    ), 0);
+    const orphanPageIds = listed.filter((page) =>
+      page.parentPageId !== null && !listedIds.has(page.parentPageId)).map((page) => page.pageId);
+
+    expect(listed).toHaveLength(79);
+    expect(citationCount).toBe(423);
+    expect(orphanPageIds).toEqual([]);
+    expect(replayed).toEqual(corpus.pages);
+  });
+
   it('[HSW-V-07][HSW-V-08] records at least 15 positive lexical/graph gold questions', async () => {
     const gold = await fixture();
     const first = evaluateHierarchicalRetrievalGold(gold);
@@ -351,17 +411,28 @@ describe('approved hierarchical Wiki retrieval', () => {
       proposals: [proposal],
       state,
     }, PROJECT_ID);
-    expect(corpus.pages).toEqual([expect.objectContaining({
+    expect(corpus.schemaVersion).toBe('buildlore.approved-wiki-retrieval-corpus.v2');
+    expect(corpus.pages[0]).toMatchObject({
       pageId,
       sections: [
         {
           body: 'Grounded approved claim. [^citation-one]',
           citationLocators: [{ citationId: 'citation-one', sourceId: 'source-one' }],
           sectionId: 'main',
+          semanticText: 'Grounded approved claim.',
         },
       ],
       status: 'active',
-    })]);
+    });
+    expect(corpus.pages[0]?.sections[0]?.exclusionSummary).toMatchObject({
+      excludedKinds: ['citation-marker'],
+    });
+    expect(corpus.pages[0]?.sections[0]?.meaningSignals?.[0]).toMatchObject({
+      authority: 'unknown',
+      lifecycle: 'unknown',
+      origin: 'legacy-default',
+      sourceId: 'source-one',
+    });
     expect(createApprovedWikiRetrieval(corpus, PROJECT_ID).search({
       projectId: PROJECT_ID,
       query: 'Grounded claim',

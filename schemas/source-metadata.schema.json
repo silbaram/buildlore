@@ -16,10 +16,60 @@
       "type": "object",
       "maxProperties": 64,
       "propertyNames": { "$ref": "#/$defs/safeKey" },
+      "properties": {
+        "retrievalMeaning": { "$ref": "#/$defs/retrievalMeaning" }
+      },
       "additionalProperties": { "$ref": "#/$defs/valueAtDepth2" }
     }
   },
   "$defs": {
+    "retrievalMeaning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority", "evidenceKind", "iterationGroup", "lifecycle", "revisionOrdinal",
+        "schemaVersion", "supersededBySourceRefs", "supersedesSourceRefs", "topicGroup"
+      ],
+      "properties": {
+        "authority": { "enum": ["canonical", "historical", "supporting", "unknown"] },
+        "evidenceKind": {
+          "enum": [
+            "architecture", "decision", "execution", "failure", "implementation",
+            "other", "overview", "planning", "verification"
+          ]
+        },
+        "iterationGroup": { "$ref": "#/$defs/nullableGroup" },
+        "lifecycle": { "enum": ["current", "deprecated", "draft", "superseded", "unknown"] },
+        "revisionOrdinal": { "type": "integer", "minimum": 0 },
+        "schemaVersion": { "const": "buildlore.source-retrieval-meaning.v1" },
+        "supersededBySourceRefs": { "$ref": "#/$defs/sourceRefList" },
+        "supersedesSourceRefs": { "$ref": "#/$defs/sourceRefList" },
+        "topicGroup": { "$ref": "#/$defs/nullableGroup" }
+      }
+    },
+    "nullableGroup": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "string", "minLength": 1, "maxLength": 128,
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        }
+      ]
+    },
+    "sourceRefList": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sourceRef" }
+    },
+    "sourceRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?![\\s\\S]*\\\\)(?![\\s\\S]*%)(?![\\s\\S]*\\p{Cf})(?![\\s\\S]*[\\u0000-\\u001F\\u007F-\\u009F])(?!.*(?:^|/)(?:\\.\\.?|\\.git|\\.buildlore|\\.llmwiki)(?:/|$))(?!^(?:knowledge|projects|sources|wiki|export|exports)(?:/|$))(?!.*(?:^|[/_.-])(?:[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh][-_]?[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt][Ss]?|[Tt][Oo][Kk][Ee][Nn][Ss]?|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn])(?:$|[/_.-]))[^/\\\\%\\u0000-\\u001F\\u007F-\\u009F]+(?:/[^/\\\\%\\u0000-\\u001F\\u007F-\\u009F]+){0,63}$",
+      "x-buildlore-normalization": "NFC",
+      "x-buildlore-maxSegments": 64
+    },
     "adapterId": {
       "type": "string",
       "minLength": 1,

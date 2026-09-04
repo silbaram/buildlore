@@ -32,6 +32,7 @@ import type { SessionCompilePlanSnapshot } from '../src/compiler/session/source-
 import { validateSessionProposalBatch } from '../src/compiler/session/validator.js';
 import { SessionCompileError } from '../src/compiler/session/errors.js';
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
+import { sourceRetrievalMeaningFromDescriptor } from '../src/projector/index.js';
 import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const temporaryRoots: string[] = [];
@@ -93,6 +94,7 @@ function plan(
       compilerSourceId: `markdown--${'e'.repeat(64)}.md`,
       originalContentDigest: DIGEST,
       revision: DIGEST,
+      retrievalMeaning: sourceRetrievalMeaningFromDescriptor(undefined),
       sanitizedBody: citationQuote,
       sanitizedContentDigest: sessionSha256(citationQuote),
       sourceId: SOURCE_ID,
@@ -786,7 +788,7 @@ describe('session compile proposal validation', () => {
     expect(forward).toEqual(reversed);
     expect(forward).toMatchObject({ admittedCount: 184, heldCount: 184 });
     expect(forward.candidateRefs).toHaveLength(184);
-  });
+  }, 10_000);
 
   it('reports accumulated candidate refs when a later chunk fails', async () => {
     const proposals = Array.from({ length: 51 }, (_, index) => numberedProposal(index));

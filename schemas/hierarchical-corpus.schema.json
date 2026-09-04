@@ -113,6 +113,47 @@
       "x-buildlore-normalization": "NFC",
       "x-buildlore-maxSegments": 64
     },
+    "retrievalGroup": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "string", "minLength": 1, "maxLength": 128,
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        }
+      ]
+    },
+    "sourceRetrievalMeaning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority", "evidenceKind", "iterationGroup", "lifecycle", "revisionOrdinal",
+        "schemaVersion", "supersededBySourceRefs", "supersedesSourceRefs", "topicGroup"
+      ],
+      "properties": {
+        "authority": { "enum": ["canonical", "historical", "supporting", "unknown"] },
+        "evidenceKind": {
+          "enum": [
+            "architecture", "decision", "execution", "failure", "implementation",
+            "other", "overview", "planning", "verification"
+          ]
+        },
+        "iterationGroup": { "$ref": "#/$defs/retrievalGroup" },
+        "lifecycle": { "enum": ["current", "deprecated", "draft", "superseded", "unknown"] },
+        "revisionOrdinal": { "type": "integer", "minimum": 0 },
+        "schemaVersion": { "const": "buildlore.source-retrieval-meaning.v1" },
+        "supersededBySourceRefs": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourceRef" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "supersedesSourceRefs": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourceRef" },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "topicGroup": { "$ref": "#/$defs/retrievalGroup" }
+      }
+    },
     "purposeText": {
       "type": "string",
       "minLength": 1,
@@ -309,6 +350,26 @@
     "snapshotSource": {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "retrievalMeaning", "retrievalMeaningOrigin", "sourceId", "sourceRevision",
+        "sourceRef", "sanitizedContentDigest"
+      ],
+      "properties": {
+        "retrievalMeaning": {
+          "$ref": "#/$defs/sourceRetrievalMeaning"
+        },
+        "retrievalMeaningOrigin": {
+          "enum": ["adapter", "legacy-default", "manifest", "profile"]
+        },
+        "sourceId": { "$ref": "#/$defs/sourceId" },
+        "sourceRevision": { "$ref": "#/$defs/digest" },
+        "sourceRef": { "$ref": "#/$defs/sourceRef" },
+        "sanitizedContentDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "legacySnapshotSource": {
+      "type": "object",
+      "additionalProperties": false,
       "required": ["sourceId", "sourceRevision", "sourceRef", "sanitizedContentDigest"],
       "properties": {
         "sourceId": { "$ref": "#/$defs/sourceId" },
@@ -336,7 +397,9 @@
         "snapshotDigest"
       ],
       "properties": {
-        "schemaVersion": { "const": "buildlore.corpus-snapshot.v1" },
+        "schemaVersion": {
+          "enum": ["buildlore.corpus-snapshot.v1", "buildlore.corpus-snapshot.v2"]
+        },
         "projectId": { "$ref": "#/$defs/projectId" },
         "purposeDigest": { "$ref": "#/$defs/digest" },
         "interpretationRulesDigest": { "$ref": "#/$defs/digest" },
@@ -349,7 +412,12 @@
           "type": "array",
           "minItems": 1,
           "maxItems": 4096,
-          "items": { "$ref": "#/$defs/snapshotSource" },
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/legacySnapshotSource" },
+              { "$ref": "#/$defs/snapshotSource" }
+            ]
+          },
           "x-buildlore-canonicalOrderBy": "sourceId",
           "x-buildlore-uniqueBy": "sourceId"
         },
@@ -364,6 +432,30 @@
         "corpusDigest": { "$ref": "#/$defs/digest" },
         "snapshotDigest": { "$ref": "#/$defs/digest" }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "schemaVersion": { "const": "buildlore.corpus-snapshot.v1" } },
+            "required": ["schemaVersion"]
+          },
+          "then": {
+            "properties": {
+              "sources": { "items": { "$ref": "#/$defs/legacySnapshotSource" } }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "schemaVersion": { "const": "buildlore.corpus-snapshot.v2" } },
+            "required": ["schemaVersion"]
+          },
+          "then": {
+            "properties": {
+              "sources": { "items": { "$ref": "#/$defs/snapshotSource" } }
+            }
+          }
+        }
+      ],
       "x-buildlore-corpusDigestFields": ["sources", "textUnits"],
       "x-buildlore-digestExcludes": ["snapshotDigest"],
       "x-buildlore-maxUtf8Bytes": 33554432

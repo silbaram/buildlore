@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://buildlore.local/schemas/compile-plan.schema.json",
-  "title": "BuildLore Session Compile Plan v4",
+  "title": "BuildLore Session Compile Plan v5",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -22,7 +22,7 @@
     "allowedLinkTargets"
   ],
   "properties": {
-    "schemaVersion": { "const": "buildlore.compile-plan.v4" },
+    "schemaVersion": { "const": "buildlore.compile-plan.v5" },
     "projectId": { "$ref": "#/$defs/projectId" },
     "contractDigest": { "$ref": "#/$defs/digest" },
     "planDigest": { "$ref": "#/$defs/digest" },
@@ -31,7 +31,7 @@
     "selectionDigest": { "$ref": "#/$defs/digest" },
     "sourceManifestDigest": { "$ref": "#/$defs/digest" },
     "existingKnowledgeDigest": { "$ref": "#/$defs/digest" },
-    "algorithmVersion": { "const": "buildlore.session-planner.v3" },
+    "algorithmVersion": { "const": "buildlore.session-planner.v4" },
     "limits": {
       "type": "object",
       "additionalProperties": false,
@@ -135,6 +135,78 @@
         "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" }
       }
     },
+    "sourceRetrievalMeaning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "evidenceKind",
+        "iterationGroup",
+        "lifecycle",
+        "revisionOrdinal",
+        "schemaVersion",
+        "supersededBySourceRefs",
+        "supersedesSourceRefs",
+        "topicGroup"
+      ],
+      "properties": {
+        "authority": { "enum": ["canonical", "historical", "supporting", "unknown"] },
+        "evidenceKind": {
+          "enum": [
+            "architecture", "decision", "execution", "failure", "implementation",
+            "other", "overview", "planning", "verification"
+          ]
+        },
+        "iterationGroup": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+            }
+          ]
+        },
+        "lifecycle": {
+          "enum": ["current", "deprecated", "draft", "superseded", "unknown"]
+        },
+        "revisionOrdinal": { "type": "integer", "minimum": 0 },
+        "schemaVersion": { "const": "buildlore.source-retrieval-meaning.v1" },
+        "supersededBySourceRefs": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+        },
+        "supersedesSourceRefs": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+        },
+        "topicGroup": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+            }
+          ]
+        }
+      }
+    },
+    "boundSourceRetrievalMeaning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["meaning", "origin"],
+      "properties": {
+        "meaning": { "$ref": "#/$defs/sourceRetrievalMeaning" },
+        "origin": { "enum": ["adapter", "legacy-default", "manifest", "profile"] }
+      }
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,
@@ -144,6 +216,7 @@
         "compilerSourceId",
         "originalContentDigest",
         "revision",
+        "retrievalMeaning",
         "sanitizedBody",
         "sanitizedContentDigest",
         "sourceId",
@@ -165,6 +238,7 @@
         },
         "originalContentDigest": { "$ref": "#/$defs/digest" },
         "revision": { "$ref": "#/$defs/digest" },
+        "retrievalMeaning": { "$ref": "#/$defs/boundSourceRetrievalMeaning" },
         "sanitizedBody": { "type": "string", "minLength": 1, "maxLength": 524288 },
         "sanitizedContentDigest": { "$ref": "#/$defs/digest" },
         "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" },

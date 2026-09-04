@@ -515,15 +515,32 @@ embedding identity를 다시 검사합니다. build 중 drift가 생기면 이�
 node dist/cli/bin.js index status --project example --json
 node dist/cli/bin.js index rebuild --project example --json
 node dist/cli/bin.js search --project example --query "관련 결정" --mode graph
-node dist/cli/bin.js search --project example --query "인증 결정" --mode hybrid
+node dist/cli/bin.js search --project example --query "인증 결정" --mode hybrid --intent current
+node dist/cli/bin.js search --project example --query "Gate B 결정" --mode hybrid --intent historical
 node dist/cli/bin.js query --project example --question "Why was this design selected?"
 node dist/cli/bin.js context --project example --prompt "Prepare an implementation plan"
 ```
 
-`query`는 항상 `save: false`를 요청하지만, 상위 컴파일러는 선택 프로젝트의
-`log.md`에 질의 활동을 추가합니다. 임베딩 또는 제공자 접근을 사용할 수 없으면
-context가 로컬 lexical 경로로 명시적으로 fallback할 수 있습니다. 자동화에
-사용할 하나의 결정론적 `buildlore.cli-envelope.v1` 객체가 필요하면 어떤
+`--intent`는 `auto`(기본값), `current`, `historical`, `neutral`을 받습니다. Auto는
+제한된 Gate·iteration/version·과거 표지만 사용하며 분류 모델을 호출하지 않습니다.
+검색 결과 v3는 각 hit의 실제 intent, 원래 점수와 조정 점수, 제한된
+authority/lifecycle/evidence 조정, diversification 이유와 ranking policy digest를
+반환합니다. 의미 metadata가 없는 legacy source는 `unknown/unknown/other` 중립값으로
+계속 검색되지만 boost를 받지 않고 `legacy-default-neutral`로 기록됩니다.
+
+Source adapter 또는 manifest는 `values.retrievalMeaning`에 authority, lifecycle,
+evidence kind, revision ordinal, topic/iteration group과 supersession ref를 각각 선언할 수
+있습니다. 잘못된 명시 metadata는 닫힌 상태로 실패합니다. Semantic index v2는 정해진
+renderer·machine provenance 노이즈를 제거한 `semanticText`만 임베딩하며, 검토용 원문
+body와 citation locator는 보존합니다. Metadata나 projection policy가 바뀌면 파생
+index를 명시적으로 rebuild해야 합니다.
+
+`context`는 먼저 활성화된 승인 계층형 Wiki를 읽습니다. 섹션의 semantic text와 함께
+page, section, source, citation의 구조화 locator를 반환하며 hybrid에서 로컬 경로로
+전환되면 그 fallback을 명시합니다. 승인 projection이 없을 때만 기존 compiler context
+경로를 사용합니다. `query`는 항상 `save: false`를 요청하지만, 상위 컴파일러는 선택
+프로젝트의 `log.md`에 질의 활동을 추가합니다. 자동화에 사용할 하나의 결정론적
+`buildlore.cli-envelope.v1` 객체가 필요하면 어떤
 명령에든 `--json`을 추가합니다.
 
 ## Git으로 지식 게시

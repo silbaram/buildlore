@@ -25,6 +25,7 @@ import { isNodeError } from '../../knowledge/errors.js';
 import { resolveProjectWorkspace } from '../../knowledge/paths.js';
 import { decodeUtf8Strict, parseJsonStrict } from '../../knowledge/strict-json.js';
 import { parseEmbeddingIdentityV2 } from '../embedding/profile.js';
+import type { ApprovedWikiMeaningSignalV1 } from '../hierarchical.js';
 import {
   chunkApprovedWikiCorpus,
   createRetrievalChunkId,
@@ -522,12 +523,49 @@ function parseChecksums(value: unknown): SemanticIndexChecksumsV1 {
   return Object.freeze({ ...basis, checksumsDigest: value.checksumsDigest });
 }
 
+function parseMeaningSignals(value: unknown): readonly ApprovedWikiMeaningSignalV1[] {
+  if (!Array.isArray(value) || value.length > 100) {
+    return fail('SEMANTIC_INDEX_INCOMPATIBLE', 'artifact-invalid');
+  }
+  let previous = '';
+  const signals = value.map((item) => {
+    if (!isRecord(item) || !exactKeys(item, [
+      'authority', 'evidenceKind', 'iterationGroup', 'lifecycle', 'origin', 'revisionOrdinal',
+      'sourceId', 'topicGroup',
+    ]) || !safeId(item.sourceId) || item.sourceId <= previous ||
+        !['canonical', 'historical', 'supporting', 'unknown'].includes(String(item.authority)) ||
+        !['current', 'deprecated', 'draft', 'superseded', 'unknown']
+          .includes(String(item.lifecycle)) ||
+        !['architecture', 'decision', 'execution', 'failure', 'implementation', 'other',
+          'overview', 'planning', 'verification'].includes(String(item.evidenceKind)) ||
+        !['adapter', 'legacy-default', 'manifest', 'profile'].includes(String(item.origin)) ||
+        typeof item.revisionOrdinal !== 'number' || !Number.isSafeInteger(item.revisionOrdinal) ||
+        item.revisionOrdinal < 0 ||
+        (item.topicGroup !== null && !safeId(item.topicGroup)) ||
+        (item.iterationGroup !== null && !safeId(item.iterationGroup))) {
+      return fail('SEMANTIC_INDEX_INCOMPATIBLE', 'artifact-invalid');
+    }
+    previous = item.sourceId;
+    return Object.freeze({
+      authority: item.authority,
+      evidenceKind: item.evidenceKind,
+      iterationGroup: item.iterationGroup,
+      lifecycle: item.lifecycle,
+      origin: item.origin,
+      revisionOrdinal: item.revisionOrdinal,
+      sourceId: item.sourceId,
+      topicGroup: item.topicGroup,
+    }) as ApprovedWikiMeaningSignalV1;
+  });
+  return Object.freeze(signals);
+}
+
 function parseChunk(value: unknown, expectedProjectId: string, rowOrdinal: number): RetrievalChunkV1 {
   if (!isRecord(value) || !exactKeys(value, [
     'schemaVersion', 'projectId', 'pageId', 'pageRevision', 'sectionId', 'chunkId',
     'rowOrdinal', 'segmentOrdinal', 'structureOrdinal', 'structureKind', 'contentDigest',
     'utf8Bytes', 'maximumTokens', 'tokenCount', 'tokenTruncated', 'chunkerDigest',
-    'citationLocators', 'eligibility', 'skipReason',
+    'citationLocators', 'meaningSignals', 'eligibility', 'skipReason',
   ]) || value.schemaVersion !== RETRIEVAL_CHUNK_SCHEMA_VERSION ||
       value.projectId !== expectedProjectId || !safeId(value.pageId) ||
       !safeDigest(value.pageRevision) || !safeId(value.sectionId) ||
@@ -557,6 +595,7 @@ function parseChunk(value: unknown, expectedProjectId: string, rowOrdinal: numbe
   });
   if (new Set(citations.map((item) => `${item.citationId}\u0000${item.sourceId}`)).size !==
       citations.length) fail('SEMANTIC_INDEX_INCOMPATIBLE', 'artifact-invalid');
+  const meaningSignals = parseMeaningSignals(value.meaningSignals);
   const expectedChunkId = createRetrievalChunkId({
     contentDigest: value.contentDigest,
     pageId: value.pageId,
@@ -588,6 +627,7 @@ function parseChunk(value: unknown, expectedProjectId: string, rowOrdinal: numbe
     tokenTruncated: false,
     chunkerDigest: value.chunkerDigest,
     citationLocators: Object.freeze(citations),
+    meaningSignals,
     eligibility: 'eligible',
     skipReason: null,
   });
@@ -1807,6 +1847,24 @@ function exactCosineTopK(
     compareText(left.chunkId, right.chunkId)).slice(0, topK));
 }
 
+function exactCosineDistinctSectionsTopK(
+  queryVector: Float32Array,
+  candidates: readonly ExactCosineCandidate[],
+  topK: number,
+): readonly SemanticIndexSearchResultV1['hits'][number][] {
+  const ranked = exactCosineTopK(queryVector, candidates, candidates.length);
+  const selected: SemanticIndexSearchResultV1['hits'][number][] = [];
+  const sections = new Set<string>();
+  for (const hit of ranked) {
+    const sectionKey = `${hit.pageId}\u0000${hit.sectionId}`;
+    if (sections.has(sectionKey)) continue;
+    selected.push(hit);
+    sections.add(sectionKey);
+    if (selected.length === topK) break;
+  }
+  return Object.freeze(selected);
+}
+
 /** @internal Source-only benchmark seam for the bounded 50k exact-scan acceptance gate. */
 export function exactCosineTopKForTest(
   queryVector: Float32Array,
@@ -1994,6 +2052,29 @@ function createService(
         projectId,
         manifestDigest: active.manifest.manifestDigest,
         hits: Object.freeze(hits),
+      });
+    },
+    async searchExactDistinctSections(
+      projectId: string,
+      queryVector: Float32Array,
+      topK: number = 10,
+    ): Promise<SemanticIndexSearchResultV1> {
+      validateVector(queryVector);
+      if (!Number.isSafeInteger(topK) || topK < 1 ||
+          topK > SEMANTIC_INDEX_LIMITS.maximumQueryResults) {
+        return fail('SEMANTIC_INDEX_CONFIG_INVALID', 'artifact-invalid');
+      }
+      const workspace = await projectWorkspace(knowledgeRoot, projectId);
+      const active = await loadActive(pathsFor(workspace), projectId);
+      const candidates = active.chunks.map((chunk, index) => {
+        const vector = active.vectors[index];
+        if (vector === undefined) return fail('SEMANTIC_INDEX_INCOMPATIBLE', 'artifact-invalid');
+        return Object.freeze({ chunk, vector });
+      });
+      return Object.freeze({
+        hits: exactCosineDistinctSectionsTopK(queryVector, candidates, topK),
+        manifestDigest: active.manifest.manifestDigest,
+        projectId,
       });
     },
     exportBundle(input: SemanticIndexExportInputV1): Promise<SemanticIndexBundleResultV1> {

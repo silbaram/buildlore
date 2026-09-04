@@ -51,8 +51,10 @@
     "./schemas/hierarchical-markdown-materialization.schema.json": "./schemas/hierarchical-markdown-materialization.schema.json",
     "./schemas/hierarchical-retrieval.schema.json": "./schemas/hierarchical-retrieval.schema.json",
     "./schemas/local-embedding.schema.json": "./schemas/local-embedding.schema.json",
+    "./schemas/llm-wiki-retrieval-evaluation.schema.json": "./schemas/llm-wiki-retrieval-evaluation.schema.json",
     "./schemas/semantic-index.schema.json": "./schemas/semantic-index.schema.json",
     "./schemas/retrieval-result-v2.schema.json": "./schemas/retrieval-result-v2.schema.json",
+    "./schemas/retrieval-result-v3.schema.json": "./schemas/retrieval-result-v3.schema.json",
     "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json"
   },
   "files": [

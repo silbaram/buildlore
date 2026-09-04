@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://buildlore.local/schemas/hierarchical-retrieval.schema.json",
-  "title": "BuildLore approved hierarchical retrieval contracts v1",
+  "title": "BuildLore approved hierarchical retrieval contracts v1-v2",
   "oneOf": [
     { "$ref": "#/$defs/corpus" },
     { "$ref": "#/$defs/gold" },
@@ -39,7 +39,78 @@
         "sourceId": { "$ref": "#/$defs/id" }
       }
     },
+    "meaningSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority", "evidenceKind", "iterationGroup", "lifecycle", "origin",
+        "revisionOrdinal", "sourceId", "topicGroup"
+      ],
+      "properties": {
+        "authority": { "enum": ["canonical", "historical", "supporting", "unknown"] },
+        "evidenceKind": {
+          "enum": [
+            "architecture", "decision", "execution", "failure", "implementation",
+            "other", "overview", "planning", "verification"
+          ]
+        },
+        "iterationGroup": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }] },
+        "lifecycle": { "enum": ["current", "deprecated", "draft", "superseded", "unknown"] },
+        "origin": { "enum": ["adapter", "legacy-default", "manifest", "profile"] },
+        "revisionOrdinal": { "type": "integer", "minimum": 0 },
+        "sourceId": { "$ref": "#/$defs/id" },
+        "topicGroup": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }] }
+      }
+    },
+    "meaningSignals": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/meaningSignal" },
+      "x-buildlore-uniqueBy": "sourceId"
+    },
+    "exclusionSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["excludedKinds", "excludedUtf8Bytes", "policyDigest", "policyVersion"],
+      "properties": {
+        "excludedKinds": {
+          "type": "array", "maxItems": 4, "uniqueItems": true,
+          "items": {
+            "enum": [
+              "citation-marker", "duplicate-boilerplate", "machine-provenance",
+              "renderer-boilerplate"
+            ]
+          }
+        },
+        "excludedUtf8Bytes": { "type": "integer", "minimum": 0 },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "policyVersion": { "const": "buildlore.semantic-content-policy.v1" }
+      }
+    },
     "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body", "citationLocators", "exclusionSummary", "meaningSignals",
+        "semanticContentDigest", "semanticText", "sectionId"
+      ],
+      "properties": {
+        "body": { "$ref": "#/$defs/safeText" },
+        "citationLocators": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/citationLocator" }
+        },
+        "exclusionSummary": { "$ref": "#/$defs/exclusionSummary" },
+        "meaningSignals": { "$ref": "#/$defs/meaningSignals" },
+        "semanticContentDigest": { "$ref": "#/$defs/digest" },
+        "semanticText": { "$ref": "#/$defs/safeText" },
+        "sectionId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "legacySection": {
       "type": "object",
       "additionalProperties": false,
       "required": ["body", "citationLocators", "sectionId"],
@@ -56,6 +127,37 @@
       }
     },
     "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "childPageIds", "meaningSignals", "pageId", "parentPageId", "proposalDigest",
+        "relationPageIds", "sections", "status", "summary", "title"
+      ],
+      "properties": {
+        "childPageIds": {
+          "type": "array", "maxItems": 4096, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "pageId": { "$ref": "#/$defs/id" },
+        "meaningSignals": { "$ref": "#/$defs/meaningSignals" },
+        "parentPageId": {
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "proposalDigest": { "$ref": "#/$defs/digest" },
+        "relationPageIds": {
+          "type": "array", "maxItems": 4096, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "sections": {
+          "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/section" }
+        },
+        "status": { "const": "active" },
+        "summary": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "maxLength": 4000 }] },
+        "title": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "maxLength": 512 }] }
+      }
+    },
+    "legacyPage": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -78,7 +180,7 @@
         },
         "sections": {
           "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true,
-          "items": { "$ref": "#/$defs/section" }
+          "items": { "$ref": "#/$defs/legacySection" }
         },
         "status": { "const": "active" },
         "summary": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "maxLength": 4000 }] },
@@ -94,11 +196,45 @@
         "generationDigest": { "$ref": "#/$defs/digest" },
         "pages": {
           "type": "array", "minItems": 1, "maxItems": 4096, "uniqueItems": true,
-          "items": { "$ref": "#/$defs/page" }
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/legacyPage" },
+              { "$ref": "#/$defs/page" }
+            ]
+          }
         },
         "projectId": { "$ref": "#/$defs/projectId" },
-        "schemaVersion": { "const": "buildlore.approved-wiki-retrieval-corpus.v1" }
+        "schemaVersion": {
+          "enum": [
+            "buildlore.approved-wiki-retrieval-corpus.v1",
+            "buildlore.approved-wiki-retrieval-corpus.v2"
+          ]
+        }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schemaVersion": { "const": "buildlore.approved-wiki-retrieval-corpus.v1" }
+            },
+            "required": ["schemaVersion"]
+          },
+          "then": {
+            "properties": { "pages": { "items": { "$ref": "#/$defs/legacyPage" } } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "schemaVersion": { "const": "buildlore.approved-wiki-retrieval-corpus.v2" }
+            },
+            "required": ["schemaVersion"]
+          },
+          "then": {
+            "properties": { "pages": { "items": { "$ref": "#/$defs/page" } } }
+          }
+        }
+      ],
       "x-buildlore-digestExcludes": ["corpusDigest"]
     },
     "goldLocator": {

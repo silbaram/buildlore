@@ -14,7 +14,6 @@ import {
   createCompileRelationReview,
   createCorpusSnapshot,
   createCurrentSessionGenerationService,
-  createDocumentInterpretation,
   createEvidencePack,
   createHumanActivationApproval,
   createIntegratedWikiCandidateReview,
@@ -27,6 +26,7 @@ import {
   finalizeCompileRun,
   finalizePlanningDispositionInventory,
   hierarchySha256,
+  interpretDocumentFromRules,
   parseCurrentSessionProposalSubmission,
   reconcileWikiProposalLinks,
   createSubstantiveHierarchyTextUnits,
@@ -433,8 +433,8 @@ function canonicalDigest(value: unknown): HierarchySha256Digest {
   return digestHierarchyValue(value);
 }
 
-function stableSourceId(projectId: string, sourceRef: string): string {
-  return `source-${hierarchySha256(`${projectId}:${sourceRef}`).slice('sha256:'.length)}`;
+function stableSourceId(projectId: string, compilerSourceId: string): string {
+  return `source-${hierarchySha256(`${projectId}:${compilerSourceId}`).slice('sha256:'.length)}`;
 }
 
 function createPurpose(value: unknown, expectedProjectId: string): CompilationPurposeV1 {
@@ -675,24 +675,27 @@ async function buildLiveHierarchy(
       fail('HIERARCHICAL_WORKFLOW_SOURCE_DRIFT');
     }
     const planned = [...plan.sources].sort((left, right) =>
-      left.sourceRef < right.sourceRef ? -1 : left.sourceRef > right.sourceRef ? 1 : 0);
-    if (new Set(planned.map((source) => source.sourceRef)).size !== planned.length) {
-      fail('HIERARCHICAL_WORKFLOW_SOURCE_DRIFT');
-    }
-    const sourceIds = new Map(planned.map((source) =>
-      [source.sourceRef, stableSourceId(projectId, source.sourceRef)]));
-    if (new Set(sourceIds.values()).size !== planned.length) {
+      left.sourceId < right.sourceId ? -1 : left.sourceId > right.sourceId ? 1 : 0);
+    const sourceIds = new Map(planned.map((source) => [
+      source.sourceId,
+      stableSourceId(projectId, source.compilerSourceId),
+    ]));
+    if (sourceIds.size !== planned.length || new Set(sourceIds.values()).size !== planned.length) {
       fail('HIERARCHICAL_WORKFLOW_SOURCE_DRIFT');
     }
     const sources = Object.freeze(planned.map((source) => Object.freeze({
-      sourceId: sourceIds.get(source.sourceRef) as string,
+      ...(source.retrievalMeaning === undefined ? {} : {
+        retrievalMeaning: source.retrievalMeaning.meaning,
+        retrievalMeaningOrigin: source.retrievalMeaning.origin,
+      }),
+      sourceId: sourceIds.get(source.sourceId) as string,
       sourceRevision: source.revision,
       sourceRef: source.sourceRef,
       sanitizedContentDigest: source.sanitizedContentDigest,
     })));
     const hierarchySources = Object.freeze(planned.map((source) => Object.freeze({
       body: source.sanitizedBody,
-      sourceId: sourceIds.get(source.sourceRef) as string,
+      sourceId: sourceIds.get(source.sourceId) as string,
       sourceKind: source.sourceKind,
       sourceRef: source.sourceRef,
       sourceRevision: source.revision,
@@ -711,20 +714,62 @@ async function buildLiveHierarchy(
       textUnits,
     });
     const graph = buildSparseRelationGraph(snapshot, projectId);
-    const interpretations = Object.freeze(snapshot.sources.map((source) =>
-      createDocumentInterpretation({
-        authority: 'supporting',
-        basis: Object.freeze(['workflow-default']),
-        confidenceBasisPoints: 10_000,
-        lifecycle: 'current',
+    const sourceIdsByRef = new Map<string, string[]>();
+    for (const source of snapshot.sources) {
+      const ids = sourceIdsByRef.get(source.sourceRef) ?? [];
+      ids.push(source.sourceId);
+      sourceIdsByRef.set(source.sourceRef, ids);
+    }
+    const sourceIdForRelation = (sourceRef: string): string => {
+      const ids = sourceIdsByRef.get(sourceRef);
+      return ids?.length === 1 && ids[0] !== undefined
+        ? ids[0]
+        : fail('HIERARCHICAL_WORKFLOW_SOURCE_DRIFT');
+    };
+    const interpretations = Object.freeze(snapshot.sources.map((source) => {
+      if (source.retrievalMeaning === undefined) {
+        return interpretDocumentFromRules({
+          explicitMeaning: {
+            authority: 'supporting',
+            lifecycle: 'current',
+            role: 'topic',
+            synthesisEligibility: 'eligible',
+          },
+          projectId,
+          rules: Object.freeze([]),
+          sourceId: source.sourceId,
+          sourceRef: source.sourceRef,
+          sourceRevision: source.sourceRevision,
+        });
+      }
+      const declared = source.retrievalMeaning;
+      const relations = [
+        ...declared.supersededBySourceRefs.map((sourceRef) => ({
+          kind: 'superseded-by' as const,
+          sourceId: sourceIdForRelation(sourceRef),
+        })),
+        ...declared.supersedesSourceRefs.map((sourceRef) => ({
+          kind: 'supersedes' as const,
+          sourceId: sourceIdForRelation(sourceRef),
+        })),
+      ];
+      return interpretDocumentFromRules({
+        explicitMeaning: source.retrievalMeaningOrigin === 'legacy-default'
+          ? {}
+          : {
+              authority: declared.authority,
+              lifecycle: declared.lifecycle,
+              relations: Object.freeze(relations),
+              role: declared.evidenceKind,
+              synthesisEligibility: 'eligible',
+            },
         projectId,
-        reasonCodes: Object.freeze(['workflow-default']),
-        relations: Object.freeze([]),
-        role: 'topic',
+        rules: Object.freeze([]),
         sourceId: source.sourceId,
+        sourceRef: source.sourceRef,
         sourceRevision: source.sourceRevision,
-        synthesisEligibility: 'eligible',
-      })));
+      });
+    }));
     const outline = createWikiOutline(purpose, snapshot, graph, interpretations, projectId);
     let continuation = startCompileContinuation(
       graph,
@@ -765,7 +810,7 @@ async function buildLiveHierarchy(
         fail('HIERARCHICAL_WORKFLOW_SOURCE_DRIFT');
       }
       evidenceSources.push(Object.freeze({
-        sourceId: sourceIds.get(source.sourceRef) as string,
+        sourceId: sourceIds.get(source.sourceId) as string,
         sourceRevision: source.revision,
         sourceRef: source.sourceRef,
         preparedSource: prepared.prepared,

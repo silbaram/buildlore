@@ -10,6 +10,14 @@ import type {
 } from '../compiler/hierarchy/types.js';
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import {
+  neutralSourceRetrievalMeaning,
+  type SourceDocumentAuthority,
+  type SourceDocumentLifecycle,
+  type SourceEvidenceKind,
+  type SourceRetrievalMeaningOrigin,
+  type SourceRetrievalMeaningV1,
+} from '../projector/source-contracts.js';
+import {
   buildLexicalIndex,
   fuseReciprocalRanks,
   roundSix,
@@ -17,8 +25,12 @@ import {
   type MatchedRetrievalEvidence,
 } from './strategy.js';
 
-export const APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION =
+export const LEGACY_APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION =
   'buildlore.approved-wiki-retrieval-corpus.v1' as const;
+export const APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION =
+  'buildlore.approved-wiki-retrieval-corpus.v2' as const;
+export const SEMANTIC_CONTENT_POLICY_VERSION =
+  'buildlore.semantic-content-policy.v1' as const;
 export const HIERARCHICAL_RETRIEVAL_RESULT_SCHEMA_VERSION =
   'buildlore.hierarchical-retrieval-result.v1' as const;
 export const MODEL_FREE_WIKI_CURATE_RESULT_SCHEMA_VERSION =
@@ -76,9 +88,37 @@ export interface ApprovedWikiCitationLocatorV1 {
   readonly sourceId: string;
 }
 
+export interface ApprovedWikiMeaningSignalV1 {
+  readonly authority: SourceDocumentAuthority;
+  readonly evidenceKind: SourceEvidenceKind;
+  readonly iterationGroup: string | null;
+  readonly lifecycle: SourceDocumentLifecycle;
+  readonly origin: SourceRetrievalMeaningOrigin;
+  readonly revisionOrdinal: number;
+  readonly sourceId: string;
+  readonly topicGroup: string | null;
+}
+
+export type SemanticExclusionKind =
+  | 'citation-marker'
+  | 'duplicate-boilerplate'
+  | 'machine-provenance'
+  | 'renderer-boilerplate';
+
+export interface ApprovedWikiSemanticExclusionSummaryV1 {
+  readonly excludedKinds: readonly SemanticExclusionKind[];
+  readonly excludedUtf8Bytes: number;
+  readonly policyDigest: HierarchySha256Digest;
+  readonly policyVersion: typeof SEMANTIC_CONTENT_POLICY_VERSION;
+}
+
 export interface ApprovedWikiRetrievalSectionV1 {
   readonly body: string;
   readonly citationLocators: readonly ApprovedWikiCitationLocatorV1[];
+  readonly exclusionSummary?: ApprovedWikiSemanticExclusionSummaryV1;
+  readonly meaningSignals?: readonly ApprovedWikiMeaningSignalV1[];
+  readonly semanticContentDigest?: HierarchySha256Digest;
+  readonly semanticText?: string;
   readonly sectionId: string;
 }
 
@@ -87,6 +127,7 @@ export interface ApprovedWikiRetrievalPageV1 {
   readonly pageId: string;
   readonly parentPageId: string | null;
   readonly proposalDigest: HierarchySha256Digest;
+  readonly meaningSignals?: readonly ApprovedWikiMeaningSignalV1[];
   readonly relationPageIds: readonly string[];
   readonly sections: readonly ApprovedWikiRetrievalSectionV1[];
   readonly status: 'active';
@@ -99,7 +140,9 @@ export interface ApprovedWikiRetrievalCorpusV1 {
   readonly generationDigest: HierarchySha256Digest;
   readonly pages: readonly ApprovedWikiRetrievalPageV1[];
   readonly projectId: string;
-  readonly schemaVersion: typeof APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION;
+  readonly schemaVersion:
+    | typeof LEGACY_APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION
+    | typeof APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION;
 }
 
 export interface ProjectApprovedWikiInputV1 {
@@ -112,6 +155,11 @@ export interface ProjectApprovedWikiInputV1 {
   }>[];
   readonly ownershipGraph: PageOwnershipGraphV1;
   readonly proposals: readonly HierarchicalWikiProposalV1[];
+  readonly sourceMeanings?: readonly Readonly<{
+    readonly meaning: SourceRetrievalMeaningV1;
+    readonly origin: SourceRetrievalMeaningOrigin;
+    readonly sourceId: string;
+  }>[];
   readonly state: AuthoritativeWikiStateV1;
 }
 
@@ -248,6 +296,99 @@ function compareText(left: string, right: string): number {
 
 function digest(value: unknown): HierarchySha256Digest {
   return `sha256:${createHash('sha256').update(serializeCanonicalJson(value)).digest('hex')}`;
+}
+
+const SEMANTIC_CONTENT_POLICY_BASIS = Object.freeze({
+  citationMarkers: 'remove-unescaped-outside-fences',
+  duplicateBoilerplate: 'exact-normalized-line',
+  markdownFences: 'commonmark-closing-line-v1',
+  machineProvenance: 'closed-key-prefixes',
+  rendererBoilerplate: 'closed-sentences',
+  version: SEMANTIC_CONTENT_POLICY_VERSION,
+});
+
+export const SEMANTIC_CONTENT_POLICY_DIGEST = digest(SEMANTIC_CONTENT_POLICY_BASIS);
+
+function isMachineProvenanceLine(value: string): boolean {
+  const normalized = value.trim().replace(/^[-*][ \t]+/u, '').replace(/^`|`$/gu, '');
+  return /^(?:authority|blueprint|content|corpus|evidence|generation|materialization|policy|proposal|record|renderer|request|revision|sanitizer|snapshot|source|unit)[_-](?:digest|id|ids|revision)(?:[ \t]*:|[ \t]+=)/iu.test(normalized) ||
+    /^(?:sha256:)?[a-f0-9]{64}(?:[ \t]+(?:sha256:)?[a-f0-9]{64})*$/u.test(normalized);
+}
+
+function isRendererBoilerplateLine(value: string): boolean {
+  const normalized = value.trim();
+  return /^(?:this (?:document|page) (?:is|was) generated by BuildLore|BuildLore(?:에서|가) 생성한 (?:문서|페이지)(?:입니다)?)[.!]?$/iu.test(normalized);
+}
+
+export function projectApprovedWikiSemanticText(
+  body: string,
+  fallback: string,
+): Readonly<{
+  readonly exclusionSummary: ApprovedWikiSemanticExclusionSummaryV1;
+  readonly semanticContentDigest: HierarchySha256Digest;
+  readonly semanticText: string;
+}> {
+  const kinds = new Set<SemanticExclusionKind>();
+  const lines: string[] = [];
+  const seenBoilerplate = new Set<string>();
+  let fence: Readonly<{ readonly character: '`' | '~'; readonly length: number }> | null = null;
+  for (const original of body.split('\n')) {
+    if (fence !== null) {
+      const closingRun = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u.exec(original)?.[1];
+      lines.push(original);
+      if (closingRun !== undefined && closingRun[0] === fence.character &&
+          closingRun.length >= fence.length) {
+        fence = null;
+      }
+      continue;
+    }
+    const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(original);
+    const fenceMatch = opening?.[1];
+    const fenceInfo = opening?.[2] ?? '';
+    if (fenceMatch !== undefined && !(fenceMatch[0] === '`' && fenceInfo.includes('`'))) {
+      const character = fenceMatch[0] as '`' | '~';
+      lines.push(original);
+      fence = Object.freeze({ character, length: fenceMatch.length });
+      continue;
+    }
+    if (isMachineProvenanceLine(original)) {
+      kinds.add('machine-provenance');
+      continue;
+    }
+    if (isRendererBoilerplateLine(original)) {
+      const key = original.trim().toLowerCase();
+      if (seenBoilerplate.has(key)) kinds.add('duplicate-boilerplate');
+      else kinds.add('renderer-boilerplate');
+      seenBoilerplate.add(key);
+      continue;
+    }
+    const withoutCitations = original.replace(
+      /(?<!\\)\[\^(citation-[a-z0-9]+(?:-[a-z0-9]+)*)\]/gu,
+      '',
+    );
+    if (withoutCitations !== original) kinds.add('citation-marker');
+    lines.push(withoutCitations.replace(/[ \t]+$/u, ''));
+  }
+  const compact: string[] = [];
+  for (const line of lines) {
+    if (line.trim() === '' && compact.at(-1)?.trim() === '') continue;
+    compact.push(line);
+  }
+  const semanticText = compact.join('\n').trim() || fallback.normalize('NFC').trim();
+  const excludedUtf8Bytes = Math.max(
+    0,
+    Buffer.byteLength(body, 'utf8') - Buffer.byteLength(semanticText, 'utf8'),
+  );
+  return Object.freeze({
+    exclusionSummary: Object.freeze({
+      excludedKinds: Object.freeze([...kinds].sort(compareText)),
+      excludedUtf8Bytes,
+      policyDigest: SEMANTIC_CONTENT_POLICY_DIGEST,
+      policyVersion: SEMANTIC_CONTENT_POLICY_VERSION,
+    }),
+    semanticContentDigest: digest(semanticText),
+    semanticText,
+  });
 }
 
 function exactProject(actual: string, expected: string): void {
@@ -402,6 +543,35 @@ export function projectApprovedWikiForRetrieval(
   if (!sameStrings(inheritedPageIds, activePageIds)) projectionInvalid();
   const globalCitationAnchors = new Map<string, EvidencePackV1['units'][number]['citation']>();
   const globalCitationLocators = new Map<string, ApprovedWikiCitationLocatorV1>();
+  const sourceMeanings = new Map((input.sourceMeanings ?? []).map((entry) => [
+    entry.sourceId,
+    Object.freeze({
+      authority: entry.meaning.authority,
+      evidenceKind: entry.meaning.evidenceKind,
+      iterationGroup: entry.meaning.iterationGroup,
+      lifecycle: entry.meaning.lifecycle,
+      origin: entry.origin,
+      revisionOrdinal: entry.meaning.revisionOrdinal,
+      sourceId: entry.sourceId,
+      topicGroup: entry.meaning.topicGroup,
+    } satisfies ApprovedWikiMeaningSignalV1),
+  ]));
+  if (sourceMeanings.size !== (input.sourceMeanings?.length ?? 0)) projectionInvalid();
+  const meaningSignal = (sourceId: string): ApprovedWikiMeaningSignalV1 => {
+    const declared = sourceMeanings.get(sourceId);
+    if (declared !== undefined) return declared;
+    const neutral = neutralSourceRetrievalMeaning();
+    return Object.freeze({
+      authority: neutral.authority,
+      evidenceKind: neutral.evidenceKind,
+      iterationGroup: neutral.iterationGroup,
+      lifecycle: neutral.lifecycle,
+      origin: 'legacy-default',
+      revisionOrdinal: neutral.revisionOrdinal,
+      sourceId,
+      topicGroup: neutral.topicGroup,
+    });
+  };
   for (const pack of input.evidencePacks) {
     const localIds = new Set<string>();
     for (const unit of pack.units) {
@@ -465,10 +635,20 @@ export function projectApprovedWikiForRetrieval(
         projectionInvalid();
       }
       if (citationIds.length === 0) return [];
+      const semantic = projectApprovedWikiSemanticText(
+        section.body,
+        `${proposal.title}\n${proposal.summary}\n${section.sectionId}`,
+      );
       return [Object.freeze({
         body: section.body,
         citationLocators: Object.freeze(citationIds.map((citationId) =>
           globalCitationLocators.get(citationId) as ApprovedWikiCitationLocatorV1)),
+        exclusionSummary: semantic.exclusionSummary,
+        meaningSignals: Object.freeze(sortedUnique(citationIds.map((citationId) =>
+          (globalCitationLocators.get(citationId) as ApprovedWikiCitationLocatorV1).sourceId))
+          .map(meaningSignal)),
+        semanticContentDigest: semantic.semanticContentDigest,
+        semanticText: semantic.semanticText,
         sectionId: section.sectionId,
       })];
     }));
@@ -489,6 +669,9 @@ export function projectApprovedWikiForRetrieval(
       parentPageId: owner.parentPageId !== null && retrievable.has(owner.parentPageId)
         ? owner.parentPageId : null,
       proposalDigest: proposal.proposalDigest,
+      meaningSignals: Object.freeze([...new Map(sections.flatMap((section) =>
+        (section.meaningSignals ?? []).map((signal) => [signal.sourceId, signal] as const))).values()]
+        .sort((left, right) => compareText(left.sourceId, right.sourceId))),
       relationPageIds,
       sections,
       status: 'active' as const,
@@ -756,9 +939,79 @@ interface IndexedSection {
   readonly syntheticPageId: string;
 }
 
+const RETRIEVAL_AUTHORITIES = new Set<SourceDocumentAuthority>([
+  'canonical', 'historical', 'supporting', 'unknown',
+]);
+const RETRIEVAL_LIFECYCLES = new Set<SourceDocumentLifecycle>([
+  'current', 'deprecated', 'draft', 'superseded', 'unknown',
+]);
+const RETRIEVAL_EVIDENCE_KINDS = new Set<SourceEvidenceKind>([
+  'architecture', 'decision', 'execution', 'failure', 'implementation', 'other',
+  'overview', 'planning', 'verification',
+]);
+const SEMANTIC_EXCLUSION_KINDS = new Set<SemanticExclusionKind>([
+  'citation-marker', 'duplicate-boilerplate', 'machine-provenance', 'renderer-boilerplate',
+]);
+
+function validateMeaningSignals(value: unknown): value is readonly ApprovedWikiMeaningSignalV1[] {
+  if (!Array.isArray(value) || value.length > 100) return false;
+  let previous = '';
+  for (const item of value) {
+    if (!isRecord(item) || Object.keys(item).sort().join('\0') !== [
+      'authority', 'evidenceKind', 'iterationGroup', 'lifecycle', 'origin', 'revisionOrdinal',
+      'sourceId', 'topicGroup',
+    ].sort().join('\0') ||
+      !safeId(item.sourceId) || item.sourceId <= previous ||
+      typeof item.authority !== 'string' ||
+      !RETRIEVAL_AUTHORITIES.has(item.authority as SourceDocumentAuthority) ||
+      typeof item.lifecycle !== 'string' ||
+      !RETRIEVAL_LIFECYCLES.has(item.lifecycle as SourceDocumentLifecycle) ||
+      typeof item.evidenceKind !== 'string' ||
+      !RETRIEVAL_EVIDENCE_KINDS.has(item.evidenceKind as SourceEvidenceKind) ||
+      (item.origin !== 'adapter' && item.origin !== 'legacy-default' &&
+        item.origin !== 'manifest' && item.origin !== 'profile') ||
+      typeof item.revisionOrdinal !== 'number' || !Number.isSafeInteger(item.revisionOrdinal) ||
+      item.revisionOrdinal < 0 ||
+      (item.topicGroup !== null && !safeId(item.topicGroup)) ||
+      (item.iterationGroup !== null && !safeId(item.iterationGroup))) return false;
+    previous = item.sourceId;
+  }
+  return true;
+}
+
+function validateSemanticSection(section: ApprovedWikiRetrievalSectionV1): boolean {
+  const semanticFields = [
+    section.exclusionSummary,
+    section.meaningSignals,
+    section.semanticContentDigest,
+    section.semanticText,
+  ];
+  if (semanticFields.every((value) => value === undefined)) return true;
+  if (semanticFields.some((value) => value === undefined) ||
+      !safeText(section.semanticText, 1_048_576) ||
+      section.semanticContentDigest !== digest(section.semanticText) ||
+      !validateMeaningSignals(section.meaningSignals) ||
+      !isRecord(section.exclusionSummary)) return false;
+  const summary = section.exclusionSummary;
+  if (Object.keys(summary).sort().join('\0') !== [
+    'excludedKinds', 'excludedUtf8Bytes', 'policyDigest', 'policyVersion',
+  ].sort().join('\0') || summary.policyVersion !== SEMANTIC_CONTENT_POLICY_VERSION ||
+      summary.policyDigest !== SEMANTIC_CONTENT_POLICY_DIGEST ||
+      typeof summary.excludedUtf8Bytes !== 'number' ||
+      !Number.isSafeInteger(summary.excludedUtf8Bytes) || summary.excludedUtf8Bytes < 0 ||
+      !Array.isArray(summary.excludedKinds) || summary.excludedKinds.length > 4 ||
+      summary.excludedKinds.some((kind) => typeof kind !== 'string' ||
+        !SEMANTIC_EXCLUSION_KINDS.has(kind as SemanticExclusionKind)) ||
+      !sameStrings(summary.excludedKinds as string[],
+        sortedUnique(summary.excludedKinds as string[]))) return false;
+  return true;
+}
+
 function validateCorpus(corpus: ApprovedWikiRetrievalCorpusV1, expectedProjectId: string): void {
   exactProject(corpus.projectId, expectedProjectId);
-  if (corpus.schemaVersion !== APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION ||
+  const enriched = corpus.schemaVersion === APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION;
+  if ((!enriched &&
+      corpus.schemaVersion !== LEGACY_APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION) ||
       !SAFE_PROJECT_ID.test(corpus.projectId) || corpus.projectId.length > 64 ||
       !DIGEST.test(corpus.generationDigest) || !DIGEST.test(corpus.corpusDigest) ||
       corpus.pages.length < 1 || corpus.pages.length > 4_096 ||
@@ -776,6 +1029,9 @@ function validateCorpus(corpus: ApprovedWikiRetrievalCorpusV1, expectedProjectId
         !DIGEST.test(page.proposalDigest) || !safeText(page.title, 512) ||
         !safeText(page.summary, 4_000) || page.sections.length < 1 ||
         page.sections.length > 256 || !Array.isArray(page.relationPageIds) ||
+        (enriched
+          ? page.meaningSignals === undefined || !validateMeaningSignals(page.meaningSignals)
+          : page.meaningSignals !== undefined) ||
         new Set(page.childPageIds).size !== page.childPageIds.length ||
         new Set(page.relationPageIds).size !== page.relationPageIds.length) projectionInvalid();
     pageIds.add(page.pageId);
@@ -788,7 +1044,10 @@ function validateCorpus(corpus: ApprovedWikiRetrievalCorpusV1, expectedProjectId
             !safeId(locator.citationId) || !safeId(locator.sourceId)) ||
           new Set(section.citationLocators.map((locator) =>
             `${locator.citationId}\u0000${locator.sourceId}`)).size !==
-            section.citationLocators.length) projectionInvalid();
+            section.citationLocators.length || !validateSemanticSection(section) ||
+          (enriched
+            ? section.semanticText === undefined
+            : section.semanticText !== undefined)) projectionInvalid();
       sectionIds.add(section.sectionId);
       totalChars += page.title.length + 1 + section.sectionId.length + page.summary.length +
         section.body.length;
@@ -807,7 +1066,10 @@ function validateCorpus(corpus: ApprovedWikiRetrievalCorpusV1, expectedProjectId
   }
 }
 
-function indexSections(corpus: ApprovedWikiRetrievalCorpusV1): {
+function indexSections(
+  corpus: ApprovedWikiRetrievalCorpusV1,
+  useSemanticText: boolean,
+): {
   readonly byKey: ReadonlyMap<string, IndexedSection>;
   readonly lexical: ReturnType<typeof buildLexicalIndex>;
 } {
@@ -819,7 +1081,7 @@ function indexSections(corpus: ApprovedWikiRetrievalCorpusV1): {
   return {
     byKey: new Map(sections.map((section) => [section.key, section])),
     lexical: buildLexicalIndex(sections.map((entry) => ({
-      body: entry.section.body,
+      body: useSemanticText ? entry.section.semanticText ?? entry.section.body : entry.section.body,
       freshness: 'fresh',
       pageId: entry.syntheticPageId,
       sourceRefs: sortedUnique(entry.section.citationLocators.map((locator) =>
@@ -887,13 +1149,14 @@ function checkMethodProject(projectId: string, expectedProjectId: string): void 
   }
 }
 
-export function createApprovedWikiRetrieval(
+function createApprovedWikiRetrievalInternal(
   corpus: ApprovedWikiRetrievalCorpusV1,
   expectedProjectId: string,
+  useSemanticText: boolean,
 ): ApprovedWikiRetrievalPortV1 {
   validateCorpus(corpus, expectedProjectId);
   const pages = new Map(corpus.pages.map((page) => [page.pageId, page]));
-  const indexed = indexSections(corpus);
+  const indexed = indexSections(corpus, useSemanticText);
   const sectionBySynthetic = new Map([...indexed.byKey.values()].map((entry) =>
     [entry.syntheticPageId, entry]));
   return Object.freeze({
@@ -997,4 +1260,19 @@ export function createApprovedWikiRetrieval(
       });
     },
   });
+}
+
+export function createApprovedWikiRetrieval(
+  corpus: ApprovedWikiRetrievalCorpusV1,
+  expectedProjectId: string,
+): ApprovedWikiRetrievalPortV1 {
+  return createApprovedWikiRetrievalInternal(corpus, expectedProjectId, true);
+}
+
+/** Exact pre-semantic-content baseline used only by the bound quality evaluator. */
+export function createApprovedWikiLegacyRetrieval(
+  corpus: ApprovedWikiRetrievalCorpusV1,
+  expectedProjectId: string,
+): ApprovedWikiRetrievalPortV1 {
+  return createApprovedWikiRetrievalInternal(corpus, expectedProjectId, false);
 }

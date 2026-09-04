@@ -18,6 +18,7 @@ import {
 } from '../../src/cli/hierarchical-workflow.js';
 import type { HierarchicalWorkflowRunStorePort } from '../../src/cli/hierarchical-run-store.js';
 import { addProject } from '../../src/knowledge/index.js';
+import { sourceRetrievalMeaningFromDescriptor } from '../../src/projector/index.js';
 import {
   createApprovedWikiProjectionStore,
   type ApprovedWikiProjectionStorePort,
@@ -72,6 +73,7 @@ function fakePlan(projectId: string): SessionCompilePlanV1 {
         compilerSourceId: `source-${source.suffix.repeat(64)}`,
         originalContentDigest: contentDigest,
         revision: contentDigest,
+        retrievalMeaning: sourceRetrievalMeaningFromDescriptor(undefined),
         sanitizedBody: source.body,
         sanitizedContentDigest: contentDigest,
         sourceId: `source-${source.suffix === '1' ? '3'.repeat(64) : '4'.repeat(64)}`,
@@ -154,6 +156,7 @@ export function authorHierarchicalWorkflowProposal(
 
 export async function createHierarchicalWorkflowTestFixture(
   projectId = 'hierarchy-workflow',
+  transformPlan: (plan: SessionCompilePlanV1) => SessionCompilePlanV1 = (plan) => plan,
 ): Promise<HierarchicalWorkflowTestFixtureV1> {
   const hubRoot = await mkdtemp(join(tmpdir(), 'buildlore-hierarchy-workflow-'));
   await chmod(hubRoot, 0o755);
@@ -167,10 +170,11 @@ export async function createHierarchicalWorkflowTestFixture(
   await writeSecurityPolicy(knowledgeRoot, projectId, { capabilities: [] });
   const corpusStore = createApprovedWikiProjectionStore(knowledgeRoot);
   const plannerCalls: string[] = [];
+  const plan = transformPlan(fakePlan(projectId));
   const compiler: Pick<ProjectSessionCompilerPort, 'plan'> = Object.freeze({
     plan(input) {
       plannerCalls.push(input.projectId);
-      return Promise.resolve(fakePlan(projectId));
+      return Promise.resolve(plan);
     },
   });
   const fixture: HierarchicalWorkflowTestFixtureV1 = {

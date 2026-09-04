@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { dirname } from 'node:path';
 
 import type {
   CompilerOperationResult,
@@ -27,6 +28,11 @@ import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import { queryTokens, rankLexical, roundSix, type LexicalRankedPage } from './lexical.js';
 import { buildLexicalIndex, fuseReciprocalRanks, RETRIEVAL_STRATEGY } from './strategy.js';
 import {
+  createLocalWikiOperator,
+  type LocalWikiOperatorPort,
+} from './local-wiki-operator.js';
+import { LocalWikiRetrievalError } from './hybrid-types.js';
+import {
   RetrievalOperationError,
   type CreateProjectRetrievalOptions,
   type EmbeddingCompatibility,
@@ -45,6 +51,7 @@ import {
 } from './types.js';
 
 export interface CreateProjectRetrievalWithPortsOptions {
+  readonly approvedWiki?: Pick<LocalWikiOperatorPort, 'readPage' | 'search'>;
   readonly compiler: ProjectCompilerPort;
   readonly corpus: ProjectCorpusPort;
   readonly embeddingCompatibility?: ProjectEmbeddingCompatibilityPort;
@@ -55,17 +62,29 @@ export interface CreateProjectRetrievalWithPortsOptions {
 
 const MAX_HITS = 20;
 const PARTIAL_WARNING_CODES = new Set<RetrievalWarningCode>([
+  'embedding-identity-mismatch',
   'embedding-index-outdated',
+  'embedding-provider-incompatible',
+  'embedding-provider-unavailable',
   'embedding-entry-stale',
   'embedding-store-missing',
   'embedding-store-unavailable',
   'incomplete-compile',
   'journal-unavailable',
+  'semantic-index-incompatible',
+  'semantic-index-stale',
+  'semantic-index-unavailable',
 ]);
 const FALLBACK_WARNING_CODES = new Set<RetrievalFallbackReason>([
+  'embedding-identity-mismatch',
   'embedding-index-outdated',
+  'embedding-provider-incompatible',
+  'embedding-provider-unavailable',
   'embedding-store-unavailable',
   'provider-unconfigured',
+  'semantic-index-incompatible',
+  'semantic-index-stale',
+  'semantic-index-unavailable',
 ]);
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -405,6 +424,130 @@ function isPartial(warnings: readonly RetrievalWarning[]): boolean {
   return warnings.some((warning) => PARTIAL_WARNING_CODES.has(warning.code));
 }
 
+function estimatedContextTokens(value: string): number {
+  return Math.max(1, Math.ceil([...value].length / 4));
+}
+
+async function approvedWikiContext(
+  wiki: Pick<LocalWikiOperatorPort, 'readPage' | 'search'>,
+  request: ProjectContextRequest,
+): Promise<ProjectContextResult> {
+  const topPages = request.topPages ?? 5;
+  const topChunks = request.topChunks ?? Math.min(10, topPages * 2);
+  const requestedTokens = request.budget ?? 1_200;
+  const searchTopK = Math.min(20, Math.max(topPages, topChunks === 0 ? topPages : topChunks));
+  const result = await wiki.search({
+    intent: 'auto',
+    mode: topChunks === 0 ? 'graph' : 'hybrid',
+    projectId: request.projectId,
+    query: request.prompt,
+    topK: searchTopK,
+  });
+  const pageIds = [...new Set(result.hits.map((hit) => hit.locator.pageId))];
+  const pages = new Map((await Promise.all(pageIds.map(async (pageId) => {
+    const page = await wiki.readPage({ pageId, projectId: request.projectId });
+    return [pageId, page] as const;
+  }))).map((entry) => entry));
+  const primary = new Map<string, {
+    chunks: string[];
+    id: string;
+    locators: Array<NonNullable<ContextSummary['primary'][number]['locators']>[number]>;
+    reasons: Set<string>;
+    score: number;
+    summary: string;
+    title: string;
+  }>();
+  let estimatedTokens = 0;
+  let selectedChunks = 0;
+  let truncated = false;
+  for (const hit of result.hits) {
+    let item = primary.get(hit.locator.pageId);
+    if (item === undefined) {
+      if (primary.size >= topPages) {
+        truncated = true;
+        continue;
+      }
+      const page = pages.get(hit.locator.pageId);
+      if (page === undefined) {
+        throw new RetrievalOperationError('RETRIEVAL_CONTRACT_VIOLATION', request.projectId);
+      }
+      item = {
+        chunks: [],
+        id: page.pageId,
+        locators: [],
+        reasons: new Set(['approved-semantic-content', ...result.intentReasonCodes]),
+        score: hit.finalScore,
+        summary: page.summary,
+        title: page.title,
+      };
+      primary.set(page.pageId, item);
+    }
+    item.score = Math.max(item.score, hit.finalScore);
+    item.reasons.add(hit.diversificationReason);
+    for (const reason of hit.meaningAdjustment.reasonCodes) item.reasons.add(reason);
+    if (topChunks === 0) continue;
+    if (selectedChunks >= topChunks) {
+      truncated = true;
+      continue;
+    }
+    const page = pages.get(hit.locator.pageId);
+    const section = page?.sections.find((candidate) =>
+      candidate.sectionId === hit.locator.sectionId);
+    if (section === undefined) {
+      throw new RetrievalOperationError('RETRIEVAL_CONTRACT_VIOLATION', request.projectId);
+    }
+    let context = section.semanticText ?? section.body;
+    let tokens = estimatedContextTokens(context);
+    const remainingTokens = requestedTokens - estimatedTokens;
+    if (tokens > remainingTokens) {
+      if (remainingTokens <= 0) {
+        truncated = true;
+        continue;
+      }
+      context = [...context].slice(0, remainingTokens * 4).join('').trimEnd();
+      if (context.length === 0) {
+        truncated = true;
+        continue;
+      }
+      tokens = estimatedContextTokens(context);
+      truncated = true;
+    }
+    item.chunks.push(context);
+    item.locators.push(hit.locator);
+    estimatedTokens += tokens;
+    selectedChunks += 1;
+  }
+  const warnings = result.fallback === null
+    ? Object.freeze([])
+    : Object.freeze([{ code: result.fallback.reasonCode }]);
+  return Object.freeze({
+    data: Object.freeze({
+      budget: Object.freeze({ estimatedTokens, requestedTokens, truncated }),
+      gaps: Object.freeze([]),
+      primary: Object.freeze([...primary.values()].map((item) => Object.freeze({
+        chunks: Object.freeze(item.chunks),
+        id: item.id,
+        locators: Object.freeze(item.locators),
+        reasons: Object.freeze([...item.reasons].sort()),
+        score: item.score,
+        summary: item.summary,
+        title: item.title,
+      }))),
+      version: 1 as const,
+    }),
+    fallback: result.fallback === null
+      ? null
+      : Object.freeze({
+          fromMode: 'hybrid' as const,
+          reasonCode: result.fallback.reasonCode,
+          toMode: 'lexical' as const,
+        }),
+    partial: result.fallback !== null,
+    projectId: request.projectId,
+    warnings,
+  });
+}
+
 export function createProjectRetrievalWithPorts(
   options: CreateProjectRetrievalWithPortsOptions,
 ): ProjectRetrievalPort {
@@ -425,6 +568,14 @@ export function createProjectRetrievalWithPorts(
   return {
     async context(inputRequest): Promise<ProjectContextResult> {
       const request = validateContextRequest(inputRequest);
+      if (options.approvedWiki !== undefined) {
+        try {
+          return await approvedWikiContext(options.approvedWiki, request);
+        } catch (error) {
+          if (!(error instanceof LocalWikiRetrievalError) ||
+              error.code !== 'LOCAL_WIKI_PROJECTION_UNAVAILABLE') throw error;
+        }
+      }
       let fallback: RetrievalFallback | null = null;
       let executeRequest = request;
       if (request.topChunks !== 0) {
@@ -589,6 +740,10 @@ export function createProjectRetrieval(options: CreateProjectRetrievalOptions): 
   const corpus = createProjectCorpus({ knowledgeRoot: options.knowledgeRoot });
   const embeddingCompatibility = createProjectEmbeddingIdentityStore(options.knowledgeRoot);
   return createProjectRetrievalWithPorts({
+    approvedWiki: createLocalWikiOperator({
+      hubRoot: dirname(options.knowledgeRoot),
+      knowledgeRoot: options.knowledgeRoot,
+    }),
     compiler,
     corpus,
     embeddingCompatibility,

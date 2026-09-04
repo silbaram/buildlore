@@ -54,6 +54,7 @@ interface TimestampCandidate {
 
 export interface P2aPlanningCandidate extends ProjectSourceInput {
   readonly documentKind: PlanningDocumentKind;
+  readonly retrievalLifecycle?: 'current' | 'superseded';
   readonly sourceArtifact: string;
   readonly timestampSource: TimestampSource;
 }
@@ -341,6 +342,7 @@ function createCandidate(
   timestamp: { readonly source: TimestampSource; readonly value: string },
   title: string,
   body: string,
+  retrievalLifecycle: 'current' | 'superseded',
 ): P2aPlanningCandidate {
   const sourceUri = portableSourceUri(
     repository,
@@ -363,6 +365,7 @@ function createCandidate(
     documentKind,
     ingestedAt: timestamp.value,
     producer: 'p2a',
+    retrievalLifecycle,
     sourceArtifact: artifact.relativePath,
     sourceRevision: artifact.digest,
     sourceKind: 'planning',
@@ -781,6 +784,7 @@ export function createP2aArtifactAdapter(
               specTimestamp,
               `제품 명세 — ${iterationId}`,
               renderP2aProduct(views, iterationId),
+              isArchived ? 'superseded' : 'current',
             ),
               createCandidate(
               repository,
@@ -791,6 +795,7 @@ export function createP2aArtifactAdapter(
               specTimestamp,
               `구현 계획 — ${iterationId}`,
               renderP2aImplementation(views, iterationId),
+              isArchived ? 'superseded' : 'current',
             ),
             );
           }
@@ -804,6 +809,7 @@ export function createP2aArtifactAdapter(
               intakeTimestamp,
               `승인된 인테이크 — ${iterationId}`,
               renderP2aIntake(intakeView, iterationId),
+              'superseded',
             ));
           }
           if (archive !== null && views !== null) {
@@ -821,6 +827,7 @@ export function createP2aArtifactAdapter(
                   ? iteration.idea
                   : views.product.problem,
               }, archive.closed),
+              'superseded',
             ));
           }
         } catch (error) {

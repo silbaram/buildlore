@@ -68,6 +68,10 @@ describe('package contract', () => {
       new URL('../schemas/wiki-export.schema.json', import.meta.url),
       'utf8',
     )) as Readonly<Record<string, unknown>>;
+    const hierarchicalCorpus = JSON.parse(await readFile(
+      new URL('../schemas/hierarchical-corpus.schema.json', import.meta.url),
+      'utf8',
+    )) as { readonly $defs: Readonly<Record<string, unknown>> };
 
     expect(profile.oneOf).toHaveLength(2);
     expect(metadata).toMatchObject({
@@ -77,6 +81,8 @@ describe('package contract', () => {
     });
     expect(JSON.stringify(manifest)).toContain('source-metadata.schema.json');
     expect(JSON.stringify(descriptor)).toContain('source-metadata.schema.json');
+    expect((metadata.$defs as Readonly<Record<string, unknown>>).sourceRef)
+      .toEqual(hierarchicalCorpus.$defs.sourceRef);
 
     const descriptorContract = descriptor as unknown as {
       readonly properties: {
@@ -247,8 +253,10 @@ describe('package contract', () => {
       'hierarchical-markdown-materialization.schema.json',
       'hierarchical-retrieval.schema.json',
       'local-embedding.schema.json',
+      'llm-wiki-retrieval-evaluation.schema.json',
       'semantic-index.schema.json',
       'retrieval-result-v2.schema.json',
+      'retrieval-result-v3.schema.json',
     ]) {
       expect(packageJson.exports[`./schemas/${schema}`]).toBe(`./schemas/${schema}`);
     }
@@ -462,8 +470,10 @@ describe('package contract', () => {
       'hierarchical-wiki-activation.schema.json',
       'hierarchical-retrieval.schema.json',
       'local-embedding.schema.json',
+      'llm-wiki-retrieval-evaluation.schema.json',
       'semantic-index.schema.json',
       'retrieval-result-v2.schema.json',
+      'retrieval-result-v3.schema.json',
     ]) {
       const subpath = `./schemas/${schema}`;
       expect(packageJson.exports[subpath]).toBe(subpath);

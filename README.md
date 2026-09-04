@@ -513,10 +513,25 @@ previous healthy index remains active.
 node dist/cli/bin.js index status --project example --json
 node dist/cli/bin.js index rebuild --project example --json
 node dist/cli/bin.js search --project example --query "related decisions" --mode graph
-node dist/cli/bin.js search --project example --query "authentication decision" --mode hybrid
+node dist/cli/bin.js search --project example --query "authentication decision" --mode hybrid --intent current
+node dist/cli/bin.js search --project example --query "Gate B decision" --mode hybrid --intent historical
 node dist/cli/bin.js query --project example --question "Why was this design selected?"
 node dist/cli/bin.js context --project example --prompt "Prepare an implementation plan"
 ```
+
+`--intent` accepts `auto` (the default), `current`, `historical`, or `neutral`.
+Auto uses only bounded Gate, iteration/version, and historical markers; it does not call a
+classifier. Retrieval result v3 reports the effective intent, base and adjusted scores,
+bounded authority/lifecycle/evidence adjustments, diversification reason, and ranking-policy
+digest for every hit. Missing legacy meaning metadata stays searchable as
+`unknown/unknown/other`, receives no boost, and is reported as `legacy-default-neutral`.
+
+Source adapters or manifests may declare `values.retrievalMeaning` with separate authority,
+lifecycle, evidence kind, revision ordinal, topic/iteration groups, and supersession refs.
+Malformed explicit metadata fails closed. Semantic index v2 embeds `semanticText`, which removes
+closed-form renderer and machine-provenance noise while preserving raw page bodies and citation
+locators for inspection. Rebuild this derived index explicitly after metadata or projection
+policy changes.
 
 `semantic` returns a structured failure for a missing, stale, or incompatible local
 provider/index. Only `hybrid` may visibly exclude the semantic channel and continue
@@ -524,9 +539,11 @@ with lexical/graph results. A project without an activated hierarchical projecti
 keeps the legacy lexical reader as an explicitly partial compatibility path; it is not
 treated as semantic-quality-approved content.
 
-`query` always requests `save: false`, but the upstream compiler still appends query
-activity to the selected project's `log.md`. Context can explicitly fall back to a
-local lexical path when embeddings or provider access are unavailable. Add `--json`
+`context` reads the active approved hierarchical Wiki first. It returns the section's
+semantic text together with structured page, section, source, and citation locators, and reports
+any visible hybrid-to-local fallback. The legacy compiler context path is used only when an
+approved projection is unavailable. `query` still requests `save: false`, but the upstream
+compiler appends query activity to the selected project's `log.md`. Add `--json`
 to any command to receive one deterministic
 `buildlore.cli-envelope.v1` object suitable for automation.
 

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/llm-wiki-retrieval-evaluation.schema.json",
+  "title": "BuildLore LLM Wiki retrieval evaluation v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "aggregate", "baselineIdentity", "candidateIdentity", "corpusDigest",
+    "evaluationPolicyDigest", "mode", "overallPassed",
+    "providerIdentityDigest", "queryCount", "queryResults", "rankingPolicyDigest",
+    "schemaVersion", "semanticContentPolicyDigest"
+  ],
+  "properties": {
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline", "candidate"],
+      "properties": {
+        "baseline": { "$ref": "#/$defs/metrics" },
+        "candidate": { "$ref": "#/$defs/metrics" }
+      }
+    },
+    "baselineIdentity": { "$ref": "#/$defs/baselineIdentity" },
+    "candidateIdentity": { "$ref": "#/$defs/candidateIdentity" },
+    "corpusDigest": { "$ref": "#/$defs/digest" },
+    "evaluationPolicyDigest": { "$ref": "#/$defs/digest" },
+    "mode": { "$ref": "#/$defs/mode" },
+    "overallPassed": { "type": "boolean" },
+    "providerIdentityDigest": { "$ref": "#/$defs/digest" },
+    "queryCount": { "const": 8 },
+    "queryResults": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/queryResult" },
+      "x-buildlore-uniqueBy": "queryId"
+    },
+    "rankingPolicyDigest": { "$ref": "#/$defs/digest" },
+    "schemaVersion": { "const": "buildlore.llm-wiki-retrieval-eval.v3" },
+    "semanticContentPolicyDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "nullableDigest": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/digest" }]
+    },
+    "mode": { "enum": ["graph", "hybrid", "lexical", "semantic"] },
+    "baselineIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identityDigest", "mode", "retrievalVersion"],
+      "properties": {
+        "identityDigest": { "$ref": "#/$defs/digest" },
+        "mode": { "const": "graph" },
+        "retrievalVersion": { "const": "approved-wiki-legacy-raw-v1" }
+      }
+    },
+    "candidateIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "embeddingIdentityDigest", "identityDigest", "indexGenerationId",
+        "indexManifestDigest", "mode"
+      ],
+      "properties": {
+        "embeddingIdentityDigest": { "$ref": "#/$defs/nullableDigest" },
+        "identityDigest": { "$ref": "#/$defs/digest" },
+        "indexGenerationId": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^generation-[a-f0-9]{64}$" }
+          ]
+        },
+        "indexManifestDigest": { "$ref": "#/$defs/nullableDigest" },
+        "mode": { "$ref": "#/$defs/mode" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contextUtf8Bytes", "duplicateHitRatio", "mrr", "providerTokenCount", "recallAt5"
+      ],
+      "properties": {
+        "contextUtf8Bytes": { "type": "integer", "minimum": 0 },
+        "duplicateHitRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "mrr": { "type": "number", "minimum": 0, "maximum": 1 },
+        "providerTokenCount": { "type": "integer", "minimum": 0 },
+        "recallAt5": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "queryResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline", "candidate", "intent", "passed", "queryId"],
+      "properties": {
+        "baseline": { "$ref": "#/$defs/metrics" },
+        "candidate": { "$ref": "#/$defs/metrics" },
+        "intent": { "enum": ["current", "historical", "neutral"] },
+        "passed": { "type": "boolean" },
+        "queryId": {
+          "enum": [
+            "project-structure", "what-is-buildlore", "wiki-activation",
+            "secret-sanitizer", "semantic-index", "supported-sources",
+            "failure-recovery", "historical-gate"
+          ]
+        }
+      }
+    }
+  }
+}

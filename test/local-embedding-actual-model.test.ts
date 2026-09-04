@@ -148,7 +148,7 @@ function benchmarkCandidates(vector: Float32Array): readonly ExactCosineCandidat
   return Object.freeze(Array.from({ length: SEMANTIC_INDEX_LIMITS.maximumChunks }, (_, index) => {
     const hexadecimal = index.toString(16).padStart(64, '0');
     const chunk: RetrievalChunkV1 = Object.freeze({
-      schemaVersion: 'buildlore.retrieval-chunk.v1',
+      schemaVersion: 'buildlore.retrieval-chunk.v2',
       projectId: 'benchmark',
       pageId: `pages/page-${index.toString().padStart(5, '0')}`,
       pageRevision: `sha256:${'1'.repeat(64)}`,
@@ -165,6 +165,7 @@ function benchmarkCandidates(vector: Float32Array): readonly ExactCosineCandidat
       tokenTruncated: false,
       chunkerDigest: `sha256:${'2'.repeat(64)}`,
       citationLocators,
+      meaningSignals: Object.freeze([]),
       eligibility: 'eligible',
       skipReason: null,
     });

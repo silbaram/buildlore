@@ -523,12 +523,9 @@ describe('local Wiki operator surface', () => {
       effectiveMode: 'semantic',
       providerUsed: 'local-in-process',
     });
-    expect(before.hits[0]).toMatchObject({
-      locator: {
-        pageId: authority.state.activePages[0]?.pageId,
-        sectionId: authority.finalization.proposals[0]?.sections[0]?.sectionId,
-      },
-    });
+    expect(authority.state.activePages.map((page) => page.pageId))
+      .toContain(before.hits[0]?.locator.pageId);
+    expect(before.hits[0]?.locator).toMatchObject({ sectionId: 'evidence' });
 
     await rm(join(
       knowledgeRoot,

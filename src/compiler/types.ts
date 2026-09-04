@@ -198,6 +198,13 @@ export interface QuerySummary {
 export interface ContextPrimarySummary {
   readonly chunks: readonly string[];
   readonly id: string;
+  readonly locators?: readonly Readonly<{
+    readonly citationIds: readonly string[];
+    readonly pageId: string;
+    readonly projectId: string;
+    readonly sectionId: string;
+    readonly sourceIds: readonly string[];
+  }>[];
   readonly reasons: readonly string[];
   readonly score: number;
   readonly summary: string;

@@ -16,7 +16,10 @@ import {
   type SearchCorpusPage,
 } from '../src/compiler/corpus.js';
 import {
+  RETRIEVAL_FUSION_POLICY_V1,
+  RETRIEVAL_RANKING_POLICY_V2,
   RetrievalOperationError,
+  type LocalWikiOperatorPort,
 } from '../src/retrieval/index.js';
 import { createProjectRetrievalWithPorts } from '../src/retrieval/service.js';
 
@@ -93,6 +96,7 @@ function searchData(pageIds: readonly string[]): SearchSummary {
 }
 
 function fixture(options: {
+  readonly approvedWiki?: Pick<LocalWikiOperatorPort, 'readPage' | 'search'>;
   readonly corpus?: ProjectCorpusPort;
   readonly corpusValue?: SearchCorpus;
   readonly evaluation?: EvalSummary;
@@ -135,6 +139,7 @@ function fixture(options: {
     calls,
     compiler,
     retrieval: createProjectRetrievalWithPorts({
+      ...(options.approvedWiki === undefined ? {} : { approvedWiki: options.approvedWiki }),
       compiler,
       corpus: options.corpus ?? { snapshot },
       providerConfigured: () => options.providerConfigured ?? true,
@@ -586,6 +591,101 @@ describe('project retrieval orchestration', () => {
       partial: true,
       warnings: [{ code: 'embedding-store-unavailable' }],
     });
+  });
+
+  it('builds default LLM context from approved semantic text and expandable locators', async () => {
+    const pageId = `page-${'a'.repeat(64)}`;
+    const sectionId = 'section-main';
+    const citationId = 'citation-approved-context';
+    const sourceId = 'source-approved-context';
+    const search = vi.fn(() => Promise.resolve(Object.freeze({
+      effectiveChannels: Object.freeze(['lexical', 'graph', 'semantic'] as const),
+      effectiveIntent: 'current' as const,
+      effectiveMode: 'hybrid' as const,
+      egress: 'none' as const,
+      fallback: null,
+      fusionPolicy: RETRIEVAL_FUSION_POLICY_V1,
+      hits: Object.freeze([Object.freeze({
+        baseScore: 0.1,
+        channels: Object.freeze([Object.freeze({
+          channel: 'semantic' as const, contribution: 0.1, rank: 1, score: 0.1,
+        })]),
+        chunkId: `chunk-${'b'.repeat(64)}`,
+        diversificationReason: 'primary-distinct-groups' as const,
+        finalScore: 0.1055,
+        locator: Object.freeze({
+          citationIds: Object.freeze([citationId]),
+          pageId,
+          projectId: 'alpha',
+          sectionId,
+          sourceIds: Object.freeze([sourceId]),
+        }),
+        matchedEvidence: Object.freeze([]),
+        meaningAdjustment: Object.freeze({
+          authority: 0.0015,
+          evidenceKind: 0.001,
+          lifecycle: 0.003,
+          reasonCodes: Object.freeze(['canonical-authority-boost']),
+          total: 0.0055,
+        }),
+        rank: 1,
+        score: 0.1055,
+        scoreComponents: Object.freeze({ combinedScore: 0.1 }),
+        scoreKind: 'rrf-v1' as const,
+        title: 'Approved context',
+      })]),
+      identity: Object.freeze({
+        embeddingIdentityDigest: `sha256:${'c'.repeat(64)}` as const,
+        indexGenerationId: `generation-${'d'.repeat(64)}`,
+        indexManifestDigest: `sha256:${'e'.repeat(64)}` as const,
+      }),
+      intentReasonCodes: Object.freeze(['auto-current-default'] as const),
+      projectId: 'alpha',
+      providerUsed: 'local-in-process' as const,
+      rankingPolicy: RETRIEVAL_RANKING_POLICY_V2,
+      requestedIntent: 'auto' as const,
+      requestedMode: 'hybrid' as const,
+      schemaVersion: 'buildlore.retrieval-result.v3' as const,
+    })));
+    const readPage = vi.fn(() => Promise.resolve(Object.freeze({
+      childPageIds: Object.freeze([]),
+      corpusDigest: `sha256:${'1'.repeat(64)}` as const,
+      egress: 'none' as const,
+      generationDigest: `sha256:${'2'.repeat(64)}` as const,
+      pageId,
+      parentPageId: null,
+      projectId: 'alpha',
+      projectionDigest: `sha256:${'3'.repeat(64)}` as const,
+      proposalDigest: `sha256:${'4'.repeat(64)}` as const,
+      providerUsed: 'none' as const,
+      relationPageIds: Object.freeze([]),
+      sanitizerPolicyDigest: `sha256:${'5'.repeat(64)}` as const,
+      schemaVersion: 'buildlore.local-active-wiki-page.v1' as const,
+      sections: Object.freeze([Object.freeze({
+        body: `source_digest: sha256:${'6'.repeat(64)}\nUseful semantic context.`,
+        citationLocators: Object.freeze([Object.freeze({ citationId, sourceId })]),
+        semanticText: 'Useful semantic context.',
+        sectionId,
+      })]),
+      status: 'active' as const,
+      summary: 'Approved summary.',
+      title: 'Approved context',
+    })));
+    const item = fixture({ approvedWiki: { readPage, search } });
+
+    const result = await item.retrieval.context({
+      projectId: 'alpha',
+      prompt: 'Provide architecture context.',
+    });
+
+    expect(item.calls).toEqual([]);
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ mode: 'hybrid' }));
+    expect(result.data.primary[0]).toMatchObject({
+      chunks: ['Useful semantic context.'],
+      id: pageId,
+      locators: [{ citationIds: [citationId], sectionId, sourceIds: [sourceId] }],
+    });
+    expect(JSON.stringify(result.data)).not.toContain('source_digest');
   });
 
   it('honors explicit lexical context without an eval or provider preflight', async () => {

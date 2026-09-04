@@ -27,7 +27,11 @@ import {
   type SanitizedEvidenceSourceV1,
   type TextUnitV1,
 } from '../src/compiler/index.js';
-import { validatePortableSourceRef } from '../src/projector/index.js';
+import {
+  SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+  sourceRetrievalMeaningFromDescriptor,
+  validatePortableSourceRef,
+} from '../src/projector/index.js';
 import { inspectPreparedSource, issuePreparedSource } from '../src/sanitizer/approval.js';
 import { SANITIZER_RULES_VERSION } from '../src/sanitizer/index.js';
 import {
@@ -180,6 +184,108 @@ describe('hierarchical contract boundaries', () => {
     expect(Object.isFrozen(input)).toBe(true);
     expect(Object.isFrozen(inputSources)).toBe(true);
     expect(Object.isFrozen(inputUnits)).toBe(true);
+  });
+
+  it('binds explicit retrieval meaning and its origin into the snapshot digest', () => {
+    const legacy = source('meaning');
+    const withMeaning: CorpusSnapshotSourceV1 = Object.freeze({
+      ...legacy,
+      retrievalMeaning: Object.freeze({
+        authority: 'canonical',
+        evidenceKind: 'architecture',
+        iterationGroup: null,
+        lifecycle: 'current',
+        revisionOrdinal: 3,
+        schemaVersion: SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+        supersededBySourceRefs: Object.freeze([]),
+        supersedesSourceRefs: Object.freeze([]),
+        topicGroup: 'project-structure',
+      }),
+      retrievalMeaningOrigin: 'manifest',
+    });
+    const snapshot = createCorpusSnapshot(snapshotInput(
+      Object.freeze([withMeaning]),
+      Object.freeze([unitFor(withMeaning)]),
+    ));
+
+    expect(snapshot.sources[0]?.retrievalMeaning).toEqual(withMeaning.retrievalMeaning);
+    expect(snapshot.sources[0]?.retrievalMeaningOrigin).toBe('manifest');
+    expect(snapshot.snapshotDigest).not.toBe(createCorpusSnapshot(snapshotInput(
+      Object.freeze([legacy]),
+      Object.freeze([unitFor(legacy)]),
+    )).snapshotDigest);
+  });
+
+  it('fails closed on inconsistent and cyclic supersession metadata', () => {
+    const bind = (
+      base: CorpusSnapshotSourceV1,
+      supersedesSourceRefs: readonly string[],
+      supersededBySourceRefs: readonly string[],
+      lifecycle: 'current' | 'superseded' = 'current',
+      revisionOrdinal = 1,
+    ): CorpusSnapshotSourceV1 => Object.freeze({
+      ...base,
+      retrievalMeaning: Object.freeze({
+        authority: 'canonical' as const,
+        evidenceKind: 'decision' as const,
+        iterationGroup: null,
+        lifecycle,
+        revisionOrdinal,
+        schemaVersion: SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+        supersededBySourceRefs: Object.freeze([...supersededBySourceRefs].sort()),
+        supersedesSourceRefs: Object.freeze([...supersedesSourceRefs].sort()),
+        topicGroup: 'supersession',
+      }),
+      retrievalMeaningOrigin: 'manifest',
+    });
+    const first = source('cycle-a');
+    const second = source('cycle-b');
+    const third = source('cycle-c');
+    const inconsistent = [
+      bind(first, [second.sourceRef], []),
+      bind(second, [], []),
+    ];
+    expect(() => createCorpusSnapshot(snapshotInput(
+      inconsistent,
+      inconsistent.map((item) => unitFor(item)),
+    ))).toThrow(HierarchyContractError);
+
+    const cycle = [
+      bind(first, [second.sourceRef], [third.sourceRef]),
+      bind(second, [third.sourceRef], [first.sourceRef]),
+      bind(third, [first.sourceRef], [second.sourceRef]),
+    ];
+    expect(() => createCorpusSnapshot(snapshotInput(
+      cycle,
+      cycle.map((item) => unitFor(item)),
+    ))).toThrow(HierarchyContractError);
+
+    const valid = [
+      bind(first, [second.sourceRef], [], 'current', 2),
+      bind(second, [], [first.sourceRef], 'superseded', 1),
+    ];
+    expect(() => createCorpusSnapshot(snapshotInput(
+      valid,
+      valid.map((item) => unitFor(item)),
+    ))).not.toThrow();
+
+    const unordered = [
+      bind(first, [second.sourceRef], [], 'current', 1),
+      bind(second, [], [first.sourceRef], 'superseded', 1),
+    ];
+    expect(() => createCorpusSnapshot(snapshotInput(
+      unordered,
+      unordered.map((item) => unitFor(item)),
+    ))).toThrow(HierarchyContractError);
+
+    const lifecycleConflict = [
+      bind(first, [second.sourceRef], [], 'current', 2),
+      bind(second, [], [first.sourceRef], 'current', 1),
+    ];
+    expect(() => createCorpusSnapshot(snapshotInput(
+      lifecycleConflict,
+      lifecycleConflict.map((item) => unitFor(item)),
+    ))).toThrow(HierarchyContractError);
   });
 
   it('rejects interpretation collection bounds before spread, map, or sort reads', () => {
@@ -697,6 +803,7 @@ describe('hierarchical contract boundaries', () => {
             .slice('sha256:'.length)}.md`,
           originalContentDigest: maximumSourceBodyDigest,
           revision,
+          retrievalMeaning: sourceRetrievalMeaningFromDescriptor(undefined),
           sanitizedBody: maximumSourceBody,
           sanitizedContentDigest: maximumSourceBodyDigest,
           sourceId,

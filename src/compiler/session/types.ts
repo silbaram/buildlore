@@ -1,4 +1,6 @@
-export const SESSION_COMPILE_PLAN_SCHEMA_VERSION = 'buildlore.compile-plan.v4' as const;
+import type { BoundSourceRetrievalMeaningV1 } from '../../projector/source-contracts.js';
+
+export const SESSION_COMPILE_PLAN_SCHEMA_VERSION = 'buildlore.compile-plan.v5' as const;
 export const SESSION_COMPILE_PROPOSAL_SCHEMA_VERSION = 'buildlore.compile-proposal.v1' as const;
 export const SESSION_COMPILE_APPLY_RESULT_SCHEMA_VERSION =
   'buildlore.compile-apply-result.v2' as const;
@@ -12,7 +14,7 @@ export const SESSION_CANDIDATE_APPROVAL_SCHEMA_VERSION =
   'buildlore.session-candidate-approval.v1' as const;
 export const SESSION_PROMOTION_PROOF_SCHEMA_VERSION =
   'buildlore.session-promotion-proof.v1' as const;
-export const SESSION_COMPILE_ALGORITHM_VERSION = 'buildlore.session-planner.v3' as const;
+export const SESSION_COMPILE_ALGORITHM_VERSION = 'buildlore.session-planner.v4' as const;
 
 export type SessionSha256Digest = `sha256:${string}`;
 
@@ -47,6 +49,7 @@ export interface SessionPlannedSource {
   readonly compilerSourceId: string;
   readonly originalContentDigest: SessionSha256Digest;
   readonly revision: SessionSha256Digest;
+  readonly retrievalMeaning: BoundSourceRetrievalMeaningV1;
   readonly sanitizedBody: string;
   readonly sanitizedContentDigest: SessionSha256Digest;
   readonly sourceId: string;

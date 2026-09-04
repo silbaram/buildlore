@@ -9,8 +9,11 @@ import type {
 import type { SemanticIndexSha256Digest } from './vector-index/types.js';
 
 export const RETRIEVAL_RESULT_V2_SCHEMA_VERSION = 'buildlore.retrieval-result.v2' as const;
+export const RETRIEVAL_RESULT_V3_SCHEMA_VERSION = 'buildlore.retrieval-result.v3' as const;
 export const RETRIEVAL_FUSION_POLICY_SCHEMA_VERSION =
   'buildlore.retrieval-fusion-policy.v1' as const;
+export const RETRIEVAL_RANKING_POLICY_SCHEMA_VERSION =
+  'buildlore.retrieval-ranking-policy.v2' as const;
 
 export type LocalWikiRetrievalMode = 'graph' | 'hybrid' | 'lexical' | 'semantic';
 export type LocalWikiRetrievalEffectiveMode =
@@ -19,6 +22,16 @@ export type LocalWikiRetrievalEffectiveMode =
   | 'lexical-graph'
   | 'semantic';
 export type LocalWikiRetrievalChannel = 'graph' | 'lexical' | 'semantic';
+export type LocalWikiRetrievalIntent = 'auto' | 'current' | 'historical' | 'neutral';
+export type LocalWikiRetrievalEffectiveIntent = Exclude<LocalWikiRetrievalIntent, 'auto'>;
+export type LocalWikiRetrievalIntentReasonCode =
+  | 'auto-current-default'
+  | 'auto-historical-gate-marker'
+  | 'auto-historical-history-marker'
+  | 'auto-historical-iteration-marker'
+  | 'explicit-current'
+  | 'explicit-historical'
+  | 'explicit-neutral';
 export type LocalWikiRetrievalFallbackReason =
   | 'embedding-identity-mismatch'
   | 'embedding-provider-incompatible'
@@ -44,6 +57,10 @@ export interface LocalWikiRetrievalRequestV2 {
   readonly topK?: number;
 }
 
+export interface LocalWikiRetrievalRequestV3 extends LocalWikiRetrievalRequestV2 {
+  readonly intent?: LocalWikiRetrievalIntent;
+}
+
 export interface LocalWikiRetrievalChannelScoreV2 {
   readonly channel: LocalWikiRetrievalChannel;
   readonly contribution: number;
@@ -64,6 +81,33 @@ export interface LocalWikiRetrievalHitV2 {
   }>;
   readonly scoreKind: 'exact-cosine' | 'lexical-score' | 'rrf-v1';
   readonly title: string;
+}
+
+export interface LocalWikiRetrievalHitV3 extends LocalWikiRetrievalHitV2 {
+  readonly baseScore: number;
+  readonly diversificationReason: 'primary-distinct-groups' | 'secondary-fill';
+  readonly finalScore: number;
+  readonly meaningAdjustment: Readonly<{
+    readonly authority: number;
+    readonly evidenceKind: number;
+    readonly lifecycle: number;
+    readonly reasonCodes: readonly string[];
+    readonly total: number;
+  }>;
+}
+
+export interface RetrievalRankingPolicyV2 {
+  readonly schemaVersion: typeof RETRIEVAL_RANKING_POLICY_SCHEMA_VERSION;
+  readonly algorithmVersion: 2;
+  readonly authorityAdjustmentLimit: 0.0015;
+  readonly conflictHandling: 'axis-neutral-with-reason';
+  readonly currentFloor: 'all-current-before-draft-or-superseded';
+  readonly diversification: 'two-pass-page-topic-iteration';
+  readonly evidenceAdjustmentLimit: 0.001;
+  readonly lifecycleAdjustmentLimit: 0.003;
+  readonly policyDigest: SemanticIndexSha256Digest;
+  readonly semanticCandidateUnit: 'best-chunk-per-section';
+  readonly tieBreak: readonly ['finalScore', 'pageId', 'sectionId', 'chunkId'];
 }
 
 export interface LocalWikiRetrievalFallbackV2 {
@@ -93,8 +137,30 @@ export interface RetrievalResultV2 {
   readonly egress: 'none';
 }
 
+export interface RetrievalResultV3 {
+  readonly schemaVersion: typeof RETRIEVAL_RESULT_V3_SCHEMA_VERSION;
+  readonly projectId: string;
+  readonly requestedMode: LocalWikiRetrievalMode;
+  readonly effectiveMode: LocalWikiRetrievalEffectiveMode;
+  readonly effectiveIntent: LocalWikiRetrievalEffectiveIntent;
+  readonly effectiveChannels: readonly LocalWikiRetrievalChannel[];
+  readonly fallback: LocalWikiRetrievalFallbackV2 | null;
+  readonly fusionPolicy: RetrievalFusionPolicyV1 | null;
+  readonly intentReasonCodes: readonly LocalWikiRetrievalIntentReasonCode[];
+  readonly hits: readonly LocalWikiRetrievalHitV3[];
+  readonly identity: LocalWikiRetrievalIdentityV2;
+  readonly providerUsed: 'local-in-process' | 'none';
+  readonly rankingPolicy: RetrievalRankingPolicyV2;
+  readonly requestedIntent: LocalWikiRetrievalIntent;
+  readonly egress: 'none';
+}
+
 export interface LocalWikiRetrievalPortV2 {
   search(request: LocalWikiRetrievalRequestV2): Promise<RetrievalResultV2>;
+}
+
+export interface LocalWikiRetrievalPortV3 {
+  search(request: LocalWikiRetrievalRequestV3): Promise<RetrievalResultV3>;
 }
 
 export type LocalWikiRetrievalErrorCode =

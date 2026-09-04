@@ -22,6 +22,7 @@ import {
 import {
   createSourceCollectionAdapter,
   genericSourceAdapter,
+  SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
 } from '../src/projector/source-adapters.js';
 import {
   createP2aArtifactAdapter,
@@ -304,6 +305,20 @@ describe('selected source collection adapters', () => {
     ]);
     expect(result.candidates.every((candidate) =>
       candidate.producer === 'p2a' && candidate.documentKind === 'p2a-planning')).toBe(true);
+    expect(result.candidates.find((candidate) =>
+      candidate.adapterDocumentKind === 'product-spec')?.retrievalMeaning).toMatchObject({
+      meaning: {
+        authority: 'canonical', evidenceKind: 'decision', lifecycle: 'current', revisionOrdinal: 1,
+      },
+      origin: 'adapter',
+    });
+    expect(result.candidates.find((candidate) =>
+      candidate.adapterDocumentKind === 'intake')?.retrievalMeaning).toMatchObject({
+      meaning: {
+        authority: 'historical', evidenceKind: 'planning', lifecycle: 'superseded', revisionOrdinal: 1,
+      },
+      origin: 'adapter',
+    });
     expect(JSON.stringify(result)).not.toContain(current.sourceRoot);
     expect(await readFile(join(current.sourceRoot, '.plan2agent/runs/run-index.json'), 'utf8'))
       .toBe('{malformed');
@@ -586,6 +601,74 @@ describe('selected source collection adapters', () => {
     }]);
     expect(JSON.stringify(result)).not.toContain(current.sourceRoot);
   });
+
+  it('rejects generic manifest supersession drift before candidates reach persistence',
+    async () => {
+      const current = await fixture();
+      await mkdir(join(current.sourceRoot, 'portable'));
+      await Promise.all([
+        writeFile(join(current.sourceRoot, 'portable/current.md'), '# Current\n'),
+        writeFile(join(current.sourceRoot, 'portable/old.md'), '# Old\n'),
+      ]);
+      const meaning = (
+        supersededBySourceRefs: readonly string[],
+        supersedesSourceRefs: readonly string[],
+      ) => ({
+        namespace: 'buildlore.generic',
+        schemaVersion: 'buildlore.generic-metadata.v1',
+        values: {
+          retrievalMeaning: {
+            authority: 'canonical',
+            evidenceKind: 'decision',
+            iterationGroup: null,
+            lifecycle: 'current',
+            revisionOrdinal: 1,
+            schemaVersion: SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+            supersededBySourceRefs,
+            supersedesSourceRefs,
+            topicGroup: 'supersession',
+          },
+        },
+      });
+      const manifest = parseSourceCollectionManifestV2({
+        projectId: 'alpha',
+        schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+        sourceRepository: repository,
+        sources: [
+          {
+            adapterId: 'buildlore.generic',
+            adapterVersion: 1,
+            id: 'current',
+            kind: 'markdown',
+            metadata: meaning([], ['portable/old.md']),
+            path: 'portable/current.md',
+            pathType: 'file',
+          },
+          {
+            adapterId: 'buildlore.generic',
+            adapterVersion: 1,
+            id: 'old',
+            kind: 'markdown',
+            metadata: meaning([], []),
+            path: 'portable/old.md',
+            pathType: 'file',
+          },
+        ],
+      });
+      await writeFile(
+        join(current.sourceRoot, '.buildlore/sources.json'),
+        serializeCanonicalJson(manifest),
+      );
+      const loadedManifest = await readSourceCollectionManifest(current.checkout, 'alpha');
+      const inventory = await selectDeclaredSourceFiles(current.checkout, loadedManifest);
+
+      await expect(createSourceCollectionAdapter({ includeP2a: false }).collect({
+        checkout: current.checkout,
+        inventory,
+        loadedManifest,
+        ingestedAt: '2026-08-24T00:00:00.000Z',
+      })).rejects.toMatchObject({ code: 'PROJECTION_ARTIFACT_INVALID' });
+    });
 
   it('rejects P2A declarations when the optional adapter is disabled', async () => {
     const current = await fixture();

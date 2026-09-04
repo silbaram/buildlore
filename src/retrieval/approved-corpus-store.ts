@@ -26,6 +26,7 @@ import { serializeCanonicalJson, syncDirectory, writeJsonAtomic } from '../knowl
 import { isNodeError } from '../knowledge/errors.js';
 import { resolveProjectWorkspace } from '../knowledge/paths.js';
 import { decodeUtf8Strict, parseJsonStrict } from '../knowledge/strict-json.js';
+import { neutralSourceRetrievalMeaning } from '../projector/source-contracts.js';
 import {
   createApprovedWikiRetrieval,
   projectApprovedWikiForRetrieval,
@@ -669,9 +670,17 @@ function projectAuthority(
   allowHistorical = false,
 ): ApprovedWikiRetrievalProjectionV1 {
   try {
-    const approvedWiki = allowHistorical && isHistoricalApprovedAuthority(authority)
+    const verified = allowHistorical && isHistoricalApprovedAuthority(authority)
       ? historicalApprovedWikiInput(authority, projectId)
       : verifyAuthority(authority, projectId);
+    const approvedWiki: ProjectApprovedWikiInputV1 = Object.freeze({
+      ...verified,
+      sourceMeanings: Object.freeze(authority.liveSnapshot.sources.map((source) => Object.freeze({
+        meaning: source.retrievalMeaning ?? neutralSourceRetrievalMeaning(),
+        origin: source.retrievalMeaningOrigin ?? 'legacy-default',
+        sourceId: source.sourceId,
+      }))),
+    });
     const corpus: ApprovedWikiRetrievalCorpusV1 = projectApprovedWikiForRetrieval(
       approvedWiki,
       projectId,

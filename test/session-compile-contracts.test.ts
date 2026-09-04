@@ -24,6 +24,7 @@ import {
   type SessionCompileProposalV1,
 } from '../src/compiler/session/types.js';
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
+import { sourceRetrievalMeaningFromDescriptor } from '../src/projector/index.js';
 
 const temporaryRoots: string[] = [];
 const DIGEST = `sha256:${'a'.repeat(64)}` as const;
@@ -75,6 +76,7 @@ function plannedSource(index: number, body: string): SessionPlannedSource {
     compilerSourceId: `markdown--${hex}.md`,
     originalContentDigest: digest,
     revision: digest,
+    retrievalMeaning: sourceRetrievalMeaningFromDescriptor(undefined),
     sanitizedBody: body,
     sanitizedContentDigest: digest,
     sourceId,
@@ -250,8 +252,14 @@ describe('session compile proposal contract', () => {
 
     expect(schemas.every((schema) => schema.additionalProperties === false)).toBe(true);
     expect((schemas[0]?.properties as Record<string, unknown>).schemaVersion).toEqual({
-      const: 'buildlore.compile-plan.v4',
+      const: 'buildlore.compile-plan.v5',
     });
+    const planSource = ((schemas[0]?.$defs as Record<string, unknown>).source as {
+      readonly properties: Readonly<Record<string, unknown>>;
+      readonly required: readonly string[];
+    });
+    expect(planSource.required).toContain('retrievalMeaning');
+    expect(planSource.properties).toHaveProperty('retrievalMeaning');
     const planLimits = (((schemas[0]?.properties as Record<string, unknown>).limits as
       Record<string, unknown>).properties as Record<string, Record<string, unknown>>);
     expect(planLimits.maxApplyProposals?.const).toBe(8192);

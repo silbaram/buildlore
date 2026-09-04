@@ -192,7 +192,11 @@ describe('active hierarchical Wiki reads', () => {
         projectId: PROJECT_ID,
         proposalDigest: page.proposalDigest,
         relationPageIds: page.relationPageIds,
-        sections: page.sections,
+        sections: page.sections.map((section) => ({
+          body: section.body,
+          citationLocators: section.citationLocators,
+          sectionId: section.sectionId,
+        })),
         status: 'active',
         summary: page.summary,
         title: page.title,

@@ -34,7 +34,7 @@ Usage:
   buildlore check --project <project-id> [--json]
   buildlore index status --project <project-id> [--json]
   buildlore index rebuild --project <project-id> [--full] [--json]
-  buildlore search --project <project-id> --query <text> [--mode lexical|graph|semantic|hybrid] [--json]
+  buildlore search --project <project-id> --query <text> [--mode lexical|graph|semantic|hybrid] [--intent auto|current|historical|neutral] [--json]
   buildlore query --project <project-id> --question <text> [--json]
   buildlore context --project <project-id> --prompt <text> [--json]
   buildlore model bind --profile multilingual-e5-small [--directory <path>] [--json]

@@ -13,8 +13,14 @@ export type RetrievalScoreKind =
   | 'semantic-rank';
 export type RetrievalFallbackReason =
   | 'embedding-index-outdated'
+  | 'embedding-identity-mismatch'
+  | 'embedding-provider-incompatible'
+  | 'embedding-provider-unavailable'
   | 'embedding-store-unavailable'
-  | 'provider-unconfigured';
+  | 'provider-unconfigured'
+  | 'semantic-index-incompatible'
+  | 'semantic-index-stale'
+  | 'semantic-index-unavailable';
 export type RetrievalWarningCode =
   | RetrievalFallbackReason
   | 'embedding-entry-stale'

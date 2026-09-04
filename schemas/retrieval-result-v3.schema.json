@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/retrieval-result-v3.schema.json",
+  "title": "BuildLore local Wiki retrieval result v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "projectId", "requestedMode", "effectiveMode", "requestedIntent",
+    "effectiveIntent", "intentReasonCodes", "effectiveChannels", "fallback", "fusionPolicy",
+    "rankingPolicy", "hits", "identity", "providerUsed", "egress"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.retrieval-result.v3" },
+    "projectId": { "$ref": "#/$defs/projectId" },
+    "requestedMode": { "enum": ["graph", "hybrid", "lexical", "semantic"] },
+    "effectiveMode": { "enum": ["hybrid", "lexical", "lexical-graph", "semantic"] },
+    "requestedIntent": { "enum": ["auto", "current", "historical", "neutral"] },
+    "effectiveIntent": { "enum": ["current", "historical", "neutral"] },
+    "intentReasonCodes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "enum": [
+          "auto-current-default", "auto-historical-gate-marker",
+          "auto-historical-history-marker", "auto-historical-iteration-marker",
+          "explicit-current", "explicit-historical", "explicit-neutral"
+        ]
+      }
+    },
+    "effectiveChannels": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/channelName" }
+    },
+    "fallback": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/fallback" }] },
+    "fusionPolicy": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/fusionPolicy" }] },
+    "rankingPolicy": { "$ref": "#/$defs/rankingPolicy" },
+    "hits": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/hit" }
+    },
+    "identity": { "$ref": "#/$defs/identity" },
+    "providerUsed": { "enum": ["local-in-process", "none"] },
+    "egress": { "const": "none" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "nullableDigest": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/digest" }]
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "channelName": { "enum": ["graph", "lexical", "semantic"] },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["excludedChannel", "fromMode", "reasonCode", "toMode"],
+      "properties": {
+        "excludedChannel": { "const": "semantic" },
+        "fromMode": { "const": "hybrid" },
+        "reasonCode": {
+          "enum": [
+            "embedding-identity-mismatch", "embedding-provider-incompatible",
+            "embedding-provider-unavailable", "semantic-index-incompatible",
+            "semantic-index-stale", "semantic-index-unavailable"
+          ]
+        },
+        "toMode": { "const": "lexical-graph" }
+      }
+    },
+    "fusionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "algorithm", "algorithmVersion", "rankConstant", "channelWeights",
+        "tieBreak", "policyDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.retrieval-fusion-policy.v1" },
+        "algorithm": { "const": "reciprocal-rank-fusion" },
+        "algorithmVersion": { "const": 1 },
+        "rankConstant": { "const": 60 },
+        "channelWeights": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["graph", "lexical", "semantic"],
+          "properties": {
+            "graph": { "const": 1 }, "lexical": { "const": 1 }, "semantic": { "const": 1 }
+          }
+        },
+        "tieBreak": { "const": ["pageId", "sectionId", "chunkId"] },
+        "policyDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "rankingPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "algorithmVersion", "authorityAdjustmentLimit", "conflictHandling",
+        "currentFloor", "diversification", "evidenceAdjustmentLimit", "lifecycleAdjustmentLimit",
+        "policyDigest", "semanticCandidateUnit", "tieBreak"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.retrieval-ranking-policy.v2" },
+        "algorithmVersion": { "const": 2 },
+        "authorityAdjustmentLimit": { "const": 0.0015 },
+        "conflictHandling": { "const": "axis-neutral-with-reason" },
+        "currentFloor": { "const": "all-current-before-draft-or-superseded" },
+        "diversification": { "const": "two-pass-page-topic-iteration" },
+        "evidenceAdjustmentLimit": { "const": 0.001 },
+        "lifecycleAdjustmentLimit": { "const": 0.003 },
+        "semanticCandidateUnit": { "const": "best-chunk-per-section" },
+        "policyDigest": {
+          "const": "sha256:7c4d21e44d62fa763ff1746a99322b5aa791a8d3eafd4fe6851d7d722c843ea9"
+        },
+        "tieBreak": { "const": ["finalScore", "pageId", "sectionId", "chunkId"] }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "contribution", "rank", "score"],
+      "properties": {
+        "channel": { "$ref": "#/$defs/channelName" },
+        "contribution": { "type": "number" },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 50000 },
+        "score": { "type": "number", "minimum": -1, "maximum": 1 }
+      }
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["citationIds", "pageId", "projectId", "sectionId", "sourceIds"],
+      "properties": {
+        "citationIds": {
+          "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "pageId": { "$ref": "#/$defs/id" },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "sectionId": { "$ref": "#/$defs/id" },
+        "sourceIds": {
+          "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "matchedEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "field", "matchKind"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 1 },
+        "field": { "enum": ["body", "summary", "title"] },
+        "matchKind": { "enum": ["hangul-bigram", "hangul-trigram", "unicode-word"] }
+      }
+    },
+    "meaningAdjustment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority", "evidenceKind", "lifecycle", "reasonCodes", "total"],
+      "properties": {
+        "authority": { "type": "number", "minimum": -0.0015, "maximum": 0.0015 },
+        "evidenceKind": { "type": "number", "minimum": -0.001, "maximum": 0.001 },
+        "lifecycle": { "type": "number", "minimum": -0.003, "maximum": 0.003 },
+        "reasonCodes": {
+          "type": "array", "maxItems": 8, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "total": { "type": "number", "minimum": -0.0055, "maximum": 0.0055 }
+      }
+    },
+    "scoreComponents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["combinedScore"],
+      "properties": {
+        "combinedScore": { "type": "number" },
+        "lexical": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["weightedScore", "wordCoverage"],
+          "properties": {
+            "hangulBigramCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+            "hangulTrigramCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+            "weightedScore": { "type": "number", "minimum": 0, "maximum": 1 },
+            "wordCoverage": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "hit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseScore", "channels", "chunkId", "diversificationReason", "finalScore", "locator",
+        "matchedEvidence", "meaningAdjustment", "rank", "score", "scoreComponents", "scoreKind",
+        "title"
+      ],
+      "properties": {
+        "baseScore": { "type": "number" },
+        "channels": {
+          "type": "array", "minItems": 1, "maxItems": 3,
+          "items": { "$ref": "#/$defs/channel" }
+        },
+        "chunkId": { "type": "string", "pattern": "^chunk-[a-f0-9]{64}$" },
+        "diversificationReason": { "enum": ["primary-distinct-groups", "secondary-fill"] },
+        "finalScore": { "type": "number" },
+        "locator": { "$ref": "#/$defs/locator" },
+        "matchedEvidence": {
+          "type": "array", "maxItems": 9,
+          "items": { "$ref": "#/$defs/matchedEvidence" }
+        },
+        "meaningAdjustment": { "$ref": "#/$defs/meaningAdjustment" },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "score": { "type": "number" },
+        "scoreComponents": { "$ref": "#/$defs/scoreComponents" },
+        "scoreKind": { "enum": ["exact-cosine", "lexical-score", "rrf-v1"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["embeddingIdentityDigest", "indexGenerationId", "indexManifestDigest"],
+      "properties": {
+        "embeddingIdentityDigest": { "$ref": "#/$defs/nullableDigest" },
+        "indexGenerationId": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^generation-[a-f0-9]{64}$" }
+          ]
+        },
+        "indexManifestDigest": { "$ref": "#/$defs/nullableDigest" }
+      }
+    }
+  }
+}

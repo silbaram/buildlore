@@ -1,12 +1,15 @@
-import type { ApprovedWikiRetrievalCorpusV1 } from '../hierarchical.js';
+import type {
+  ApprovedWikiMeaningSignalV1,
+  ApprovedWikiRetrievalCorpusV1,
+} from '../hierarchical.js';
 import type {
   EmbeddingIdentityV2,
   EmbeddingProviderPort,
 } from '../embedding/types.js';
 
-export const RETRIEVAL_CHUNK_SCHEMA_VERSION = 'buildlore.retrieval-chunk.v1' as const;
+export const RETRIEVAL_CHUNK_SCHEMA_VERSION = 'buildlore.retrieval-chunk.v2' as const;
 export const SEMANTIC_INDEX_MANIFEST_SCHEMA_VERSION =
-  'buildlore.semantic-index-manifest.v1' as const;
+  'buildlore.semantic-index-manifest.v2' as const;
 export const SEMANTIC_INDEX_CHECKSUMS_SCHEMA_VERSION =
   'buildlore.semantic-index-checksums.v1' as const;
 export const SEMANTIC_INDEX_ACTIVE_SCHEMA_VERSION =
@@ -33,12 +36,13 @@ export type RetrievalStructureKind = 'fenced-code' | 'heading' | 'list' | 'parag
 export type RetrievalChunkSkipReason = 'empty-structure' | 'structure-too-large';
 
 export interface SemanticChunkerIdentityV1 {
-  readonly contractVersion: 1;
+  readonly contractVersion: 2;
   readonly identityDigest: SemanticIndexSha256Digest;
-  readonly kind: 'markdown-structure-token-aware';
+  readonly kind: 'markdown-semantic-text-token-aware';
   readonly maximumPlanningUtf8Bytes: 8192;
   readonly maximumTokens: 512;
   readonly preserves: readonly ['heading', 'paragraph', 'list', 'table', 'fenced-code'];
+  readonly semanticContentPolicyDigest: SemanticIndexSha256Digest;
   readonly unicodeBoundary: 'unicode-cluster-safe-v1';
 }
 
@@ -65,6 +69,7 @@ export interface RetrievalChunkV1 {
   readonly tokenTruncated: false;
   readonly chunkerDigest: SemanticIndexSha256Digest;
   readonly citationLocators: readonly RetrievalChunkCitationLocatorV1[];
+  readonly meaningSignals: readonly ApprovedWikiMeaningSignalV1[];
   readonly eligibility: 'eligible';
   readonly skipReason: null;
 }
@@ -250,6 +255,11 @@ export interface VectorIndexPort {
   resume(input: SemanticIndexBuildInputV1): Promise<SemanticIndexBuildResultV1>;
   openActive(projectId: string): Promise<SemanticIndexViewV1>;
   searchExact(
+    projectId: string,
+    queryVector: Float32Array,
+    topK?: number,
+  ): Promise<SemanticIndexSearchResultV1>;
+  searchExactDistinctSections(
     projectId: string,
     queryVector: Float32Array,
     topK?: number,

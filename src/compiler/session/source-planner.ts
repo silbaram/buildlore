@@ -27,6 +27,7 @@ import {
   renderSourceDocument,
 } from '../../projector/source-document.js';
 import { isCollectableProjectSourceKind } from '../../projector/project-source-writer.js';
+import { sourceRetrievalMeaningFromDescriptor } from '../../projector/source-contracts.js';
 import { consumePreparedSource } from '../../sanitizer/approval.js';
 import {
   createProjectSecurityService,
@@ -305,6 +306,8 @@ async function buildPlannedSources(input: {
       compilerSourceId: compilerSourceId(candidate, input.projectId),
       originalContentDigest: candidate.contentDigest,
       revision: candidate.sourceRevision,
+      retrievalMeaning: candidate.retrievalMeaning ??
+        sourceRetrievalMeaningFromDescriptor(candidate.descriptor),
       sanitizedBody: storedSource.body,
       sanitizedContentDigest: sessionSha256(storedSource.body),
       sourceId: id,

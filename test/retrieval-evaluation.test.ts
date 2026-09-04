@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -18,6 +19,26 @@ import {
   type FrozenRetrievalCorpusV1,
 } from '../src/retrieval/evaluation/index.js';
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
+import { addProject } from '../src/knowledge/index.js';
+import { digestHierarchyValue } from '../src/compiler/index.js';
+import {
+  LLM_WIKI_QUALITY_CASES_V3,
+  RETRIEVAL_FUSION_POLICY_V1,
+  RETRIEVAL_RANKING_POLICY_V2,
+  RETRIEVAL_RESULT_V3_SCHEMA_VERSION,
+  createApprovedWikiHybridRetrievalV3,
+  runLlmWikiRetrievalQualityV3,
+  type HierarchicalRetrievalGoldV1,
+  type LocalWikiRetrievalPortV3,
+  type LocalWikiRetrievalRequestV3,
+} from '../src/retrieval/index.js';
+import {
+  createEmbeddingIdentityV2,
+  MULTILINGUAL_E5_SMALL_PROFILE,
+  type EmbeddingProviderPort,
+} from '../src/retrieval/embedding/index.js';
+import { createFlatFileVectorIndex } from '../src/retrieval/vector-index/index.js';
+import { llmWikiQualityFixture } from './helpers/llm-wiki-quality-fixture.js';
 
 const root = join(process.cwd(), 'test', 'fixtures', 'retrieval', 'v1');
 
@@ -34,7 +55,420 @@ async function fixtures() {
   };
 }
 
+function qualityVectorFor(text: string): Float32Array {
+  const vector = new Float32Array(384);
+  const normalized = Array.from(text.normalize('NFC').toLowerCase())
+    .filter((character) => !/\s/u.test(character));
+  for (let index = 0; index < normalized.length; index += 1) {
+    const token = `${normalized[index] ?? ''}${normalized[index + 1] ?? ''}`;
+    const digest = createHash('sha256').update(token, 'utf8').digest();
+    const component = ((digest[0] ?? 0) * 256 + (digest[1] ?? 0)) % vector.length;
+    vector[component] = (vector[component] ?? 0) + 1;
+  }
+  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  for (let index = 0; index < vector.length; index += 1) {
+    vector[index] = (vector[index] ?? 0) / norm;
+  }
+  return vector;
+}
+
+function qualityCandidate(
+  expectedByQuery: ReturnType<typeof llmWikiQualityFixture>['expectedByQuery'],
+  embeddingIdentityDigest: `sha256:${string}`,
+  overrides: ReadonlyMap<string, string> = new Map(),
+): LocalWikiRetrievalPortV3 {
+  return Object.freeze({
+    search(request: LocalWikiRetrievalRequestV3) {
+      const qualityCase = LLM_WIKI_QUALITY_CASES_V3.find((candidate) =>
+        candidate.text === request.query);
+      if (qualityCase === undefined) throw new Error('Unexpected quality query.');
+      const selectedQueryId = overrides.get(qualityCase.queryId) ?? qualityCase.queryId;
+      const expected = expectedByQuery.get(selectedQueryId);
+      if (expected === undefined) throw new Error('Expected quality locator is missing.');
+      return Promise.resolve(Object.freeze({
+        effectiveChannels: Object.freeze(['lexical', 'graph', 'semantic'] as const),
+        effectiveIntent: qualityCase.intent,
+        effectiveMode: 'hybrid' as const,
+        egress: 'none' as const,
+        fallback: null,
+        fusionPolicy: RETRIEVAL_FUSION_POLICY_V1,
+        hits: Object.freeze([Object.freeze({
+          baseScore: 0.1,
+          channels: Object.freeze([
+            Object.freeze({ channel: 'lexical' as const, contribution: 0.03, rank: 1, score: 1 }),
+            Object.freeze({ channel: 'graph' as const, contribution: 0.03, rank: 1, score: 1 }),
+            Object.freeze({ channel: 'semantic' as const, contribution: 0.04, rank: 1, score: 1 }),
+          ]),
+          chunkId: `chunk-${digestHierarchyValue(qualityCase.queryId).slice('sha256:'.length)}`,
+          diversificationReason: 'primary-distinct-groups' as const,
+          finalScore: 0.1,
+          locator: Object.freeze({
+            citationIds: Object.freeze([expected.citationId]),
+            pageId: expected.pageId,
+            projectId: request.projectId,
+            sectionId: expected.sectionId,
+            sourceIds: Object.freeze([expected.sourceId]),
+          }),
+          matchedEvidence: Object.freeze([]),
+          meaningAdjustment: Object.freeze({
+            authority: 0,
+            evidenceKind: 0,
+            lifecycle: 0,
+            reasonCodes: Object.freeze([]),
+            total: 0,
+          }),
+          rank: 1,
+          score: 0.1,
+          scoreComponents: Object.freeze({ combinedScore: 0.1 }),
+          scoreKind: 'rrf-v1' as const,
+          title: expected.title,
+        })]),
+        identity: Object.freeze({
+          embeddingIdentityDigest,
+          indexGenerationId: `generation-${digestHierarchyValue('quality-generation-id')
+            .slice('sha256:'.length)}`,
+          indexManifestDigest: digestHierarchyValue('quality-index'),
+        }),
+        intentReasonCodes: Object.freeze([
+          qualityCase.intent === 'current' ? 'explicit-current' as const : 'explicit-historical' as const,
+        ]),
+        projectId: request.projectId,
+        providerUsed: 'local-in-process' as const,
+        rankingPolicy: RETRIEVAL_RANKING_POLICY_V2,
+        requestedIntent: qualityCase.intent,
+        requestedMode: 'hybrid' as const,
+        schemaVersion: RETRIEVAL_RESULT_V3_SCHEMA_VERSION,
+      }));
+    },
+  });
+}
+
 describe('provider-free retrieval evaluation', () => {
+  it('executes the fixed eight-query gate against a corpus-bound retrieval port', async () => {
+    const fixture = JSON.parse(await readFile(
+      new URL('./fixtures/retrieval/v2/hierarchical-gold.json', import.meta.url),
+      'utf8',
+    )) as HierarchicalRetrievalGoldV1;
+    const embeddingIdentity = createEmbeddingIdentityV2(MULTILINGUAL_E5_SMALL_PROFILE, [
+      { basename: 'config.json', bytes: 655, role: 'model-config', sha256: `sha256:${'1'.repeat(64)}` },
+      {
+        basename: 'onnx/model.onnx',
+        bytes: 470_268_510,
+        role: 'model',
+        sha256: 'sha256:ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665',
+      },
+      {
+        basename: 'tokenizer.json',
+        bytes: 17_082_730,
+        role: 'tokenizer',
+        sha256: 'sha256:0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39',
+      },
+      {
+        basename: 'tokenizer_config.json', bytes: 443, role: 'tokenizer-config',
+        sha256: `sha256:${'4'.repeat(64)}`,
+      },
+    ]);
+    let tokenCountCalls = 0;
+    const provider: EmbeddingProviderPort = Object.freeze({
+      activeIdentity: () => embeddingIdentity,
+      countDocumentTokens(texts: readonly string[]) {
+        tokenCountCalls += 1;
+        return Promise.resolve(Object.freeze({
+          egress: 'none' as const,
+          identity: embeddingIdentity,
+          maximumTokens: 512 as const,
+          providerUsed: 'local-in-process' as const,
+          tokenCounts: Object.freeze(texts.map((text) => Math.max(1, [...text].length))),
+        }));
+      },
+      embedDocuments(texts: readonly string[]) {
+        return Promise.resolve(Object.freeze({
+          egress: 'none' as const,
+          identity: embeddingIdentity,
+          providerUsed: 'local-in-process' as const,
+          truncated: Object.freeze(texts.map(() => false)),
+          vectors: Object.freeze(texts.map(qualityVectorFor)),
+        }));
+      },
+      embedQuery(text: string) {
+        return Promise.resolve(Object.freeze({
+          egress: 'none' as const,
+          identity: embeddingIdentity,
+          providerUsed: 'local-in-process' as const,
+          truncated: Object.freeze([false]),
+          vectors: Object.freeze([qualityVectorFor(text)]),
+        }));
+      },
+      inspectCapabilities: () => Object.freeze({
+        adapterKind: 'transformers-js' as const,
+        device: 'cpu' as const,
+        egress: 'none' as const,
+        maximumBatchSize: 32 as const,
+        maximumQueryUtf8Bytes: 4096 as const,
+        networkAllowed: false as const,
+        providerUsed: 'local-in-process' as const,
+      }),
+      readiness: () => Object.freeze({ activeIdentity: embeddingIdentity, state: 'ready' as const }),
+    });
+    const temporaryRoot = await mkdtemp(join(process.cwd(), '.test-tmp-llm-quality-'));
+    try {
+      const knowledgeRoot = join(temporaryRoot, 'knowledge');
+      await mkdir(knowledgeRoot);
+      await addProject(knowledgeRoot, {
+        displayName: fixture.corpus.projectId,
+        projectId: fixture.corpus.projectId,
+        sourceRepository: `https://example.test/${fixture.corpus.projectId}.git`,
+      });
+      const vectorIndex = createFlatFileVectorIndex(knowledgeRoot);
+      const actual = createApprovedWikiHybridRetrievalV3({
+        corpus: fixture.corpus,
+        projectId: fixture.corpus.projectId,
+        provider,
+        sanitizerPolicyDigest: `sha256:${'f'.repeat(64)}`,
+        vectorIndex,
+      });
+      const requests: LocalWikiRetrievalRequestV3[] = [];
+      const candidate = Object.freeze({
+        async search(request: LocalWikiRetrievalRequestV3) {
+          requests.push(request);
+          return actual.search(request);
+        },
+      });
+      const first = await runLlmWikiRetrievalQualityV3({
+        candidate,
+        corpus: fixture.corpus,
+        mode: 'lexical',
+        projectId: fixture.corpus.projectId,
+        provider,
+      });
+
+      expect(LLM_WIKI_QUALITY_CASES_V3).toHaveLength(8);
+      expect(LLM_WIKI_QUALITY_CASES_V3.map((qualityCase) => qualityCase.text)).toEqual([
+        '프로젝트 구성',
+        'BuildLore는 무엇인가',
+        'Wiki 생성과 activation 과정',
+        '비밀정보 sanitizer 동작 방식',
+        'semantic index 생성과 검색 방법',
+        '현재 지원되는 source 종류',
+        '실패 후 복구와 검증 기록',
+        '특정 iteration 또는 Gate의 과거 결정',
+      ]);
+      expect(requests.map((request) => request.query)).toEqual(
+        LLM_WIKI_QUALITY_CASES_V3.map((qualityCase) => qualityCase.text),
+      );
+      expect(requests.map((request) => request.intent)).toEqual(
+        LLM_WIKI_QUALITY_CASES_V3.map((qualityCase) => qualityCase.intent),
+      );
+      expect(requests.every((request) => request.topK === 5)).toBe(true);
+      expect(first).toMatchObject({
+        corpusDigest: fixture.corpus.corpusDigest,
+        overallPassed: false,
+        providerIdentityDigest: embeddingIdentity.identityDigest,
+        queryCount: 8,
+      });
+      expect(tokenCountCalls).toBeGreaterThan(0);
+      expect(first.aggregate.candidate.contextUtf8Bytes).toBeGreaterThan(0);
+      expect(first.aggregate.candidate.providerTokenCount).toBeGreaterThan(0);
+
+      await expect(runLlmWikiRetrievalQualityV3({
+        candidate,
+        corpus: fixture.corpus,
+        mode: 'hybrid',
+        projectId: fixture.corpus.projectId,
+        provider,
+      })).rejects.toThrow('LLM_WIKI_RETRIEVAL_EVAL_INVALID');
+
+      const qualityFixture = llmWikiQualityFixture();
+      await addProject(knowledgeRoot, {
+        displayName: qualityFixture.corpus.projectId,
+        projectId: qualityFixture.corpus.projectId,
+        sourceRepository: `https://example.test/${qualityFixture.corpus.projectId}.git`,
+      });
+      const qualityVectorIndex = createFlatFileVectorIndex(knowledgeRoot);
+      await qualityVectorIndex.buildFull({
+        corpus: qualityFixture.corpus,
+        embeddingIdentity,
+        projectId: qualityFixture.corpus.projectId,
+        provider,
+        sanitizerPolicyDigest: `sha256:${'f'.repeat(64)}`,
+      });
+      const qualityActual = createApprovedWikiHybridRetrievalV3({
+        corpus: qualityFixture.corpus,
+        projectId: qualityFixture.corpus.projectId,
+        provider,
+        sanitizerPolicyDigest: `sha256:${'f'.repeat(64)}`,
+        vectorIndex: qualityVectorIndex,
+      });
+      const qualityReports = [];
+      for (const mode of ['lexical', 'graph', 'semantic', 'hybrid'] as const) {
+        qualityReports.push(await runLlmWikiRetrievalQualityV3({
+          candidate: qualityActual,
+          corpus: qualityFixture.corpus,
+          mode,
+          projectId: qualityFixture.corpus.projectId,
+          provider,
+        }));
+      }
+      expect(qualityReports.map((report) => report.mode)).toEqual([
+        'lexical', 'graph', 'semantic', 'hybrid',
+      ]);
+      expect(qualityReports.map((report) => report.candidateIdentity.mode)).toEqual([
+        'lexical', 'graph', 'semantic', 'hybrid',
+      ]);
+      const hybrid = qualityReports[3];
+      if (hybrid === undefined) throw new Error('Hybrid quality report is missing.');
+      expect(hybrid.queryResults.filter((result) => !result.passed)).toEqual([]);
+      expect(hybrid.overallPassed).toBe(true);
+      expect(hybrid.candidateIdentity).toMatchObject({
+        embeddingIdentityDigest: embeddingIdentity.identityDigest,
+        mode: 'hybrid',
+      });
+    } finally {
+      await rm(temporaryRoot, { force: true, recursive: true });
+    }
+
+  });
+
+  it('passes a grounded eight-query candidate and rejects an unrelated same-kind hit', async () => {
+    const fixture = llmWikiQualityFixture();
+    const embeddingIdentity = createEmbeddingIdentityV2(MULTILINGUAL_E5_SMALL_PROFILE, [
+      { basename: 'config.json', bytes: 1, role: 'model-config', sha256: `sha256:${'1'.repeat(64)}` },
+      { basename: 'onnx/model.onnx', bytes: 1, role: 'model', sha256: `sha256:${'2'.repeat(64)}` },
+      { basename: 'tokenizer.json', bytes: 1, role: 'tokenizer', sha256: `sha256:${'3'.repeat(64)}` },
+      {
+        basename: 'tokenizer_config.json', bytes: 1, role: 'tokenizer-config',
+        sha256: `sha256:${'4'.repeat(64)}`,
+      },
+    ]);
+    const provider: EmbeddingProviderPort = Object.freeze({
+      activeIdentity: () => embeddingIdentity,
+      countDocumentTokens(texts: readonly string[]) {
+        return Promise.resolve(Object.freeze({
+          egress: 'none' as const,
+          identity: embeddingIdentity,
+          maximumTokens: 512 as const,
+          providerUsed: 'local-in-process' as const,
+          tokenCounts: Object.freeze(texts.map((text) => Math.max(1, [...text].length))),
+        }));
+      },
+      embedDocuments: () => Promise.reject(new Error('not used by quality fixture')),
+      embedQuery: () => Promise.reject(new Error('not used by quality fixture')),
+      inspectCapabilities: () => Object.freeze({
+        adapterKind: 'transformers-js' as const,
+        device: 'cpu' as const,
+        egress: 'none' as const,
+        maximumBatchSize: 32 as const,
+        maximumQueryUtf8Bytes: 4096 as const,
+        networkAllowed: false as const,
+        providerUsed: 'local-in-process' as const,
+      }),
+      readiness: () => Object.freeze({ activeIdentity: embeddingIdentity, state: 'ready' as const }),
+    });
+    const passed = await runLlmWikiRetrievalQualityV3({
+      candidate: qualityCandidate(fixture.expectedByQuery, embeddingIdentity.identityDigest),
+      corpus: fixture.corpus,
+      mode: 'hybrid',
+      projectId: fixture.corpus.projectId,
+      provider,
+    });
+
+    expect(passed.overallPassed).toBe(true);
+    expect(passed.queryResults.every((result) => result.passed)).toBe(true);
+    expect(passed).toMatchObject({
+      baselineIdentity: {
+        mode: 'graph',
+        retrievalVersion: 'approved-wiki-legacy-raw-v1',
+      },
+      candidateIdentity: {
+        embeddingIdentityDigest: embeddingIdentity.identityDigest,
+        mode: 'hybrid',
+      },
+      mode: 'hybrid',
+    });
+    expect(passed.baselineIdentity.identityDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(passed.candidateIdentity.identityDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+
+    const misrouted = await runLlmWikiRetrievalQualityV3({
+      candidate: qualityCandidate(
+        fixture.expectedByQuery,
+        embeddingIdentity.identityDigest,
+        new Map([['secret-sanitizer', 'semantic-index']]),
+      ),
+      corpus: fixture.corpus,
+      mode: 'hybrid',
+      projectId: fixture.corpus.projectId,
+      provider,
+    });
+    expect(misrouted.queryResults.find((result) => result.queryId === 'secret-sanitizer'))
+      .toMatchObject({ passed: false, candidate: { recallAt5: 0 } });
+    expect(misrouted.overallPassed).toBe(false);
+
+    const invalidCandidate = qualityCandidate(
+      fixture.expectedByQuery,
+      embeddingIdentity.identityDigest,
+    );
+    await expect(runLlmWikiRetrievalQualityV3({
+      candidate: Object.freeze({
+        async search(request: LocalWikiRetrievalRequestV3) {
+          const result = await invalidCandidate.search(request);
+          const firstHit = result.hits[0];
+          if (firstHit === undefined) return result;
+          return Object.freeze({
+            ...result,
+            hits: Object.freeze([Object.freeze({ ...firstHit, chunkId: 'chunk-invalid' })]),
+          });
+        },
+      }),
+      corpus: fixture.corpus,
+      mode: 'hybrid',
+      projectId: fixture.corpus.projectId,
+      provider,
+    })).rejects.toThrow('LLM_WIKI_RETRIEVAL_EVAL_INVALID');
+
+    const stalePageId = 'quality/what-is-buildlore';
+    const staleSourceId = fixture.expectedByQuery.get('what-is-buildlore')?.sourceId;
+    if (staleSourceId === undefined) throw new Error('Expected quality source is missing.');
+    const stalePages = Object.freeze(fixture.corpus.pages.map((page) => page.pageId !== stalePageId
+      ? page
+      : Object.freeze({
+          ...page,
+          meaningSignals: Object.freeze((page.meaningSignals ?? []).map((meaning) =>
+            meaning.sourceId !== staleSourceId ? meaning : Object.freeze({
+              ...meaning,
+              authority: 'historical' as const,
+              lifecycle: 'superseded' as const,
+            }))),
+          sections: Object.freeze(page.sections.map((section) => Object.freeze({
+            ...section,
+            meaningSignals: Object.freeze((section.meaningSignals ?? []).map((meaning) =>
+              meaning.sourceId !== staleSourceId ? meaning : Object.freeze({
+                ...meaning,
+                authority: 'historical' as const,
+                lifecycle: 'superseded' as const,
+              }))),
+          }))),
+        })));
+    const staleBasis = Object.freeze({
+      generationDigest: fixture.corpus.generationDigest,
+      pages: stalePages,
+      projectId: fixture.corpus.projectId,
+      schemaVersion: fixture.corpus.schemaVersion,
+    });
+    const staleCorpus = Object.freeze({
+      ...staleBasis,
+      corpusDigest: digestHierarchyValue(staleBasis),
+    });
+    const staleCurrent = await runLlmWikiRetrievalQualityV3({
+      candidate: qualityCandidate(fixture.expectedByQuery, embeddingIdentity.identityDigest),
+      corpus: staleCorpus,
+      mode: 'hybrid',
+      projectId: staleCorpus.projectId,
+      provider,
+    });
+    expect(staleCurrent.queryResults.find((result) => result.queryId === 'what-is-buildlore'))
+      .toMatchObject({ candidate: { recallAt5: 0 }, passed: false });
+  });
+
   it('[V9-V-05][V9-V-07][V9-V-08][V9-V-09][V10-V-15] validates categories, thresholds, hashes, and recorded identities', async () => {
     const value = await fixtures();
     expect(parseRetrievalEvaluationReport(await json('baseline.json')).overallPassed).toBe(true);

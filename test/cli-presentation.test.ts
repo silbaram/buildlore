@@ -115,11 +115,11 @@ describe('CLI presentation and exit taxonomy', () => {
     const result: CliSuccessResult = {
       command: 'compile.plan',
       data: {
-        schemaVersion: 'buildlore.compile-plan.v4',
+        schemaVersion: 'buildlore.compile-plan.v5',
         projectId: 'alpha',
         contractDigest: `sha256:${'a'.repeat(64)}`,
         planDigest: `sha256:${'b'.repeat(64)}`,
-        algorithmVersion: 'buildlore.session-planner.v3',
+        algorithmVersion: 'buildlore.session-planner.v4',
         sources: [{ sanitizedBody: sourceBody }],
         tasks: [{ taskId: 'task' }],
         mergeCandidates: [],

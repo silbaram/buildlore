@@ -6,6 +6,8 @@ import { ProjectionError } from './errors.js';
 import { unicodeScalarLength } from './text-units.js';
 
 export const SOURCE_DESCRIPTOR_SCHEMA_VERSION = 'buildlore.source-descriptor.v1' as const;
+export const SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION =
+  'buildlore.source-retrieval-meaning.v1' as const;
 export const SOURCE_ADAPTER_REGISTRATION_VERSION = 1 as const;
 export const MAX_SOURCE_METADATA_BYTES = 16 * 1024;
 export const MAX_SOURCE_METADATA_DEPTH = 8;
@@ -24,6 +26,48 @@ export interface SourceMetadataV1 {
   readonly namespace: string;
   readonly schemaVersion: string;
   readonly values: Readonly<Record<string, unknown>>;
+}
+
+export type SourceDocumentAuthority = 'canonical' | 'historical' | 'supporting' | 'unknown';
+export type SourceDocumentLifecycle =
+  | 'current'
+  | 'deprecated'
+  | 'draft'
+  | 'superseded'
+  | 'unknown';
+export type SourceEvidenceKind =
+  | 'architecture'
+  | 'decision'
+  | 'execution'
+  | 'failure'
+  | 'implementation'
+  | 'other'
+  | 'overview'
+  | 'planning'
+  | 'verification';
+export type SourceRetrievalMeaningOrigin = 'adapter' | 'legacy-default' | 'manifest' | 'profile';
+
+/** Language-neutral, adapter-bound signals used only after relevance produces a candidate. */
+export interface SourceRetrievalMeaningV1 {
+  readonly schemaVersion: typeof SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION;
+  readonly authority: SourceDocumentAuthority;
+  readonly evidenceKind: SourceEvidenceKind;
+  readonly iterationGroup: string | null;
+  readonly lifecycle: SourceDocumentLifecycle;
+  readonly revisionOrdinal: number;
+  readonly supersededBySourceRefs: readonly string[];
+  readonly supersedesSourceRefs: readonly string[];
+  readonly topicGroup: string | null;
+}
+
+export interface BoundSourceRetrievalMeaningV1 {
+  readonly meaning: SourceRetrievalMeaningV1;
+  readonly origin: SourceRetrievalMeaningOrigin;
+}
+
+export interface SourceRetrievalSupersessionNodeV1 {
+  readonly retrievalMeaning?: SourceRetrievalMeaningV1;
+  readonly sourceRef: string;
 }
 
 export interface SourceDescriptorV1 {
@@ -89,6 +133,16 @@ const REGISTERED_KINDS = new Set<RegisteredSourceKind>([
   'markdown',
   'planning',
   'text',
+]);
+const DOCUMENT_AUTHORITIES = new Set<SourceDocumentAuthority>([
+  'canonical', 'historical', 'supporting', 'unknown',
+]);
+const DOCUMENT_LIFECYCLES = new Set<SourceDocumentLifecycle>([
+  'current', 'deprecated', 'draft', 'superseded', 'unknown',
+]);
+const EVIDENCE_KINDS = new Set<SourceEvidenceKind>([
+  'architecture', 'decision', 'execution', 'failure', 'implementation', 'other',
+  'overview', 'planning', 'verification',
 ]);
 const SAFE_SOURCE_URI_PATTERN = /^[\u0020-\u007e]{1,4096}$/u;
 const WINDOWS_DRIVE_PREFIX_PATTERN = /^[A-Za-z]:/u;
@@ -187,6 +241,155 @@ export function validatePortableSourceRef(value: unknown): string {
   return value;
 }
 
+function nullableGroup(value: unknown): string | null {
+  if (value === null) return null;
+  return boundedIdentifier(value, ADAPTER_ID_PATTERN, 128);
+}
+
+function sourceRefArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > 64) {
+    return fail('Source retrieval supersession references are invalid.');
+  }
+  const result = value.map(validatePortableSourceRef).sort();
+  if (new Set(result).size !== result.length) {
+    return fail('Source retrieval supersession references are duplicated.');
+  }
+  return Object.freeze(result);
+}
+
+export function parseSourceRetrievalMeaning(value: unknown): SourceRetrievalMeaningV1 {
+  if (!isRecord(value)) return fail('Source retrieval meaning is invalid.');
+  exactKeys(value, [
+    'authority',
+    'evidenceKind',
+    'iterationGroup',
+    'lifecycle',
+    'revisionOrdinal',
+    'schemaVersion',
+    'supersededBySourceRefs',
+    'supersedesSourceRefs',
+    'topicGroup',
+  ]);
+  if (
+    value.schemaVersion !== SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION ||
+    typeof value.authority !== 'string' ||
+    !DOCUMENT_AUTHORITIES.has(value.authority as SourceDocumentAuthority) ||
+    typeof value.lifecycle !== 'string' ||
+    !DOCUMENT_LIFECYCLES.has(value.lifecycle as SourceDocumentLifecycle) ||
+    typeof value.evidenceKind !== 'string' ||
+    !EVIDENCE_KINDS.has(value.evidenceKind as SourceEvidenceKind) ||
+    typeof value.revisionOrdinal !== 'number' ||
+    !Number.isSafeInteger(value.revisionOrdinal) ||
+    value.revisionOrdinal < 0
+  ) return fail('Source retrieval meaning is invalid.');
+  const supersededBySourceRefs = sourceRefArray(value.supersededBySourceRefs);
+  const supersedesSourceRefs = sourceRefArray(value.supersedesSourceRefs);
+  if (supersededBySourceRefs.some((sourceRef) => supersedesSourceRefs.includes(sourceRef))) {
+    return fail('Source retrieval supersession references conflict.');
+  }
+  return Object.freeze({
+    authority: value.authority as SourceDocumentAuthority,
+    evidenceKind: value.evidenceKind as SourceEvidenceKind,
+    iterationGroup: nullableGroup(value.iterationGroup),
+    lifecycle: value.lifecycle as SourceDocumentLifecycle,
+    revisionOrdinal: value.revisionOrdinal,
+    schemaVersion: SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+    supersededBySourceRefs,
+    supersedesSourceRefs,
+    topicGroup: nullableGroup(value.topicGroup),
+  });
+}
+
+export function validateSourceRetrievalSupersessionGraph(
+  sources: readonly SourceRetrievalSupersessionNodeV1[],
+): void {
+  const normalized = sources.map((source) => Object.freeze({
+    ...(source.retrievalMeaning === undefined
+      ? {}
+      : { retrievalMeaning: source.retrievalMeaning }),
+    sourceRef: validatePortableSourceRef(source.sourceRef),
+  }));
+  const byRef = new Map<string, SourceRetrievalSupersessionNodeV1[]>();
+  for (const source of normalized) {
+    const grouped = byRef.get(source.sourceRef) ?? [];
+    grouped.push(source);
+    byRef.set(source.sourceRef, grouped);
+  }
+  const edges = new Map<string, readonly string[]>();
+  for (const source of normalized) {
+    const supersedes = source.retrievalMeaning?.supersedesSourceRefs ?? [];
+    const supersededBy = source.retrievalMeaning?.supersededBySourceRefs ?? [];
+    if ([...supersedes, ...supersededBy].some((sourceRef) =>
+      sourceRef === source.sourceRef || byRef.get(sourceRef)?.length !== 1) ||
+        ((supersedes.length > 0 || supersededBy.length > 0) &&
+          byRef.get(source.sourceRef)?.length !== 1)) {
+      return fail('Source retrieval supersession graph is invalid.');
+    }
+    for (const targetRef of supersedes) {
+      const targetMeaning = byRef.get(targetRef)?.[0]?.retrievalMeaning;
+      if (targetMeaning === undefined ||
+          !targetMeaning.supersededBySourceRefs.includes(source.sourceRef) ||
+          source.retrievalMeaning === undefined ||
+          source.retrievalMeaning.revisionOrdinal <= targetMeaning.revisionOrdinal) {
+        return fail('Source retrieval supersession graph is invalid.');
+      }
+    }
+    for (const replacementRef of supersededBy) {
+      if (!byRef.get(replacementRef)?.[0]?.retrievalMeaning?.supersedesSourceRefs
+        .includes(source.sourceRef)) {
+        return fail('Source retrieval supersession graph is invalid.');
+      }
+    }
+    if (supersededBy.length > 0 && source.retrievalMeaning !== undefined &&
+        source.retrievalMeaning.lifecycle !== 'deprecated' &&
+        source.retrievalMeaning.lifecycle !== 'superseded') {
+      return fail('Source retrieval supersession graph is invalid.');
+    }
+    edges.set(source.sourceRef, supersedes);
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (sourceRef: string): void => {
+    if (visiting.has(sourceRef)) return fail('Source retrieval supersession graph is invalid.');
+    if (visited.has(sourceRef)) return;
+    visiting.add(sourceRef);
+    for (const targetRef of edges.get(sourceRef) ?? []) visit(targetRef);
+    visiting.delete(sourceRef);
+    visited.add(sourceRef);
+  };
+  for (const sourceRef of [...edges.keys()].sort()) visit(sourceRef);
+}
+
+export function neutralSourceRetrievalMeaning(): SourceRetrievalMeaningV1 {
+  return Object.freeze({
+    authority: 'unknown',
+    evidenceKind: 'other',
+    iterationGroup: null,
+    lifecycle: 'unknown',
+    revisionOrdinal: 0,
+    schemaVersion: SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+    supersededBySourceRefs: Object.freeze([]),
+    supersedesSourceRefs: Object.freeze([]),
+    topicGroup: null,
+  });
+}
+
+export function sourceRetrievalMeaningFromDescriptor(
+  descriptor: SourceDescriptorV1 | undefined,
+): BoundSourceRetrievalMeaningV1 {
+  const raw = descriptor?.metadata?.values.retrievalMeaning;
+  if (raw === undefined) {
+    return Object.freeze({
+      meaning: neutralSourceRetrievalMeaning(),
+      origin: 'legacy-default' as const,
+    });
+  }
+  return Object.freeze({
+    meaning: parseSourceRetrievalMeaning(raw),
+    origin: descriptor?.adapterId === 'buildlore.p2a' ? 'adapter' : 'manifest',
+  });
+}
+
 function validateMetadataValue(
   value: unknown,
   depth: number,
@@ -232,6 +435,9 @@ export function parseSourceMetadata(value: unknown): SourceMetadataV1 {
   const state = { keys: 0 };
   const values = validateMetadataValue(value.values, 1, state);
   if (!isRecord(values)) return fail('Source metadata values are invalid.');
+  if (values.retrievalMeaning !== undefined) {
+    parseSourceRetrievalMeaning(values.retrievalMeaning);
+  }
   const metadata = Object.freeze({ namespace, schemaVersion, values });
   if (Buffer.byteLength(serializeCanonicalJson(metadata), 'utf8') > MAX_SOURCE_METADATA_BYTES) {
     return fail('Source metadata exceeds its byte limit.');

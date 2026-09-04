@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HIERARCHICAL_COMPILATION_LIMITS,
   HIERARCHICAL_COMPILATION_POLICY,
+  LEGACY_CORPUS_SNAPSHOT_SCHEMA_VERSION,
   HierarchyContractError,
   createCompilationPurpose,
   createCorpusSnapshot,
@@ -33,7 +34,10 @@ import {
 import { SESSION_COMPILE_LIMITS } from '../src/compiler/session/contracts.js';
 import { createSessionTasksAndMerges } from '../src/compiler/session/planner-pure.js';
 import { addProject, validateProjectId } from '../src/knowledge/index.js';
-import { validatePortableSourceRef } from '../src/projector/index.js';
+import {
+  sourceRetrievalMeaningFromDescriptor,
+  validatePortableSourceRef,
+} from '../src/projector/index.js';
 import { consumePreparedSource } from '../src/sanitizer/approval.js';
 import {
   createProjectSecurityService,
@@ -52,7 +56,7 @@ const HISTORICAL_GLOBAL_MERGE_LIMIT = 512;
 const ENTRY_SNAPSHOT_DIGEST =
   'sha256:6cb331cd3e723d76680bc5c5d879f44727941c372631be7d352f12162edfae74' as const;
 const NEGATIVE_FIXTURE_FILE_DIGEST =
-  'sha256:f6c11df4c44c314d3d034c4df8789c89d0a11fa9176581cd533df833b6027bbf';
+  'sha256:0c87f4f8d3ef4ac10af107973abecadcfd5eea5e2b1c7edf931d3209e0aa8e08';
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const GIT_SHA1_PATTERN = /^[a-f0-9]{40}$/u;
 
@@ -866,6 +870,7 @@ function negativeSources(
       compilerSourceId: `markdown--${digest.slice('sha256:'.length)}.md`,
       originalContentDigest: digest,
       revision: digest,
+      retrievalMeaning: sourceRetrievalMeaningFromDescriptor(undefined),
       sanitizedBody,
       sanitizedContentDigest: digest,
       sourceId,
@@ -1146,6 +1151,37 @@ describe('hierarchical corpus contracts', () => {
       textUnits: [unit],
     });
     expect(parseCorpusSnapshot(created, PROJECT_ID)).toEqual(created);
+    expect(created.schemaVersion).toBe('buildlore.corpus-snapshot.v2');
+    expect(created.sources[0]).toMatchObject({ retrievalMeaningOrigin: 'legacy-default' });
+    const legacySources = Object.freeze(created.sources.map((item) => Object.freeze({
+      sourceId: item.sourceId,
+      sourceRevision: item.sourceRevision,
+      sourceRef: item.sourceRef,
+      sanitizedContentDigest: item.sanitizedContentDigest,
+    })));
+    const legacyCorpusDigest = digestHierarchyValue({
+      sources: legacySources,
+      textUnits: created.textUnits,
+    });
+    const legacyWithoutDigest = Object.freeze({
+      schemaVersion: LEGACY_CORPUS_SNAPSHOT_SCHEMA_VERSION,
+      projectId: created.projectId,
+      purposeDigest: created.purposeDigest,
+      interpretationRulesDigest: created.interpretationRulesDigest,
+      profileDigest: created.profileDigest,
+      compilerContractDigest: created.compilerContractDigest,
+      sanitizerPolicyDigest: created.sanitizerPolicyDigest,
+      sourceManifestDigest: created.sourceManifestDigest,
+      policyDigest: created.policyDigest,
+      sources: legacySources,
+      textUnits: created.textUnits,
+      corpusDigest: legacyCorpusDigest,
+    });
+    const legacy = Object.freeze({
+      ...legacyWithoutDigest,
+      snapshotDigest: digestHierarchyValue(legacyWithoutDigest),
+    });
+    expect(parseCorpusSnapshot(legacy, PROJECT_ID)).toEqual(legacy);
     expect(() => parseCorpusSnapshot({
       ...created,
       textUnits: [{ ...unit, sourceRevision: hierarchySha256('other') }],

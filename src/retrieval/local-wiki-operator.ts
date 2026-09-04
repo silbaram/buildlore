@@ -28,12 +28,12 @@ import {
   type EmbeddingProviderPort,
   type LocalModelBindingPort,
 } from './embedding/index.js';
-import { createApprovedWikiHybridRetrieval } from './hybrid.js';
+import { createApprovedWikiHybridRetrievalV3 } from './hybrid.js';
 import {
   LocalWikiRetrievalError,
-  type LocalWikiRetrievalPortV2,
-  type LocalWikiRetrievalRequestV2,
-  type RetrievalResultV2,
+  type LocalWikiRetrievalPortV3,
+  type LocalWikiRetrievalRequestV3,
+  type RetrievalResultV3,
 } from './hybrid-types.js';
 import {
   createModelFreeWikiCurateResult,
@@ -196,7 +196,7 @@ export interface LocalWikiIndexRebuildResultV1 {
   readonly result: SemanticIndexBuildResultV1;
 }
 
-export interface LocalWikiOperatorPort extends LocalWikiRetrievalPortV2 {
+export interface LocalWikiOperatorPort extends LocalWikiRetrievalPortV3 {
   curate(input: LocalActiveWikiCurateInputV1): Promise<ModelFreeWikiCurateResultV1>;
   indexStatus(projectId: string): Promise<LocalWikiIndexStatusV2>;
   listPages(input: LocalActiveWikiPageListInputV1): Promise<LocalActiveWikiPageListV1>;
@@ -803,9 +803,9 @@ export function createLocalWikiOperator(
         schemaVersion: LOCAL_WIKI_INDEX_REBUILD_SCHEMA_VERSION,
       });
     },
-    async search(request: LocalWikiRetrievalRequestV2): Promise<RetrievalResultV2> {
+    async search(request: LocalWikiRetrievalRequestV3): Promise<RetrievalResultV3> {
       const projection = await compatibleProjection(request.projectId);
-      return createApprovedWikiHybridRetrieval({
+      return createApprovedWikiHybridRetrievalV3({
         corpus: projection.corpus,
         projectId: request.projectId,
         provider,

@@ -18,6 +18,12 @@ import {
   P2A_SOURCE_ADAPTER_ID,
   type SourceAdapterDefinitionV1,
 } from './source-adapter-registry.js';
+import {
+  SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+  parseSourceRetrievalMeaning,
+  type SourceDocumentAuthority,
+  type SourceEvidenceKind,
+} from './source-contracts.js';
 import { readSelectedSourceBytes, type SelectedSourceFile } from './source-manifest.js';
 import { createSourceDocument } from './source-document.js';
 import { validateP2aSourceIdentity } from './source-identity.js';
@@ -32,6 +38,66 @@ function fail(
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function p2aIterationGroup(sourceUri: string): string {
+  const segments = sourceUri.split('/');
+  if (segments.length !== 6 || segments[0] !== 'buildlore+p2a:') {
+    return fail('PROJECTION_ARTIFACT_INVALID', 'A planning source identity is invalid.');
+  }
+  try {
+    const iterationId = decodeURIComponent(segments[3] ?? '');
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(iterationId)) {
+      return fail('PROJECTION_ARTIFACT_INVALID', 'A planning source identity is invalid.');
+    }
+    return iterationId;
+  } catch {
+    return fail('PROJECTION_ARTIFACT_INVALID', 'A planning source identity is invalid.');
+  }
+}
+
+function p2aRevisionOrdinal(iterationGroup: string): number {
+  const ordinal = /^v([0-9]+)(?:-|$)/u.exec(iterationGroup)?.[1];
+  if (ordinal === undefined) return 0;
+  const parsed = Number(ordinal);
+  return Number.isSafeInteger(parsed) ? parsed : 0;
+}
+
+function p2aMeaning(documentKind: string, lifecycle: 'current' | 'superseded', sourceUri: string) {
+  let authority: SourceDocumentAuthority;
+  let evidenceKind: SourceEvidenceKind;
+  switch (documentKind) {
+    case 'product-spec':
+      authority = lifecycle === 'current' ? 'canonical' : 'historical';
+      evidenceKind = 'decision';
+      break;
+    case 'implementation-plan':
+      authority = lifecycle === 'current' ? 'supporting' : 'historical';
+      evidenceKind = 'implementation';
+      break;
+    case 'intake':
+      authority = 'historical';
+      evidenceKind = 'planning';
+      break;
+    case 'archived-iteration':
+      authority = 'historical';
+      evidenceKind = 'execution';
+      break;
+    default:
+      return fail('PROJECTION_ARTIFACT_INVALID', 'A planning document kind is invalid.');
+  }
+  const iterationGroup = p2aIterationGroup(sourceUri);
+  return Object.freeze({
+    authority,
+    evidenceKind,
+    iterationGroup,
+    lifecycle,
+    revisionOrdinal: p2aRevisionOrdinal(iterationGroup),
+    schemaVersion: SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION,
+    supersededBySourceRefs: Object.freeze([]),
+    supersedesSourceRefs: Object.freeze([]),
+    topicGroup: `p2a-${documentKind}`,
+  });
 }
 
 export function p2aArtifactRootRefs(files: readonly SelectedSourceFile[]): readonly string[] {
@@ -71,16 +137,31 @@ function canonicalCandidate(
     readonly declarationId: string;
     readonly producer: ProjectSourceProducer;
     readonly projectId: string;
+    readonly retrievalLifecycle?: 'current' | 'superseded';
     readonly sourceRef: string;
   },
   projectId: string,
 ): CollectionCandidate {
+  const retrievalMeaning = Object.freeze({
+    meaning: parseSourceRetrievalMeaning(p2aMeaning(
+      input.adapterDocumentKind,
+      input.retrievalLifecycle ?? (
+        input.adapterDocumentKind === 'intake' ||
+        input.adapterDocumentKind === 'archived-iteration'
+          ? 'superseded'
+          : 'current'
+      ),
+      input.sourceUri,
+    )),
+    origin: 'adapter' as const,
+  });
   projectSourceProducer(input);
   let canonicalDocument: SourceDocument;
   try {
     canonicalDocument = createSourceDocument({
       body: input.body,
       ingestedAt: input.ingestedAt,
+      ...(input.originMappings === undefined ? {} : { originMappings: input.originMappings }),
       producer: input.producer,
       projectId,
       source: input.sourceUri,
@@ -97,6 +178,7 @@ function canonicalCandidate(
     adapterDocumentKind: input.adapterDocumentKind,
     adapterId: P2A_SOURCE_ADAPTER_ID,
     adapterVersion: 1,
+    retrievalMeaning,
     canonicalDocument: Object.freeze({
       ...canonicalDocument,
       buildlore: Object.freeze({ ...canonicalDocument.buildlore }),

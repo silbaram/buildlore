@@ -1,9 +1,15 @@
+import type {
+  SourceRetrievalMeaningOrigin,
+  SourceRetrievalMeaningV1,
+} from '../../projector/source-contracts.js';
+
 export const COMPILATION_PURPOSE_SCHEMA_VERSION =
   'buildlore.compilation-purpose.v1' as const;
 export const TEXT_UNIT_SCHEMA_VERSION = 'buildlore.text-unit.v1' as const;
 export const DOCUMENT_INTERPRETATION_SCHEMA_VERSION =
   'buildlore.document-interpretation.v1' as const;
-export const CORPUS_SNAPSHOT_SCHEMA_VERSION = 'buildlore.corpus-snapshot.v1' as const;
+export const LEGACY_CORPUS_SNAPSHOT_SCHEMA_VERSION = 'buildlore.corpus-snapshot.v1' as const;
+export const CORPUS_SNAPSHOT_SCHEMA_VERSION = 'buildlore.corpus-snapshot.v2' as const;
 export const HIERARCHICAL_COMPILATION_POLICY_SCHEMA_VERSION =
   'buildlore.hierarchical-compilation-policy.v1' as const;
 export const SPARSE_RELATION_GRAPH_SCHEMA_VERSION =
@@ -161,6 +167,8 @@ export interface DocumentInterpretationV1 {
 }
 
 export interface CorpusSnapshotSourceV1 {
+  readonly retrievalMeaning?: SourceRetrievalMeaningV1;
+  readonly retrievalMeaningOrigin?: SourceRetrievalMeaningOrigin;
   readonly sourceId: string;
   readonly sourceRevision: HierarchySha256Digest;
   readonly sourceRef: string;
@@ -168,7 +176,9 @@ export interface CorpusSnapshotSourceV1 {
 }
 
 export interface CorpusSnapshotV1 {
-  readonly schemaVersion: typeof CORPUS_SNAPSHOT_SCHEMA_VERSION;
+  readonly schemaVersion:
+    | typeof LEGACY_CORPUS_SNAPSHOT_SCHEMA_VERSION
+    | typeof CORPUS_SNAPSHOT_SCHEMA_VERSION;
   readonly projectId: string;
   readonly purposeDigest: HierarchySha256Digest;
   readonly interpretationRulesDigest: HierarchySha256Digest;
