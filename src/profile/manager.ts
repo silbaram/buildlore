@@ -17,8 +17,9 @@ import { readConfinedText, readEntityInventory } from './io.js';
 import { materializeLifecycleProfile, sha256 } from './materializer.js';
 import { createLifecycleProfileSdkValidator } from './sdk-validator.js';
 import {
-  createBuiltInProfileBinding,
+  createProfileBindingV2,
   parseProfileBinding,
+  type AnyProfileBinding,
 } from './bindings.js';
 import {
   BUILDLORE_PROFILE_VERSION,
@@ -38,6 +39,7 @@ interface ProfileSnapshot {
   readonly materialized: MaterializedProfile;
   readonly plan: ProfileChangePlan;
   readonly prepared: PreparedSource;
+  readonly profileBinding: AnyProfileBinding | null;
   readonly profileBindingBytes: string | null;
   readonly profileBytes: string | null;
   readonly sanitizerPolicyDigest: `sha256:${string}`;
@@ -162,11 +164,11 @@ async function snapshotFor(knowledgeRoot: string, projectId: string): Promise<Pr
     { maximumBytes: 16 * 1024, optional: true },
   );
   let canonicalProfileBinding: string | null = null;
+  let parsedProfileBinding: AnyProfileBinding | null = null;
   if (profileBindingBytes !== null) {
     try {
-      canonicalProfileBinding = serializeCanonicalJson(
-        parseProfileBinding(JSON.parse(profileBindingBytes) as unknown),
-      );
+      parsedProfileBinding = parseProfileBinding(JSON.parse(profileBindingBytes) as unknown);
+      canonicalProfileBinding = serializeCanonicalJson(parsedProfileBinding);
     } catch {
       throw new ProfileOperationError('PROFILE_BINDING_INVALID', { projectId });
     }
@@ -176,10 +178,21 @@ async function snapshotFor(knowledgeRoot: string, projectId: string): Promise<Pr
   }
   const inventory = await readEntityInventory(workspace, projectId);
   const targetProfileBinding = serializeCanonicalJson(
-    createBuiltInProfileBinding('development', profile.outputLanguage),
+    createProfileBindingV2('development', profile.outputLanguage),
+  );
+  const targetAdapterIds = new Set(
+    createProfileBindingV2('development', profile.outputLanguage).adapters.map((entry) =>
+      entry.adapterId),
   );
   const profileBindingMatchesTarget = canonicalProfileBinding === null ||
-    canonicalProfileBinding === targetProfileBinding;
+    canonicalProfileBinding === targetProfileBinding || (
+      parsedProfileBinding?.schemaVersion === 'buildlore.profile-binding.v2' &&
+      parsedProfileBinding.profileId === 'development' &&
+      parsedProfileBinding.outputLanguage === profile.outputLanguage &&
+      parsedProfileBinding.upstreamProfile === 'custom' &&
+      [...targetAdapterIds].every((adapterId) =>
+        parsedProfileBinding?.adapters.some((entry) => entry.adapterId === adapterId))
+    );
 
   const reasons: string[] = [];
   let migrationRequired = false;
@@ -241,6 +254,7 @@ async function snapshotFor(knowledgeRoot: string, projectId: string): Promise<Pr
     materialized,
     plan,
     prepared: preparedResult.prepared,
+    profileBinding: parsedProfileBinding,
     profileBindingBytes,
     profileBytes,
     sanitizerPolicyDigest: inspected.policyDigest,
@@ -331,10 +345,21 @@ export function createProjectLifecycleProfile(options: {
               parseJson(fresh.materialized.profileJson, plan.projectId),
             );
           }
-          const profileBinding = createBuiltInProfileBinding(
-            'development',
-            plan.outputLanguage,
-          );
+          const defaultBinding = createProfileBindingV2('development', plan.outputLanguage);
+          const profileBinding = fresh.profileBinding?.schemaVersion ===
+            'buildlore.profile-binding.v2'
+            ? parseProfileBinding({
+                ...fresh.profileBinding,
+                adapters: [
+                  ...defaultBinding.adapters,
+                  ...fresh.profileBinding.adapters.filter((entry) =>
+                    !defaultBinding.adapters.some((base) => base.adapterId === entry.adapterId)),
+                ].sort((left, right) => left.adapterId < right.adapterId ? -1 : 1),
+                outputLanguage: plan.outputLanguage,
+                profileId: 'development',
+                upstreamProfile: 'custom',
+              })
+            : defaultBinding;
           if (fresh.profileBindingBytes !== serializeCanonicalJson(profileBinding)) {
             await writeJsonAtomic(join(workspace, 'profile-binding.json'), profileBinding);
           }

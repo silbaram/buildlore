@@ -11,6 +11,7 @@ import type {
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import {
   neutralSourceRetrievalMeaning,
+  validateJsonPointer,
   type SourceDocumentAuthority,
   type SourceDocumentLifecycle,
   type SourceEvidenceKind,
@@ -85,6 +86,7 @@ export class HierarchicalRetrievalError extends Error {
 
 export interface ApprovedWikiCitationLocatorV1 {
   readonly citationId: string;
+  readonly jsonPointer?: string;
   readonly sourceId: string;
 }
 
@@ -406,6 +408,16 @@ function safeId(value: unknown): value is string {
     SAFE_ID.test(value) && value === value.normalize('NFC');
 }
 
+function safeJsonPointer(value: unknown): boolean {
+  if (value === undefined) return true;
+  try {
+    validateJsonPointer(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function safeText(value: unknown, maximum: number): value is string {
   if (typeof value !== 'string' || value.length < 1 || value.length > maximum ||
       value !== value.normalize('NFC')) return false;
@@ -584,6 +596,7 @@ export function projectApprovedWikiForRetrieval(
       globalCitationAnchors.set(citation.citationId, citation);
       globalCitationLocators.set(citation.citationId, Object.freeze({
         citationId: citation.citationId,
+        ...(citation.jsonPointer === undefined ? {} : { jsonPointer: citation.jsonPointer }),
         sourceId: citation.sourceId,
       }));
     }
@@ -615,6 +628,9 @@ export function projectApprovedWikiForRetrieval(
     }
     const localCitations = new Map(pack.units.map((unit) => [unit.citation.citationId, Object.freeze({
       citationId: unit.citation.citationId,
+      ...(unit.citation.jsonPointer === undefined
+        ? {}
+        : { jsonPointer: unit.citation.jsonPointer }),
       sourceId: unit.citation.sourceId,
     })]));
     const inheritedCitationIds = inherited.get(pageId);
@@ -1041,7 +1057,8 @@ function validateCorpus(corpus: ApprovedWikiRetrievalCorpusV1, expectedProjectId
       if (!safeId(section.sectionId) || sectionIds.has(section.sectionId) ||
           !safeText(section.body, 1_048_576) || section.citationLocators.length < 1 ||
           section.citationLocators.length > 100 || section.citationLocators.some((locator) =>
-            !safeId(locator.citationId) || !safeId(locator.sourceId)) ||
+            !safeId(locator.citationId) || !safeId(locator.sourceId) ||
+            !safeJsonPointer(locator.jsonPointer)) ||
           new Set(section.citationLocators.map((locator) =>
             `${locator.citationId}\u0000${locator.sourceId}`)).size !==
             section.citationLocators.length || !validateSemanticSection(section) ||

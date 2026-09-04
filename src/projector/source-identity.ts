@@ -4,7 +4,7 @@ import { ProjectionError } from './errors.js';
 
 export interface CollectionSourceIdentityInput {
   readonly declarationId: string;
-  readonly documentKind: 'code' | 'markdown' | 'p2a-planning' | 'text';
+  readonly documentKind: 'code' | 'json' | 'markdown' | 'p2a-planning' | 'text';
   readonly projectId: string;
   readonly repository: string;
   readonly sourceRef: string;
@@ -73,7 +73,7 @@ function validatedCollectionIdentityParts(
     documentKind !== input.documentKind ||
     !portableIdentifier(projectId) ||
     !portableIdentifier(declarationId) ||
-    !new Set(['code', 'markdown', 'p2a-planning', 'text']).has(documentKind) ||
+    !new Set(['code', 'json', 'markdown', 'p2a-planning', 'text']).has(documentKind) ||
     !portablePath(sourceRef)
   ) return null;
   return parts;

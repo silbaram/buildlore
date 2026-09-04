@@ -36,6 +36,7 @@
       "required": ["citationId", "sourceId"],
       "properties": {
         "citationId": { "$ref": "#/$defs/id" },
+        "jsonPointer": { "type": "string", "maxLength": 1024 },
         "sourceId": { "$ref": "#/$defs/id" }
       }
     },

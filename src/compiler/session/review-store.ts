@@ -120,7 +120,8 @@ function generatedIdentifier(
 function compilerSourceIdentifier(value: unknown, projectId: string): string {
   const result = text(value, projectId, 96);
   const kind = generatedSourceFilenameKind(result);
-  return kind === 'code' || kind === 'markdown' || kind === 'planning' || kind === 'text'
+  return kind === 'code' || kind === 'json' || kind === 'markdown' ||
+    kind === 'planning' || kind === 'text'
     ? result
     : fail('SESSION_CANDIDATE_STORE_INVALID', projectId);
 }
@@ -168,7 +169,7 @@ function citationBinding(value: unknown, projectId: string): SessionCitationBind
     'originalLine',
     'quoteDigest',
     'sourceId',
-  ], [], projectId);
+  ], ['jsonPointer'], projectId);
   if (!Number.isSafeInteger(value.originalLine) || Number(value.originalLine) < 1) {
     return fail('SESSION_CANDIDATE_STORE_INVALID', projectId);
   }
@@ -178,6 +179,9 @@ function citationBinding(value: unknown, projectId: string): SessionCitationBind
     compilerSourceId: compilerSourceIdentifier(value.compilerSourceId, projectId),
     originalFile: safeOriginalFile(value.originalFile, projectId),
     originalLine: Number(value.originalLine),
+    ...(value.jsonPointer === undefined
+      ? {}
+      : { jsonPointer: text(value.jsonPointer, projectId, 1024) }),
     quoteDigest: digest(value.quoteDigest, projectId),
     sourceId: generatedIdentifier(value.sourceId, projectId, 'source'),
   });

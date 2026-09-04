@@ -33,6 +33,12 @@ import {
   type CollectionCandidate,
   type SourceCollectionAdapter,
 } from './collection-adapters.js';
+import type { RegisteredJsonKnowledgeAdapterV1 } from './json-knowledge-adapter.js';
+import {
+  boundRawSourceInputsAreSafe,
+  inspectRawSourceInputs,
+  rawSourceInputSanitizationIsSafe,
+} from './raw-source-inputs.js';
 import {
   projectSourceProducer,
   renderExpectedProjectSource,
@@ -53,8 +59,11 @@ import {
 } from './source-manifest.js';
 import { readGitRevisionSnapshot } from '../knowledge/git.js';
 import {
+  createBuiltInSourceAdapterRegistry,
   GENERIC_SOURCE_ADAPTER_ID,
+  JSON_SOURCE_ADAPTER_ID,
   P2A_SOURCE_ADAPTER_ID,
+  type SourceAdapterRegistry,
 } from './source-adapter-registry.js';
 import type { GenericSourceKind } from './source-contracts.js';
 
@@ -97,7 +106,7 @@ export interface SourceListResultV1 {
 
 export interface SourceAddInput {
   readonly id: string;
-  readonly kind: GenericSourceKind;
+  readonly kind: GenericSourceKind | 'json';
   readonly path: string;
   readonly projectId: string;
   readonly recursive?: boolean;
@@ -132,6 +141,7 @@ export interface SourceManagementPort {
 export interface CreateSourceManagementOptions {
   readonly collectionAdapter?: SourceCollectionAdapter;
   readonly hubRoot: string;
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
 }
 
 export interface InitializeSourceManifestResult {
@@ -316,13 +326,16 @@ function normalizedDeclaration(declaration: AnySourceDeclaration): SourceDeclara
   });
 }
 
-function normalizedManifest(manifest: SourceCollectionManifest): SourceCollectionManifestV2 {
+function normalizedManifest(
+  manifest: SourceCollectionManifest,
+  registry?: SourceAdapterRegistry,
+): SourceCollectionManifestV2 {
   return parseSourceCollectionManifestV2({
     projectId: manifest.projectId,
     schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
     sourceRepository: manifest.sourceRepository,
     sources: manifest.sources.map(normalizedDeclaration),
-  });
+  }, registry);
 }
 
 function assertProfileAllowsManifest(
@@ -547,11 +560,29 @@ async function prepareDiffInput(
     const metadata = serializeCanonicalJson(candidate.descriptor.metadata);
     if (await approvedBody(metadata, true) === null) return null;
   }
+  for (const rawInput of inspectRawSourceInputs(candidate)) {
+    const bodyDigest = sha256(rawInput.body);
+    const result = await security.prepareSource({
+      body: rawInput.body,
+      bodyDigest,
+      projectId: candidate.projectId,
+      source: candidate.sourceUri,
+      sourceKind,
+      sourceRevisionOrContentSha256: candidate.sourceRevision,
+    });
+    if (!result.ok || result.report.policyDigest !== policyDigest) return null;
+    const approved = consumePreparedSource(result.prepared);
+    if (approved === null || approved.inputBodyDigest !== bodyDigest ||
+        !rawSourceInputSanitizationIsSafe(rawInput, approved.approvedBody, result.report.summaries)) {
+      return null;
+    }
+  }
   return Object.freeze({
     body,
     ...(candidate.descriptor === undefined ? {} : { descriptor: candidate.descriptor }),
     ingestedAt: candidate.ingestedAt,
     ...(candidate.originMappings === undefined ? {} : { originMappings: candidate.originMappings }),
+    ...(candidate.jsonOrigins === undefined ? {} : { jsonOrigins: candidate.jsonOrigins }),
     producer: candidate.producer,
     sourceKind: candidate.sourceKind,
     sourceRevision: candidate.sourceRevision,
@@ -662,7 +693,14 @@ export function createSourceManagement(
   options: CreateSourceManagementOptions,
 ): SourceManagementPort {
   const knowledgeRoot = join(options.hubRoot, 'knowledge');
-  const collectionAdapter = options.collectionAdapter ?? createSourceCollectionAdapter();
+  const collectionAdapter = options.collectionAdapter ?? createSourceCollectionAdapter({
+    ...(options.jsonKnowledgeAdapters === undefined
+      ? {}
+      : { jsonKnowledgeAdapters: options.jsonKnowledgeAdapters }),
+  });
+  const manifestRegistry = createBuiltInSourceAdapterRegistry({
+    registrations: options.jsonKnowledgeAdapters ?? [],
+  });
 
   async function binding(projectId: string): Promise<Readonly<{
     checkout: SourceCheckoutHandle;
@@ -676,7 +714,9 @@ export function createSourceManagement(
       projectId,
       project.entry.sourceRepository,
     );
-    const profile = await resolveRegisteredProfileBinding(knowledgeRoot, projectId);
+    const profile = await resolveRegisteredProfileBinding(knowledgeRoot, projectId, {
+      registrations: options.jsonKnowledgeAdapters ?? [],
+    });
     return Object.freeze({
       checkout: resolved.checkout,
       localBindingDigest: resolved.bindingDigest,
@@ -713,8 +753,10 @@ export function createSourceManagement(
     async add(input: SourceAddInput): Promise<SourceAddResultV1> {
       const resolved = await binding(input.projectId);
       return withManifestLock(resolved.checkout, async (directory, assertLockOwned) => {
-        const loaded = await readSourceCollectionManifest(resolved.checkout, input.projectId);
-        const current = normalizedManifest(loaded.manifest);
+        const loaded = await readSourceCollectionManifest(resolved.checkout, input.projectId, {
+          sourceAdapterRegistry: manifestRegistry,
+        });
+        const current = normalizedManifest(loaded.manifest, manifestRegistry);
         const root = resolved.checkout.resolveRootForInternalUse();
         const sourceRef = validateSourceSelectionPath(input.path);
         const proposedPath = join(root, ...sourceRef.split('/'));
@@ -741,7 +783,7 @@ export function createSourceManagement(
           );
         }
         const declaration = {
-          adapterId: GENERIC_SOURCE_ADAPTER_ID,
+          adapterId: input.kind === 'json' ? JSON_SOURCE_ADAPTER_ID : GENERIC_SOURCE_ADAPTER_ID,
           adapterVersion: 1,
           id: input.id,
           kind: input.kind,
@@ -760,27 +802,33 @@ export function createSourceManagement(
         const proposed = parseSourceCollectionManifestV2({
           ...current,
           sources: existing === undefined ? [...current.sources, declaration] : current.sources,
-        });
+        }, manifestRegistry);
         assertProfileAllowsManifest(proposed, resolved.profile);
         const proposedBytes = serializeCanonicalJson(proposed);
         const synthetic: LoadedSourceCollectionManifest = Object.freeze({
           manifest: proposed,
           manifestDigest: sha256(proposedBytes),
         });
-        const inventory = await selectDeclaredSourceFiles(resolved.checkout, synthetic);
+        const inventory = await selectDeclaredSourceFiles(resolved.checkout, synthetic, {
+          sourceAdapterRegistry: manifestRegistry,
+        });
         const revision = await readGitRevisionSnapshot(root);
         await collectionAdapter.collect({
           checkout: resolved.checkout,
           ingestedAt: revision.committedAt,
           inventory,
           loadedManifest: synthetic,
-          sourceAdapterRegistry: resolved.profile.sourceAdapters,
+          sourceAdapterRegistry: manifestRegistry,
         });
-        const freshInventory = await selectDeclaredSourceFiles(resolved.checkout, synthetic);
+        const freshInventory = await selectDeclaredSourceFiles(resolved.checkout, synthetic, {
+          sourceAdapterRegistry: manifestRegistry,
+        });
         if (serializeCanonicalJson(freshInventory) !== serializeCanonicalJson(inventory)) {
           return managementFailure('SOURCE_MANIFEST_STALE', 'Source inputs changed during add.');
         }
-        const live = await readSourceCollectionManifest(resolved.checkout, input.projectId);
+        const live = await readSourceCollectionManifest(resolved.checkout, input.projectId, {
+          sourceAdapterRegistry: resolved.profile.sourceAdapters,
+        });
         if (live.manifestDigest !== loaded.manifestDigest) {
           return managementFailure('SOURCE_MANIFEST_STALE', 'Source manifest changed during add.');
         }
@@ -800,8 +848,10 @@ export function createSourceManagement(
 
     async diff(projectId: string): Promise<SourceDiffResultV1> {
       const resolved = await binding(projectId);
-      const loaded = await readSourceCollectionManifest(resolved.checkout, projectId);
-      const canonical = normalizedManifest(loaded.manifest);
+      const loaded = await readSourceCollectionManifest(resolved.checkout, projectId, {
+        sourceAdapterRegistry: manifestRegistry,
+      });
+      const canonical = normalizedManifest(loaded.manifest, manifestRegistry);
       assertProfileAllowsManifest(canonical, resolved.profile);
       const declarations = await existingDeclarations(resolved.checkout, canonical);
       const policyDigest = (await readSecurityPolicy(knowledgeRoot, projectId)).digest;
@@ -825,12 +875,14 @@ export function createSourceManagement(
         const selectedManifest = parseSourceCollectionManifestV2({
           ...canonical,
           sources: declarations.present,
-        });
+        }, manifestRegistry);
         const selectedLoaded: LoadedSourceCollectionManifest = Object.freeze({
           manifest: selectedManifest,
           manifestDigest: sha256(serializeCanonicalJson(selectedManifest)),
         });
-        const inventory = await selectDeclaredSourceFiles(resolved.checkout, selectedLoaded);
+        const inventory = await selectDeclaredSourceFiles(resolved.checkout, selectedLoaded, {
+          sourceAdapterRegistry: manifestRegistry,
+        });
         selectedInventory = inventory;
         const revision = await readGitRevisionSnapshot(
           resolved.checkout.resolveRootForInternalUse(),
@@ -844,7 +896,52 @@ export function createSourceManagement(
         });
         const security = createProjectSecurityService({ knowledgeRoot });
         const candidatesByDeclaration = new Map<string, number>();
+        const blockedSourceRefs = new Set<string>();
+        const rawInputsSafe = await boundRawSourceInputsAreSafe(collection, {
+          policyDigest,
+          projectId,
+          security,
+          source: `buildlore://project/${projectId}/selected-json-inputs`,
+          sourceKind: 'json',
+          sourceRevision: selectedLoaded.manifestDigest,
+        });
+        for (const entry of collection.entries) {
+          if (entry.decision !== 'blocked' && entry.decision !== 'error' &&
+              entry.decision !== 'quarantine') continue;
+          const selected = inventory.files.find((file) => file.sourceRef === entry.sourceRef);
+          if (selected === undefined) continue;
+          blockedSourceRefs.add(entry.sourceRef);
+          currentSources.add(`${selected.declarationId}\u0000${entry.sourceRef}`);
+          candidatesByDeclaration.set(
+            selected.declarationId,
+            (candidatesByDeclaration.get(selected.declarationId) ?? 0) + 1,
+          );
+          records.push(Object.freeze({
+            declarationId: selected.declarationId,
+            reasonCode: 'SOURCE_ADAPTER_BLOCKED',
+            sourceRef: entry.sourceRef,
+            status: 'blocked' as const,
+          }));
+        }
+        if (!rawInputsSafe) {
+          for (const selected of inventory.files) {
+            if (blockedSourceRefs.has(selected.sourceRef)) continue;
+            blockedSourceRefs.add(selected.sourceRef);
+            currentSources.add(`${selected.declarationId}\u0000${selected.sourceRef}`);
+            candidatesByDeclaration.set(
+              selected.declarationId,
+              (candidatesByDeclaration.get(selected.declarationId) ?? 0) + 1,
+            );
+            records.push(Object.freeze({
+              declarationId: selected.declarationId,
+              reasonCode: 'SOURCE_SECURITY_BLOCKED',
+              sourceRef: selected.sourceRef,
+              status: 'blocked' as const,
+            }));
+          }
+        }
         for (const candidate of collection.candidates) {
+          if (blockedSourceRefs.has(candidate.sourceRef)) continue;
           currentSources.add(`${candidate.declarationId}\u0000${candidate.sourceRef}`);
           candidatesByDeclaration.set(
             candidate.declarationId,
@@ -883,7 +980,9 @@ export function createSourceManagement(
           }
         }
       }
-      const live = await readSourceCollectionManifest(resolved.checkout, projectId);
+      const live = await readSourceCollectionManifest(resolved.checkout, projectId, {
+        sourceAdapterRegistry: manifestRegistry,
+      });
       if (live.manifestDigest !== loaded.manifestDigest) {
         return managementFailure('SOURCE_MANIFEST_STALE', 'Source manifest changed during diff.');
       }
@@ -899,13 +998,14 @@ export function createSourceManagement(
         const liveSelectedManifest = parseSourceCollectionManifestV2({
           ...canonical,
           sources: liveDeclarations.present,
-        });
+        }, manifestRegistry);
         const liveInventory = await selectDeclaredSourceFiles(
           resolved.checkout,
           Object.freeze({
             manifest: liveSelectedManifest,
             manifestDigest: sha256(serializeCanonicalJson(liveSelectedManifest)),
           }),
+          { sourceAdapterRegistry: manifestRegistry },
         );
         if (serializeCanonicalJson(liveInventory) !== serializeCanonicalJson(selectedInventory)) {
           return managementFailure('SOURCE_MANIFEST_STALE', 'Source inputs changed during diff.');
@@ -925,10 +1025,17 @@ export function createSourceManagement(
 
     async list(projectId: string): Promise<SourceListResultV1> {
       const resolved = await binding(projectId);
-      const loaded = await readSourceCollectionManifest(resolved.checkout, projectId);
-      assertProfileAllowsManifest(normalizedManifest(loaded.manifest), resolved.profile);
+      const loaded = await readSourceCollectionManifest(resolved.checkout, projectId, {
+        sourceAdapterRegistry: manifestRegistry,
+      });
+      assertProfileAllowsManifest(
+        normalizedManifest(loaded.manifest, manifestRegistry),
+        resolved.profile,
+      );
       const result = listResult(loaded);
-      const live = await readSourceCollectionManifest(resolved.checkout, projectId);
+      const live = await readSourceCollectionManifest(resolved.checkout, projectId, {
+        sourceAdapterRegistry: manifestRegistry,
+      });
       if (live.manifestDigest !== loaded.manifestDigest) {
         return managementFailure('SOURCE_MANIFEST_STALE', 'Source manifest changed during list.');
       }

@@ -28,7 +28,7 @@ import {
   createIntegratedWikiReviewSurface,
   createPageOwnershipGraph,
   createProjectSessionCompiler,
-  createTextUnit,
+  createSubstantiveHierarchyTextUnits,
   digestHierarchyValue,
   finalizeCompileRun,
   finalizePlanningDispositionInventory,
@@ -49,6 +49,7 @@ import {
 } from '../src/compiler/index.js';
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import { createRepositoryWriterLease } from '../src/knowledge/repository-writer-lease.js';
+import { createProfileBindingV2 } from '../src/profile/index.js';
 import {
   createProjectSyncService,
   createSourceManagement,
@@ -242,7 +243,7 @@ async function fixture(): Promise<LifecycleFixture> {
   await configureIdentity(sourceRoot);
   await mkdir(join(sourceRoot, 'docs'));
   await Promise.all([
-    writeFile(join(sourceRoot, 'docs/affected.md'), `${AFFECTED_V1}\n`, 'utf8'),
+    writeFile(join(sourceRoot, 'docs/affected.json'), JSON.stringify(AFFECTED_V1), 'utf8'),
     writeFile(
       join(sourceRoot, 'docs/unaffected.md'),
       `${UNAFFECTED_LEAF}\n${UNAFFECTED_ROOT}\n`,
@@ -259,6 +260,11 @@ async function fixture(): Promise<LifecycleFixture> {
     sourceRoot,
   });
   const knowledgeRoot = join(hubRoot, 'knowledge');
+  await writeFile(
+    join(knowledgeRoot, 'projects', PROJECT_ID, 'profile-binding.json'),
+    serializeCanonicalJson(createProfileBindingV2('general')),
+    'utf8',
+  );
   await writeSecurityPolicy(knowledgeRoot, PROJECT_ID, { capabilities: ['compile'] });
   return Object.freeze({ hubRoot, knowledgeRoot, sourceRoot });
 }
@@ -311,11 +317,12 @@ function evidencePack(
   sources: readonly SanitizedEvidenceSourceV1[],
   unitOrdinal: number,
 ): EvidencePackV1 {
-  const sourceId = page.evidenceScope.sourceIds[0];
-  if (sourceId === undefined) throw new Error('Lifecycle evidence source is missing.');
-  const unit = snapshot.textUnits.find((candidate) =>
-    candidate.sourceId === sourceId && candidate.ordinal === unitOrdinal);
-  if (unit === undefined) throw new Error('Lifecycle evidence is missing.');
+  const candidates = snapshot.textUnits.filter((candidate) =>
+    page.evidenceScope.sourceIds.includes(candidate.sourceId) && candidate.kind !== 'document');
+  const unit = candidates[unitOrdinal] ?? candidates[0];
+  if (unit === undefined) {
+    throw new Error(`Lifecycle evidence is missing at ${String(unitOrdinal)}.`);
+  }
   return createEvidencePack({
     blueprint: page,
     snapshot,
@@ -367,7 +374,7 @@ function proposalSubmission(
 
 const snapshotSourceInputs = new WeakMap<CorpusSnapshotV1, ReadonlyMap<string, Readonly<{
   readonly body: string;
-  readonly sourceKind: 'code' | 'markdown' | 'planning' | 'text';
+  readonly sourceKind: 'code' | 'json' | 'markdown' | 'planning' | 'text';
 }>>>();
 
 function lifecyclePurpose() {
@@ -398,32 +405,30 @@ function snapshotFromPlan(
   }));
   const sourceInputs = new Map<string, Readonly<{
     readonly body: string;
-    readonly sourceKind: 'code' | 'markdown' | 'planning' | 'text';
+    readonly sourceKind: 'code' | 'json' | 'markdown' | 'planning' | 'text';
   }>>();
-  const textUnits = planned.flatMap((source) => {
+  const hierarchySources = planned.map((source) => {
     const sourceId = stableSourceId(source.sourceRef);
     sourceInputs.set(sourceId, Object.freeze({
       body: source.sanitizedBody,
       sourceKind: source.sourceKind,
     }));
-    return source.sanitizedBody.trimEnd().split('\n').map((content, ordinal) => {
-      return createTextUnit({
-        contentDigest: hierarchySha256(content),
-        kind: 'paragraph',
-        ordinal,
-        projectId: PROJECT_ID,
-        range: {
-          endColumn: Array.from(content).length,
-          endLine: ordinal + 1,
-          startColumn: 1,
-          startLine: ordinal + 1,
-        },
-        sourceId,
-        sourceRef: source.sourceRef,
-        sourceRevision: source.revision,
-      });
+    return Object.freeze({
+      body: source.sanitizedBody,
+      jsonPointers: Object.freeze(source.citationAnchors.flatMap((anchor) =>
+        anchor.canonicalLine === undefined || anchor.jsonPointer === undefined
+          ? []
+          : [Object.freeze({
+              jsonPointer: anchor.jsonPointer,
+              line: anchor.canonicalLine,
+            })])),
+      sourceId,
+      sourceKind: source.sourceKind,
+      sourceRef: source.sourceRef,
+      sourceRevision: source.revision,
     });
   });
+  const textUnits = createSubstantiveHierarchyTextUnits(hierarchySources, PROJECT_ID);
   const snapshot = createCorpusSnapshot({
     compilerContractDigest: plan.contractDigest,
     interpretationRulesDigest: hierarchySha256('lifecycle-interpretation-rules'),
@@ -447,7 +452,7 @@ async function approvedAuthority(
 ): Promise<LifecycleAuthority> {
   const currentState = currentAuthority?.state ?? null;
   const graph = buildSparseRelationGraph(snapshot, PROJECT_ID);
-  const affectedSourceId = stableSourceId('docs/affected.md');
+  const affectedSourceId = stableSourceId('docs/affected.json');
   const unaffectedSourceId = stableSourceId('docs/unaffected.md');
   const blueprints = Object.freeze([
     pageBlueprint({
@@ -804,8 +809,8 @@ describe('hierarchical semantic lifecycle handoff integration', () => {
     const sources = createSourceManagement({ hubRoot: current.hubRoot });
     await sources.add({
       id: 'affected',
-      kind: 'markdown',
-      path: 'docs/affected.md',
+      kind: 'json',
+      path: 'docs/affected.json',
       projectId: PROJECT_ID,
     });
     await sources.add({
@@ -829,13 +834,24 @@ describe('hierarchical semantic lifecycle handoff integration', () => {
     });
     const firstPlan = await compiler.plan({ projectId: PROJECT_ID });
     expect(firstPlan.sources.map((source) => source.sourceRef).sort())
-      .toEqual(['docs/affected.md', 'docs/unaffected.md']);
+      .toEqual(['docs/affected.json', 'docs/unaffected.md']);
+    expect(firstPlan.sources.find((source) => source.sourceRef === 'docs/affected.json')
+      ?.citationAnchors).toContainEqual(expect.objectContaining({
+        canonicalLine: 1,
+        jsonPointer: '',
+      }));
     expect(firstPlan.sources.every((source) =>
       source.sanitizedBody.endsWith('\n') &&
       hierarchySha256(source.sanitizedBody) === source.sanitizedContentDigest)).toBe(true);
     const policy = await readSecurityPolicy(current.knowledgeRoot, PROJECT_ID);
     const firstSnapshot = snapshotFromPlan(firstPlan, policy.digest);
+    expect(firstSnapshot.textUnits.filter((unit) =>
+      unit.sourceRef === 'docs/affected.json')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ jsonPointer: '' }),
+    ]));
     const first = await approvedAuthority(firstSnapshot, null, current.knowledgeRoot);
+    expect(first.authority.finalization.evidencePacks.find((pack) =>
+      pack.pageId === AFFECTED_PAGE)?.units[0]?.citation).toMatchObject({ jsonPointer: '' });
     expect(first.authority.authorityCheck).toMatchObject({
       status: 'clean',
       stalePageIds: [],
@@ -923,6 +939,15 @@ describe('hierarchical semantic lifecycle handoff integration', () => {
       providerUsed: 'local-in-process',
     });
     expect(semantic.hits.map((hit) => hit.locator.pageId)).toContain(AFFECTED_PAGE);
+    await expect(operator.pageCitations({
+      pageId: AFFECTED_PAGE,
+      projectId: PROJECT_ID,
+    })).resolves.toMatchObject({
+      citations: [expect.objectContaining({
+        jsonPointer: '',
+        sourceRef: 'docs/affected.json',
+      })],
+    });
     const firstHybrid = await operator.search({
       mode: 'hybrid',
       projectId: PROJECT_ID,
@@ -936,8 +961,8 @@ describe('hierarchical semantic lifecycle handoff integration', () => {
     });
     expect(firstHybrid.hits.map((hit) => hit.locator.pageId)).toContain(AFFECTED_PAGE);
 
-    await writeFile(join(current.sourceRoot, 'docs/affected.md'), `${AFFECTED_V2}\n`, 'utf8');
-    await git(current.sourceRoot, ['add', 'docs/affected.md']);
+    await writeFile(join(current.sourceRoot, 'docs/affected.json'), JSON.stringify(AFFECTED_V2), 'utf8');
+    await git(current.sourceRoot, ['add', 'docs/affected.json']);
     await git(current.sourceRoot, ['commit', '-m', 'revise affected lifecycle source']);
     const secondSync = await createProjectSyncService().sync({
       dryRun: false,

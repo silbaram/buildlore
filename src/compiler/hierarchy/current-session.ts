@@ -1,4 +1,5 @@
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
+import { validateJsonPointer } from '../../projector/source-contracts.js';
 import { consumePreparedSource } from '../../sanitizer/approval.js';
 import {
   SANITIZER_RULES_VERSION,
@@ -779,13 +780,17 @@ function assertClosedEvidencePack(value: unknown, projectId: string): EvidencePa
     );
     identifier(unit.contentDigest, DIGEST_PATTERN, projectId, 71);
     const citation = record(unit.citation, projectId);
-    exactKeys(citation, CITATION_PROPERTIES, projectId);
+    exactKeys(citation, [
+      ...CITATION_PROPERTIES,
+      ...(Object.hasOwn(citation, 'jsonPointer') ? ['jsonPointer'] : []),
+    ], projectId);
     identifier(citation.citationId, CITATION_ID_PATTERN, projectId, 73);
     identifier(citation.sourceId, SOURCE_ID_PATTERN, projectId, 71);
     identifier(citation.sourceRevision, DIGEST_PATTERN, projectId, 71);
     safeText(citation.sourceRef, 512, projectId);
     assertRange(citation.range, projectId);
     identifier(citation.quoteDigest, DIGEST_PATTERN, projectId, 71);
+    if (citation.jsonPointer !== undefined) validateJsonPointer(citation.jsonPointer);
   }
   for (const conflict of records(
     pack.conflicts,

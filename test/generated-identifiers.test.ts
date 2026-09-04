@@ -23,6 +23,7 @@ describe('generated identifier contract', () => {
     expect(GENERATED_SOURCE_KINDS).toEqual([
       'code',
       'execution',
+      'json',
       'markdown',
       'planning',
       'text',

@@ -2,6 +2,10 @@ import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
 import { inspectPreparedSource } from '../../sanitizer/approval.js';
 import type { DataClassification } from '../../sanitizer/index.js';
 import {
+  validatePortableSourceRef,
+  validateSourceOriginRange,
+} from '../../projector/source-contracts.js';
+import {
   HIERARCHICAL_COMPILATION_LIMITS,
   digestHierarchyValue,
   hierarchySha256,
@@ -107,6 +111,19 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
+function validCitationLocation(
+  sourceRef: unknown,
+  range: unknown,
+): boolean {
+  try {
+    validatePortableSourceRef(sourceRef);
+    validateSourceOriginRange(range);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function extractUnitContent(
   content: string,
   unit: CorpusSnapshotV1['textUnits'][number],
@@ -167,6 +184,9 @@ function assertCanonicalEvidencePack(
   ) invalid(projectId);
   for (const unit of pack.units) {
     const citationBasis = Object.freeze({
+      ...(unit.citation.jsonPointer === undefined
+        ? {}
+        : { jsonPointer: unit.citation.jsonPointer }),
       sourceId: unit.citation.sourceId,
       sourceRevision: unit.citation.sourceRevision,
       sourceRef: unit.citation.sourceRef,
@@ -182,7 +202,7 @@ function assertCanonicalEvidencePack(
       !DIGEST_PATTERN.test(unit.citation.sourceRevision) ||
       unit.contentDigest !== hierarchySha256(unit.content) ||
       unit.contentDigest !== unit.citation.quoteDigest ||
-      JSON.stringify(unit.range) !== JSON.stringify(unit.citation.range) ||
+      !validCitationLocation(unit.citation.sourceRef, unit.citation.range) ||
       unit.citation.citationId !==
         `citation-${digestHierarchyValue(citationBasis).slice('sha256:'.length)}` ||
       citationIds.has(unit.citation.citationId)
@@ -398,7 +418,7 @@ export function createEvidencePack(
       prepared.projectId !== expectedProjectId ||
       prepared.policyDigest !== snapshot.sanitizerPolicyDigest ||
       prepared.source !== source.sourceRef ||
-      !['code', 'markdown', 'planning', 'text'].includes(prepared.sourceKind) ||
+      !['code', 'json', 'markdown', 'planning', 'text'].includes(prepared.sourceKind) ||
       prepared.untrustedData ||
       prepared.sourceRevisionOrContentSha256 !== source.sourceRevision ||
       prepared.approvedBodyDigest !== snapshotSource.sanitizedContentDigest ||
@@ -424,10 +444,11 @@ export function createEvidencePack(
     const content = extractUnitContent(source.content, unit, expectedProjectId);
     if (hierarchySha256(content) !== unit.contentDigest) invalid(expectedProjectId);
     const citationBasis = Object.freeze({
+      ...(unit.jsonPointer === undefined ? {} : { jsonPointer: unit.jsonPointer }),
       sourceId: unit.sourceId,
       sourceRevision: unit.sourceRevision,
-      sourceRef: unit.sourceRef,
-      range: unit.range,
+      sourceRef: unit.origin?.sourceRef ?? unit.sourceRef,
+      range: unit.origin?.range ?? unit.range,
       quoteDigest: unit.contentDigest,
     });
     const citation = Object.freeze({

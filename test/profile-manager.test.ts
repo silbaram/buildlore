@@ -16,6 +16,7 @@ import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
 import {
   createBuildLoreLifecycleProfile,
   createBuiltInProfileBinding,
+  createProfileBindingV2,
   createProfileBindingPreflight,
   createProjectLifecycleProfile,
   renderLifecycleProfile,
@@ -96,7 +97,7 @@ describe('project lifecycle profile manager', () => {
       sourceRepository: 'https://example.test/alpha.git',
     });
     await expect(readFile(join(workspace(knowledgeRoot), 'profile-binding.json'), 'utf8'))
-      .resolves.toBe(serializeCanonicalJson(createBuiltInProfileBinding('development', 'en')));
+      .resolves.toBe(serializeCanonicalJson(createProfileBindingV2('development', 'en')));
     await expect(createProfileBindingPreflight(knowledgeRoot).resolve('alpha')).resolves.toEqual({
       mode: 'custom',
       outputLanguage: 'en',

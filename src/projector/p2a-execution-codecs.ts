@@ -8,6 +8,7 @@ import type {
   ObservedP2aRun,
   P2aRunIndex,
   P2aRunIndexEntry,
+  P2aRunIndexTask,
 } from './execution-types.js';
 import { normalizeRfc3339Instant } from './timestamp.js';
 
@@ -28,18 +29,21 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 
 const RUN_FIELDS = new Set([
   'acceptanceReview', 'acceptanceReviewEvidenceSha256', 'agentTool', 'changedFiles',
-  'executionEnvelope', 'executionEnvelopeSha256', 'failure', 'finishedAt', 'fixSummary',
-  'guard', 'interruptions', 'isolation', 'iterationId', 'localization', 'milestones',
+  'currentDevelopmentContractRef', 'currentDevelopmentContractSha256',
+  'docsMetadataBaseline', 'executionEnvelope', 'executionEnvelopeSha256', 'failure', 'finishedAt', 'fixSummary',
+  'executionEnvelopeRef',
+  'git', 'guard', 'interruptions', 'isolation', 'iterationId', 'localization', 'milestones',
   'mode', 'monitorGate', 'monitorVerdictEvidenceSha256', 'notes', 'projectId',
-  'reproduction', 'runId', 'runKind', 'schema_version', 'selectionRationale',
+  'productChangeDetected', 'reproduction', 'runId', 'runKind', 'schema_version', 'selectionRationale',
   'sourceLayout', 'sourceSpecRef', 'startedAt', 'status', 'taskContractSha256',
   'taskGraphRef', 'taskId', 'taskTitle', 'telemetryProtocol', 'updatedAt', 'usage',
-  'verification', 'visualFeedback', 'visualReview', 'visualReviewEvidenceSha256',
+  'verification', 'verificationScope', 'visualFeedback', 'visualReview', 'visualReviewEvidenceSha256',
   'workspacePath', 'workspaceRef', 'workspaceRevisionSha256',
+  'productRevisionSha256', 'startProductRevisionSha256',
 ]);
 
 const RUN_REQUIRED_FIELDS = [
-  'agentTool', 'changedFiles', 'executionEnvelope', 'executionEnvelopeSha256', 'finishedAt',
+  'agentTool', 'changedFiles', 'finishedAt',
   'isolation', 'iterationId', 'notes', 'projectId', 'runId', 'schema_version',
   'sourceLayout', 'sourceSpecRef', 'startedAt', 'status', 'taskContractSha256',
   'taskGraphRef', 'taskId', 'taskTitle', 'updatedAt', 'verification', 'workspacePath',
@@ -48,13 +52,19 @@ const RUN_REQUIRED_FIELDS = [
 
 const INDEX_ENTRY_FIELDS = new Set([
   'agentTool', 'finishedAt', 'iterationId', 'runId', 'runRef', 'startedAt', 'status',
-  'taskGraphRef', 'taskId', 'workspaceRef',
+  'taskGraphRef', 'taskId', 'workspaceRef', 'runKind',
 ]);
+const INDEX_ENTRY_REQUIRED_FIELDS = [
+  'agentTool', 'finishedAt', 'iterationId', 'runId', 'runRef', 'startedAt', 'status',
+  'taskGraphRef', 'taskId', 'workspaceRef',
+] as const;
 const INDEX_TASK_FIELDS = new Set(['latestRunId', 'runIds', 'taskId']);
 const VERIFICATION_FIELDS = new Set([
   'command', 'durationMs', 'exitCode', 'failureHint', 'failureReason', 'finishedAt',
   'milestoneId', 'normalizedCommand', 'originalCommand', 'source', 'startedAt', 'status',
   'stderrTail', 'stdoutTail', 'type',
+  'gitHeadSha', 'productRevisionSha256', 'scope', 'workspaceRevisionSha256',
+  'argv', 'relatedFilesSha256', 'selectedFileCount',
 ]);
 const VERIFICATION_REQUIRED_FIELDS = [
   'command', 'durationMs', 'exitCode', 'finishedAt', 'source', 'startedAt', 'status',
@@ -166,6 +176,14 @@ function strictObject(
   return isRecord(value) && hasOnlyKeys(value, allowed) && hasRequiredKeys(value, required);
 }
 
+function optionalSha256(value: unknown): value is string | undefined {
+  return value === undefined || (typeof value === 'string' && SHA256_PATTERN.test(value));
+}
+
+function optionalGitSha(value: unknown): value is string | undefined {
+  return value === undefined || (typeof value === 'string' && /^[a-f0-9]{40,64}$/u.test(value));
+}
+
 function decodeVerification(value: unknown): readonly ExecutionVerificationSummary[] | null {
   if (!Array.isArray(value) || value.length > MAX_VERIFICATION) return null;
   const result: ExecutionVerificationSummary[] = [];
@@ -190,20 +208,49 @@ function decodeVerification(value: unknown): readonly ExecutionVerificationSumma
       !optionalBoundedString(item.failureHint, MAX_SUMMARY_LENGTH) ||
       !optionalBoundedString(item.originalCommand, MAX_COMMAND_LENGTH) ||
       !optionalBoundedString(item.normalizedCommand, MAX_COMMAND_LENGTH) ||
-      !optionalBoundedString(item.milestoneId, 256)
+      !optionalBoundedString(item.milestoneId, 256) ||
+      (item.scope !== undefined && item.scope !== 'full' && item.scope !== 'related') ||
+      !optionalSha256(item.workspaceRevisionSha256) ||
+      !optionalSha256(item.productRevisionSha256) ||
+      !optionalSha256(item.relatedFilesSha256) ||
+      !optionalGitSha(item.gitHeadSha) ||
+      (item.selectedFileCount !== undefined &&
+        (!Number.isSafeInteger(item.selectedFileCount) || Number(item.selectedFileCount) < 1))
     ) return null;
+    const argv = item.argv === undefined
+      ? undefined
+      : stringArray(item.argv, MAX_TEXT_ITEMS, MAX_COMMAND_LENGTH);
+    if (item.argv !== undefined && argv === null) return null;
+    const decodedArgv = argv ?? undefined;
+    if (item.scope === 'related' && item.source !== 'manual' &&
+        (decodedArgv === undefined || item.selectedFileCount === undefined)) return null;
     if (
       (item.status === 'passed' && item.exitCode !== 0) ||
       (item.status === 'failed' && (item.exitCode === null || item.exitCode === 0))
     ) return null;
     result.push({
+      ...(decodedArgv === undefined ? {} : { argv: decodedArgv }),
       command: item.command,
       exitCode: item.exitCode as number | null,
       finishedAt,
+      ...(item.gitHeadSha === undefined ? {} : { gitHeadSha: item.gitHeadSha }),
+      ...(item.productRevisionSha256 === undefined
+        ? {}
+        : { productRevisionSha256: item.productRevisionSha256 }),
+      ...(item.relatedFilesSha256 === undefined
+        ? {}
+        : { relatedFilesSha256: item.relatedFilesSha256 }),
+      ...(item.scope === undefined ? {} : { scope: item.scope }),
+      ...(item.selectedFileCount === undefined
+        ? {}
+        : { selectedFileCount: Number(item.selectedFileCount) }),
       source: item.source as ExecutionVerificationSummary['source'],
       startedAt,
       status: item.status as ExecutionVerificationSummary['status'],
       type: item.type as ExecutionVerificationSummary['type'],
+      ...(item.workspaceRevisionSha256 === undefined
+        ? {}
+        : { workspaceRevisionSha256: item.workspaceRevisionSha256 }),
     });
   }
   return result;
@@ -225,10 +272,24 @@ function decodeEvidenceObject(
   return result;
 }
 
+function boundedJsonValue(value: unknown, depth = 0): boolean {
+  if (depth > 8) return false;
+  if (value === null || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string') return value.length <= 10_000;
+  if (Array.isArray(value)) {
+    return value.length <= 1_000 && value.every((item) => boundedJsonValue(item, depth + 1));
+  }
+  if (!isRecord(value) || Object.keys(value).length > 1_000) return false;
+  return Object.entries(value).every(([key, item]) =>
+    boundedSingleLineString(key, 1_000) && boundedJsonValue(item, depth + 1));
+}
+
 function validExecutionEnvelope(value: unknown): value is Record<string, unknown> {
   const fields = new Set([
-    'acceptance', 'executionAuthority', 'mustPreserve', 'nonGoals', 'objective', 'scope',
-    'sourceGateRefs', 'verification', 'visualContract',
+    'acceptance', 'architecture', 'executionAuthority', 'iterationConstraints', 'mustPreserve',
+    'nonGoals', 'objective', 'prohibitions', 'scope', 'sourceGateRefs', 'stack', 'style',
+    'verification', 'visualContract',
   ]);
   if (!strictObject(value, fields, [
     'acceptance', 'executionAuthority', 'mustPreserve', 'nonGoals', 'objective', 'scope',
@@ -245,10 +306,30 @@ function validExecutionEnvelope(value: unknown): value is Record<string, unknown
   }
   if (!Array.isArray(value.sourceGateRefs) || value.sourceGateRefs.length < 1 ||
     value.sourceGateRefs.length > MAX_TEXT_ITEMS) return false;
-  return value.sourceGateRefs.every((item) => isRecord(item) &&
+  if (!value.sourceGateRefs.every((item) => isRecord(item) &&
     Object.keys(item).sort().join(',') === 'path,sha256' &&
     validRelativeReference(item.path) && typeof item.sha256 === 'string' &&
-    SHA256_PATTERN.test(item.sha256));
+    SHA256_PATTERN.test(item.sha256))) return false;
+  if (value.iterationConstraints !== undefined) {
+    if (!strictObject(value.iterationConstraints, new Set([
+      'architecture', 'dependencies', 'interfaces',
+    ]), ['architecture', 'dependencies', 'interfaces'])) return false;
+    for (const key of ['architecture', 'dependencies', 'interfaces']) {
+      if (stringArray(value.iterationConstraints[key], 1_000, 10_000) === null) return false;
+    }
+  }
+  for (const key of ['architecture', 'prohibitions', 'stack']) {
+    if (value[key] !== undefined && (!Array.isArray(value[key]) || value[key].length > 10 ||
+        !value[key].every((item: unknown) => isRecord(item) && boundedJsonValue(item)))) return false;
+  }
+  return (value.style === undefined || isRecord(value.style) && boundedJsonValue(value.style)) &&
+    (value.visualContract === undefined ||
+      isRecord(value.visualContract) && boundedJsonValue(value.visualContract));
+}
+
+export function p2aExecutionEnvelopeSha256(value: unknown): string | null {
+  if (!validExecutionEnvelope(value)) return null;
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
 function sourceGateRefs(value: unknown): readonly Readonly<{ path: string; sha256: string }>[] {
@@ -276,8 +357,24 @@ export function decodeP2aRun(
     typeof value.taskContractSha256 !== 'string' ||
     !SHA256_PATTERN.test(value.taskContractSha256)
   ) return invalid('unsupported_schema');
-  if (value.sourceLayout !== 'iteration' && value.sourceLayout !== 'graph') {
+  if (!boundedSingleLineString(value.agentTool, 128) ||
+      !boundedSingleLineString(value.taskGraphRef, MAX_PATH_LENGTH) ||
+      !boundedSingleLineString(value.workspaceRef, MAX_PATH_LENGTH) ||
+      !boundedSingleLineString(value.workspacePath, MAX_PATH_LENGTH)) {
+    return invalid('path_unsafe');
+  }
+  if (!['graph', 'handoff', 'iteration', 'maintenance'].includes(String(value.sourceLayout))) {
     return invalid('unsupported_layout');
+  }
+  const runKind = value.runKind === undefined ? null : value.runKind;
+  if (runKind !== null && runKind !== 'final_acceptance_review' &&
+      runKind !== 'final_verification' && runKind !== 'final_visual_review') {
+    return invalid('unsupported_schema');
+  }
+  if (value.verificationScope !== undefined && value.verificationScope !== 'full' &&
+      value.verificationScope !== 'relevant') return invalid('unsupported_schema');
+  if (value.verificationScope !== undefined && runKind !== 'final_verification') {
+    return invalid('unsupported_schema');
   }
   if (!validStatus(value.status)) return invalid('malformed_status');
   const startedAt = normalizedInstant(value.startedAt);
@@ -304,11 +401,72 @@ export function decodeP2aRun(
     return invalid('timestamp_invalid');
   }
   if (!validRelativeReference(value.sourceSpecRef)) return invalid('path_unsafe');
-  if (!validExecutionEnvelope(value.executionEnvelope) ||
-    typeof value.executionEnvelopeSha256 !== 'string' ||
-    !SHA256_PATTERN.test(value.executionEnvelopeSha256) ||
-    createHash('sha256').update(JSON.stringify(value.executionEnvelope)).digest('hex') !==
-      value.executionEnvelopeSha256) return invalid('unsupported_schema');
+  for (const revision of [
+    value.productRevisionSha256,
+    value.startProductRevisionSha256,
+    value.workspaceRevisionSha256,
+  ]) {
+    if (!optionalSha256(revision)) return invalid('unsupported_schema');
+  }
+  if (value.productChangeDetected !== undefined && typeof value.productChangeDetected !== 'boolean') {
+    return invalid('unsupported_schema');
+  }
+  const docsMetadataBaseline = value.docsMetadataBaseline === undefined
+    ? undefined
+    : stringArray(value.docsMetadataBaseline, MAX_CHANGED_FILES, MAX_PATH_LENGTH);
+  if (value.docsMetadataBaseline !== undefined && docsMetadataBaseline === null) {
+    return invalid('path_unsafe');
+  }
+  if (docsMetadataBaseline?.some((path) => !validPortablePath(path))) return invalid('path_unsafe');
+  let gitHeadSha: string | undefined;
+  if (value.git !== undefined) {
+    if (!strictObject(value.git, new Set(['branch', 'dirty', 'headSha']), [
+      'branch', 'dirty', 'headSha',
+    ]) || !optionalGitSha(value.git.headSha) || value.git.headSha === undefined ||
+      (value.git.branch !== null && !boundedSingleLineString(value.git.branch, 256)) ||
+      typeof value.git.dirty !== 'boolean') return invalid('unsupported_schema');
+    gitHeadSha = value.git.headSha;
+  }
+  const hasCurrentContractRef = value.currentDevelopmentContractRef !== undefined;
+  const hasCurrentContractDigest = value.currentDevelopmentContractSha256 !== undefined;
+  if (hasCurrentContractRef !== hasCurrentContractDigest ||
+      (hasCurrentContractRef && !validRelativeReference(value.currentDevelopmentContractRef)) ||
+      (hasCurrentContractDigest && !optionalSha256(value.currentDevelopmentContractSha256))) {
+    return invalid('lineage_missing');
+  }
+  const hasEmbeddedEnvelope = value.executionEnvelope !== undefined;
+  const hasReferencedEnvelope = value.executionEnvelopeRef !== undefined;
+  const hasEnvelopeDigest = value.executionEnvelopeSha256 !== undefined;
+  if (value.sourceLayout === 'maintenance') {
+    if (hasEmbeddedEnvelope || hasReferencedEnvelope || hasEnvelopeDigest) {
+      return invalid('unsupported_schema');
+    }
+  } else {
+    if (hasEmbeddedEnvelope === hasReferencedEnvelope || !hasEnvelopeDigest ||
+        !optionalSha256(value.executionEnvelopeSha256)) return invalid('unsupported_schema');
+    if (hasEmbeddedEnvelope && p2aExecutionEnvelopeSha256(value.executionEnvelope) !==
+        value.executionEnvelopeSha256) return invalid('unsupported_schema');
+    if (hasReferencedEnvelope && (!strictObject(
+      value.executionEnvelopeRef,
+      new Set(['sha256']),
+      ['sha256'],
+    ) || !optionalSha256(value.executionEnvelopeRef.sha256) ||
+      value.executionEnvelopeRef.sha256 !== value.executionEnvelopeSha256)) {
+      return invalid('unsupported_schema');
+    }
+  }
+  if (runKind === 'final_verification' &&
+      (!optionalSha256(value.productRevisionSha256) || value.productRevisionSha256 === undefined ||
+       !optionalSha256(value.workspaceRevisionSha256) ||
+       value.workspaceRevisionSha256 === undefined)) return invalid('lineage_missing');
+  if (runKind === 'final_verification' && verification.some((item) =>
+    item.status === 'passed' && (
+      item.workspaceRevisionSha256 !== undefined &&
+        item.workspaceRevisionSha256 !== value.workspaceRevisionSha256 ||
+      item.productRevisionSha256 !== undefined &&
+        item.productRevisionSha256 !== value.productRevisionSha256 ||
+      item.gitHeadSha !== undefined && gitHeadSha !== undefined && item.gitHeadSha !== gitHeadSha
+    ))) return invalid('lineage_mismatch');
 
   const reproduction = decodeEvidenceObject(value.reproduction, ['commands', 'notes', 'steps']);
   const localization = decodeEvidenceObject(value.localization, ['files', 'findings']);
@@ -341,7 +499,20 @@ export function decodeP2aRun(
   return {
     ok: true,
     value: {
+      agentTool: value.agentTool,
       changedFiles,
+      ...(hasCurrentContractRef ? {
+        currentDevelopmentContractRef: value.currentDevelopmentContractRef as string,
+        currentDevelopmentContractSha256: value.currentDevelopmentContractSha256 as string,
+      } : {}),
+      ...(hasEmbeddedEnvelope
+        ? { embeddedExecutionEnvelope: value.executionEnvelope as Readonly<Record<string, unknown>> }
+        : {}),
+      ...(hasEnvelopeDigest ? { executionEnvelopeSha256: value.executionEnvelopeSha256 as string } : {}),
+      ...(hasReferencedEnvelope ? {
+        executionEnvelopeReferenceSha256: (value.executionEnvelopeRef as Record<string, unknown>)
+          .sha256 as string,
+      } : {}),
       ...(isRecord(value.failure) ? { failureClass: String(value.failure.class) } : {}),
       finishedAt,
       fixSummaries: fixSummary.summaries ?? [],
@@ -351,29 +522,79 @@ export function decodeP2aRun(
       localizationFiles: localization.files ?? [],
       localizationFindings: localization.findings ?? [],
       projectId: expectedProjectId,
+      ...((value.productRevisionSha256 ?? value.startProductRevisionSha256) === undefined
+        ? {}
+        : { productRevisionSha256: (value.productRevisionSha256 ??
+            value.startProductRevisionSha256) as string }),
       reproductionSteps: reproduction.steps ?? [],
       runId: String(value.runId),
+      runKind,
       sourceGateRefs: sourceGateRefs(value.executionEnvelope),
-      sourceLayout: value.sourceLayout,
+      sourceLayout: value.sourceLayout as ObservedP2aRun['sourceLayout'],
       sourceSpecRef: value.sourceSpecRef,
       startedAt,
       status: value.status,
       taskContractSha256: value.taskContractSha256,
+      taskGraphRef: value.taskGraphRef,
       taskId: String(value.taskId),
       taskTitle: value.taskTitle,
       updatedAt,
       verification,
+      ...(value.verificationScope === undefined
+        ? {}
+        : { verificationScope: value.verificationScope }),
+      ...(value.workspaceRevisionSha256 === undefined
+        ? {}
+        : { workspaceRevisionSha256: value.workspaceRevisionSha256 as string }),
+      ...(gitHeadSha === undefined ? {} : { gitHeadSha }),
+      workspaceRef: value.workspaceRef,
     },
   };
+}
+
+function validCountRecord(value: unknown, fields: readonly string[]): boolean {
+  return strictObject(value, new Set(fields), fields) && fields.every((field) =>
+    Number.isSafeInteger(value[field]) && Number(value[field]) >= 0);
+}
+
+function validRunIndexRetrospective(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!strictObject(value, new Set(['iterations']), ['iterations']) ||
+      !Array.isArray(value.iterations) || value.iterations.length > 8) return false;
+  return value.iterations.every((item) => {
+    if (!strictObject(item, new Set([
+      'interruptionCounts', 'iterationId', 'reasonCounts', 'runCount', 'scope', 'statusCounts',
+      'verificationCount', 'verificationDuration', 'verificationStatusCounts',
+    ]), [
+      'interruptionCounts', 'iterationId', 'reasonCounts', 'runCount', 'statusCounts',
+      'verificationCount', 'verificationDuration', 'verificationStatusCounts',
+    ])) return false;
+    return (item.iterationId === null || typeof item.iterationId === 'string' &&
+      ITERATION_ID_PATTERN.test(item.iterationId)) &&
+      (item.scope === undefined || item.scope === 'pruned_run_history') &&
+      Number.isSafeInteger(item.runCount) && Number(item.runCount) >= 0 &&
+      Number.isSafeInteger(item.verificationCount) && Number(item.verificationCount) >= 0 &&
+      validCountRecord(item.reasonCounts, ['completed_maintenance', 'superseded']) &&
+      validCountRecord(item.statusCounts, ['blocked', 'failed', 'finished']) &&
+      validCountRecord(item.verificationDuration, ['maxMs', 'sampleCount', 'totalMs']) &&
+      validCountRecord(item.verificationStatusCounts, [
+        'failed', 'not_run', 'passed', 'skipped', 'unavailable',
+      ]) && validCountRecord(item.interruptionCounts, [
+        'gate_return_invalid', 'gate_return_valid', 'implementation_decision', 'user_correction',
+      ]);
+  });
 }
 
 export function decodeP2aRunIndex(
   value: unknown,
   expectedProjectId: string,
 ): DecodeResult<P2aRunIndex> {
-  if (!strictObject(value, new Set(['projectId', 'runs', 'schema_version', 'tasks']), [
+  if (!strictObject(value, new Set([
+    'projectId', 'retrospective', 'runs', 'schema_version', 'tasks',
+  ]), [
     'projectId', 'runs', 'schema_version', 'tasks',
-  ]) || value.schema_version !== 'p2a.run_index.v1') return invalid('unsupported_schema');
+  ]) || value.schema_version !== 'p2a.run_index.v1' ||
+    !validRunIndexRetrospective(value.retrospective)) return invalid('unsupported_schema');
   if (value.projectId !== expectedProjectId) return invalid('project_mismatch');
   if (!Array.isArray(value.runs) || value.runs.length > MAX_INDEX_RUNS ||
     !Array.isArray(value.tasks) || value.tasks.length > MAX_TASKS) {
@@ -382,7 +603,7 @@ export function decodeP2aRunIndex(
   const seen = new Set<string>();
   const runs: P2aRunIndexEntry[] = [];
   for (const item of value.runs) {
-    if (!strictObject(item, INDEX_ENTRY_FIELDS, [...INDEX_ENTRY_FIELDS])) {
+    if (!strictObject(item, INDEX_ENTRY_FIELDS, INDEX_ENTRY_REQUIRED_FIELDS)) {
       return invalid('run_reference_invalid');
     }
     const startedAt = normalizedInstant(item.startedAt);
@@ -391,6 +612,9 @@ export function decodeP2aRunIndex(
       !RUN_ID_PATTERN.test(String(item.runId)) || !TASK_ID_PATTERN.test(String(item.taskId)) ||
       typeof item.iterationId !== 'string' || !ITERATION_ID_PATTERN.test(item.iterationId) ||
       !validStatus(item.status) || startedAt === null ||
+      (item.runKind !== undefined && item.runKind !== null &&
+        item.runKind !== 'final_acceptance_review' && item.runKind !== 'final_verification' &&
+        item.runKind !== 'final_visual_review') ||
       (item.finishedAt !== null && finishedAt === null) ||
       !validPortablePath(item.runRef) || seen.has(String(item.runId))
     ) return invalid('run_reference_invalid');
@@ -400,16 +624,29 @@ export function decodeP2aRunIndex(
     ]);
     if (!expectedRefs.has(item.runRef)) return invalid('run_reference_invalid');
     seen.add(String(item.runId));
+    if (!boundedSingleLineString(item.agentTool, 128) ||
+        !boundedSingleLineString(item.taskGraphRef, MAX_PATH_LENGTH) ||
+        !boundedSingleLineString(item.workspaceRef, MAX_PATH_LENGTH)) {
+      return invalid('run_reference_invalid');
+    }
     runs.push({
+      agentTool: item.agentTool,
       finishedAt,
       iterationId: item.iterationId,
       runId: String(item.runId),
+      runKind: item.runKind === undefined ? null : item.runKind,
       runRef: item.runRef,
       startedAt,
       status: item.status,
+      taskGraphRef: item.taskGraphRef,
       taskId: String(item.taskId),
+      workspaceRef: item.workspaceRef,
     });
   }
+  const tasks: P2aRunIndexTask[] = [];
+  const indexedRunIds = new Set(runs.map((run) => run.runId));
+  const assignedRunIds = new Set<string>();
+  const taskIds = new Set<string>();
   for (const task of value.tasks) {
     if (!strictObject(task, INDEX_TASK_FIELDS, [...INDEX_TASK_FIELDS]) ||
       !TASK_ID_PATTERN.test(String(task.taskId)) || !Array.isArray(task.runIds) ||
@@ -418,8 +655,20 @@ export function decodeP2aRunIndex(
         (typeof task.latestRunId !== 'string' || !RUN_ID_PATTERN.test(task.latestRunId)))) {
       return invalid('run_reference_invalid');
     }
+    const taskId = String(task.taskId);
+    const runIds = task.runIds as readonly string[];
+    if (taskIds.has(taskId) || new Set(runIds).size !== runIds.length ||
+        runIds.some((runId) => !indexedRunIds.has(runId) || assignedRunIds.has(runId) ||
+          runs.find((run) => run.runId === runId)?.taskId !== taskId) ||
+        (runIds.length === 0 ? task.latestRunId !== null : task.latestRunId !== runIds.at(-1))) {
+      return invalid('run_reference_invalid');
+    }
+    taskIds.add(taskId);
+    runIds.forEach((runId) => assignedRunIds.add(runId));
+    tasks.push(Object.freeze({ latestRunId: task.latestRunId, runIds, taskId }));
   }
-  return { ok: true, value: { projectId: expectedProjectId, runs } };
+  if (assignedRunIds.size !== runs.length) return invalid('run_reference_invalid');
+  return { ok: true, value: { projectId: expectedProjectId, runs, tasks } };
 }
 
 function canonicalJson(value: unknown): string {
@@ -434,7 +683,9 @@ function canonicalJson(value: unknown): string {
 export function taskContractSha256(task: Readonly<Record<string, unknown>>): string {
   const contract: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(task)) {
-    if (key !== 'status' && key !== 'blockReason' && key !== 'blockNote') contract[key] = value;
+    if (key !== 'status' && key !== 'blockReason' && key !== 'blockNote' && key !== 'intent') {
+      contract[key] = value;
+    }
   }
   return createHash('sha256').update(canonicalJson({
     schema_version: 'p2a.task_contract.v1',

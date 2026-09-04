@@ -32,8 +32,18 @@ const GENERIC_BLUEPRINT_TOKENS = new Set([
 
 export interface SanitizedHierarchyEvidenceSourceV1 {
   readonly body: string;
+  readonly jsonOrigins?: readonly Readonly<{
+    readonly jsonPointer: string;
+    readonly line: number;
+    readonly range: TextUnitRangeV1;
+    readonly sourceRef: string;
+  }>[];
+  readonly jsonPointers?: readonly Readonly<{
+    readonly jsonPointer: string;
+    readonly line: number;
+  }>[];
   readonly sourceId: string;
-  readonly sourceKind: 'code' | 'markdown' | 'planning' | 'text';
+  readonly sourceKind: 'code' | 'json' | 'markdown' | 'planning' | 'text';
   readonly sourceRef: string;
   readonly sourceRevision: `sha256:${string}`;
 }
@@ -48,6 +58,14 @@ interface BoundedBlock extends SourceBlock {
   readonly content: string;
   readonly endColumn: number;
   readonly startColumn: number;
+}
+
+interface PointerBoundedBlock extends BoundedBlock {
+  readonly jsonPointer?: string;
+  readonly origin?: Readonly<{
+    readonly range: TextUnitRangeV1;
+    readonly sourceRef: string;
+  }>;
 }
 
 interface HeadingBlock extends BoundedBlock {
@@ -220,6 +238,56 @@ function virtualDocumentBlock(sourceRef: string): BoundedBlock {
   });
 }
 
+function blocksWithJsonPointers(
+  block: BoundedBlock,
+  pointersByLine: ReadonlyMap<number, string>,
+  originsByLine: ReadonlyMap<number, Readonly<{
+    readonly jsonPointer: string;
+    readonly range: TextUnitRangeV1;
+    readonly sourceRef: string;
+  }>>,
+  virtualDocument: boolean,
+  requirePointers: boolean,
+  projectId: string,
+): readonly PointerBoundedBlock[] {
+  if (virtualDocument) return Object.freeze([Object.freeze({ ...block })]);
+  const lines = block.content.split('\n');
+  const pointers = lines.map((_, index) => pointersByLine.get(block.startLine + index));
+  const origins = lines.map((_, index) => originsByLine.get(block.startLine + index));
+  if (pointers.every((pointer) => pointer === undefined)) {
+    if (requirePointers) invalid(projectId);
+    return Object.freeze([Object.freeze({ ...block })]);
+  }
+  if (pointers.some((pointer) => pointer === undefined)) invalid(projectId);
+  const result: PointerBoundedBlock[] = [];
+  let start = 0;
+  while (start < lines.length) {
+    const jsonPointer = pointers[start];
+    if (jsonPointer === undefined) invalid(projectId);
+    let end = start;
+    const origin = origins[start];
+    while (end + 1 < lines.length && pointers[end + 1] === jsonPointer &&
+        JSON.stringify(origins[end + 1] ?? null) === JSON.stringify(origin ?? null)) end += 1;
+    const contentLines = lines.slice(start, end + 1);
+    const last = contentLines.at(-1);
+    if (last === undefined) invalid(projectId);
+    result.push(Object.freeze({
+      content: contentLines.join('\n'),
+      endColumn: scalarLength(last),
+      endLine: block.startLine + end,
+      jsonPointer,
+      kind: block.kind,
+      ...(origin === undefined ? {} : {
+        origin: Object.freeze({ range: origin.range, sourceRef: origin.sourceRef }),
+      }),
+      startColumn: start === 0 ? block.startColumn : 1,
+      startLine: block.startLine + start,
+    }));
+    start = end + 1;
+  }
+  return Object.freeze(result);
+}
+
 function boundedPrefix(value: string): string {
   let result = '';
   for (const character of value) {
@@ -351,6 +419,25 @@ export function createSubstantiveHierarchyTextUnits(
     const document = documentHeading === undefined
       ? virtualDocumentBlock(source.sourceRef)
       : Object.freeze({ ...documentHeading, kind: 'document' as const });
+    const pointersByLine = new Map<number, string>();
+    const originsByLine = new Map<number, Readonly<{
+      readonly jsonPointer: string;
+      readonly range: TextUnitRangeV1;
+      readonly sourceRef: string;
+    }>>();
+    for (const origin of source.jsonOrigins ?? []) {
+      if (originsByLine.has(origin.line) || pointersByLine.has(origin.line)) invalid(projectId);
+      originsByLine.set(origin.line, origin);
+      pointersByLine.set(origin.line, origin.jsonPointer);
+    }
+    for (const pointer of source.jsonPointers ?? []) {
+      if (pointersByLine.has(pointer.line)) {
+        if (originsByLine.has(pointer.line) &&
+            pointersByLine.get(pointer.line) === pointer.jsonPointer) continue;
+        invalid(projectId);
+      }
+      pointersByLine.set(pointer.line, pointer.jsonPointer);
+    }
     const topicHeadings = headings.filter((heading) => heading.level === 2);
     const maximumHeadingUnits = Math.max(0, Math.floor((maximumPerSource - 1) / 3));
     const retainedTopicHeadings = representativeBlocks(
@@ -367,6 +454,14 @@ export function createSubstantiveHierarchyTextUnits(
     const selectedBlocks = [document, ...retainedTopicHeadings, ...substantive]
       .sort((left, right) => left.startLine - right.startLine ||
         left.startColumn - right.startColumn)
+      .flatMap((block) => blocksWithJsonPointers(
+        block,
+        pointersByLine,
+        originsByLine,
+        documentHeading === undefined && block === document,
+        source.sourceKind === 'json',
+        projectId,
+      ))
       .slice(0, maximumPerSource);
     for (let ordinal = 0; ordinal < selectedBlocks.length; ordinal += 1) {
       const block = selectedBlocks[ordinal];
@@ -374,7 +469,9 @@ export function createSubstantiveHierarchyTextUnits(
       result.push(createTextUnit({
         contentDigest: hierarchySha256(block.content),
         kind: block.kind,
+        ...(block.jsonPointer === undefined ? {} : { jsonPointer: block.jsonPointer }),
         ordinal,
+        ...(block.origin === undefined ? {} : { origin: block.origin }),
         projectId,
         range: Object.freeze({
           endColumn: block.endColumn,

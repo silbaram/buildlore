@@ -22,6 +22,7 @@ import {
   GENERIC_SOURCE_ADAPTER_ID,
   mediaTypeForGenericKind,
   P2A_SOURCE_ADAPTER_ID,
+  type SourceAdapterRegistry,
 } from './source-adapter-registry.js';
 import {
   parseRegisteredSourceKind,
@@ -47,11 +48,14 @@ const WINDOWS_DRIVE_PREFIX_PATTERN = /^[A-Za-z]:/u;
 const MARKDOWN_EXTENSION_PATTERN = /\.(?:md|markdown)$/u;
 const TEXT_EXTENSION_PATTERN = /\.(?:text|txt)$/u;
 const CODE_EXTENSION_PATTERN = /\.(?:bash|c|cc|cjs|cpp|cs|css|cxx|fish|go|h|hpp|htm|html|java|js|jsx|kt|kts|less|mjs|php|py|rb|rs|sass|scala|scss|sh|sql|svelte|swift|ts|tsx|vue|xml|zsh)$/u;
+const JSON_EXTENSION_PATTERN = /\.json$/u;
 const P2A_PLANNING_EXTENSION_PATTERN = /\.(?:json|jsonl|md|markdown)$/u;
 const CREDENTIAL_PATH_PATTERN =
   /(?:^|[/_.-])(?:api[-_]?key|authorization|bearer|credentials?|password|private[-_]?key|refresh[-_]?token|secrets?|tokens?|access[-_]?token)(?:$|[/_.-])/iu;
+const CREDENTIAL_VALUE_PATH_PATTERN =
+  /(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,255}|npm_[A-Za-z0-9]{20,255}|sk-ant-[A-Za-z0-9_-]{20,255}|sk-[A-Za-z0-9_-]{20,255}|AIza[A-Za-z0-9_-]{32,64})/u;
 
-export type SourceDocumentKind = 'code' | 'markdown' | 'p2a-planning' | 'text';
+export type SourceDocumentKind = 'code' | 'json' | 'markdown' | 'p2a-planning' | 'text';
 
 interface SourceDeclarationBase {
   readonly documentKind: SourceDocumentKind;
@@ -160,6 +164,7 @@ export interface SourceSelectionHooks {
   readonly afterDirectoryRead?: (sourceRef: string) => Promise<void> | void;
   readonly afterFileStat?: (sourceRef: string) => Promise<void> | void;
   readonly afterManifestStat?: () => Promise<void> | void;
+  readonly sourceAdapterRegistry?: SourceAdapterRegistry;
 }
 
 export interface SourceSelectionOptions extends SourceSelectionHooks {
@@ -276,7 +281,8 @@ export function validateSourceSelectionPath(value: unknown): string {
     generatedRoot === 'export' ||
     generatedRoot === 'exports' ||
     hasUnsafeCharacter(path) ||
-    CREDENTIAL_PATH_PATTERN.test(path)
+    CREDENTIAL_PATH_PATTERN.test(path) ||
+    CREDENTIAL_VALUE_PATH_PATTERN.test(path)
   ) {
     return fail('SOURCE_MANIFEST_INVALID', 'path', 'Source declaration path is unsafe.');
   }
@@ -324,7 +330,10 @@ function parseDeclaration(value: unknown): SourceDeclaration {
   return fail('SOURCE_MANIFEST_INVALID', 'pathType', 'Source declaration pathType is invalid.');
 }
 
-function parseV2Declaration(value: unknown): SourceDeclarationV2 {
+function parseV2Declaration(
+  value: unknown,
+  registry: SourceAdapterRegistry,
+): SourceDeclarationV2 {
   if (!isRecord(value)) {
     return fail('SOURCE_MANIFEST_INVALID', 'sources', 'Source declaration is invalid.');
   }
@@ -348,7 +357,7 @@ function parseV2Declaration(value: unknown): SourceDeclarationV2 {
   try {
     kind = parseRegisteredSourceKind(value.kind);
     metadata = value.metadata === undefined ? undefined : parseSourceMetadata(value.metadata);
-    createBuiltInSourceAdapterRegistry().resolve({
+    registry.resolve({
       adapterId: requireString(value.adapterId, 'manifest'),
       adapterVersion: typeof value.adapterVersion === 'number' ? value.adapterVersion : 0,
       kind,
@@ -422,7 +431,10 @@ export function parseSourceCollectionManifest(value: unknown): SourceCollectionM
   });
 }
 
-export function parseSourceCollectionManifestV2(value: unknown): SourceCollectionManifestV2 {
+export function parseSourceCollectionManifestV2(
+  value: unknown,
+  registry: SourceAdapterRegistry = createBuiltInSourceAdapterRegistry(),
+): SourceCollectionManifestV2 {
   if (!isRecord(value)) {
     return fail('SOURCE_MANIFEST_INVALID', 'manifest', 'Source manifest is invalid.');
   }
@@ -451,7 +463,7 @@ export function parseSourceCollectionManifestV2(value: unknown): SourceCollectio
   if (!Array.isArray(value.sources) || value.sources.length > MAX_SOURCE_DECLARATIONS) {
     return fail('SOURCE_MANIFEST_INVALID', 'sources', 'Source declarations are out of bounds.');
   }
-  const sources = value.sources.map(parseV2Declaration);
+  const sources = value.sources.map((source) => parseV2Declaration(source, registry));
   const ids = new Set<string>();
   for (const source of sources) {
     if (ids.has(source.id)) {
@@ -469,9 +481,12 @@ export function parseSourceCollectionManifestV2(value: unknown): SourceCollectio
   });
 }
 
-export function parseAnySourceCollectionManifest(value: unknown): SourceCollectionManifest {
+export function parseAnySourceCollectionManifest(
+  value: unknown,
+  registry: SourceAdapterRegistry = createBuiltInSourceAdapterRegistry(),
+): SourceCollectionManifest {
   if (isRecord(value) && value.schemaVersion === SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION) {
-    return parseSourceCollectionManifestV2(value);
+    return parseSourceCollectionManifestV2(value, registry);
   }
   return parseSourceCollectionManifest(value);
 }
@@ -645,7 +660,10 @@ export async function readSourceCollectionManifest(
   let manifest: SourceCollectionManifest;
   try {
     decoded = decodeUtf8Strict(bytes);
-    manifest = parseAnySourceCollectionManifest(parseJsonStrict(decoded));
+    manifest = parseAnySourceCollectionManifest(
+      parseJsonStrict(decoded),
+      hooks.sourceAdapterRegistry ?? createBuiltInSourceAdapterRegistry(),
+    );
   } catch (error) {
     if (error instanceof SourceSelectionError) throw error;
     return fail('SOURCE_MANIFEST_INVALID', 'manifest', 'Source manifest JSON is invalid.');
@@ -715,6 +733,8 @@ function matchesDocumentKind(documentKind: SourceDocumentKind, sourceRef: string
       return TEXT_EXTENSION_PATTERN.test(sourceRef);
     case 'p2a-planning':
       return !isExecutionSelectionPath(sourceRef) && P2A_PLANNING_EXTENSION_PATTERN.test(sourceRef);
+    case 'json':
+      return JSON_EXTENSION_PATTERN.test(sourceRef);
   }
 }
 
@@ -722,6 +742,9 @@ export function sourceDeclarationDocumentKind(
   declaration: AnySourceDeclaration,
 ): SourceDocumentKind {
   if ('documentKind' in declaration) return declaration.documentKind;
+  if (
+    declaration.kind === 'json'
+  ) return 'json';
   if (
     declaration.adapterId === P2A_SOURCE_ADAPTER_ID &&
     declaration.adapterVersion === 1 &&
@@ -762,6 +785,7 @@ export function sourceDeclarationMediaType(
   if (kind === 'execution') {
     return fail('SOURCE_KIND_UNSUPPORTED', 'manifest', 'Execution sources use P2A root discovery.');
   }
+  if (kind === 'json') return 'application/json';
   return mediaTypeForGenericKind(kind);
 }
 
@@ -785,8 +809,9 @@ function assertSelectionPath(sourceRef: string, maximumDepth: number): void {
 function assertManifestBinding(
   checkout: SourceCheckoutHandle,
   loaded: LoadedSourceCollectionManifest,
+  registry: SourceAdapterRegistry,
 ): SourceCollectionManifest {
-  const manifest = parseAnySourceCollectionManifest(loaded.manifest);
+  const manifest = parseAnySourceCollectionManifest(loaded.manifest, registry);
   if (
     sha256(serializeCanonicalJson(manifest)) !== loaded.manifestDigest
   ) {
@@ -904,7 +929,11 @@ export async function selectDeclaredSourceFiles(
   loaded: LoadedSourceCollectionManifest,
   options: SourceSelectionOptions = {},
 ): Promise<SourceSelectionInventory> {
-  const manifest = assertManifestBinding(checkout, loaded);
+  const manifest = assertManifestBinding(
+    checkout,
+    loaded,
+    options.sourceAdapterRegistry ?? createBuiltInSourceAdapterRegistry(),
+  );
   const root = await canonicalCheckoutRoot(checkout);
   const limits = selectionLimits(options.limits);
   const files: SelectedSourceFile[] = [];

@@ -14,6 +14,7 @@ import {
   createSourceCollectionAdapter,
   type CollectionCandidate,
 } from '../../projector/collection-adapters.js';
+import type { RegisteredJsonKnowledgeAdapterV1 } from '../../projector/json-knowledge-adapter.js';
 import {
   readSelectedSourceBytes,
   readSourceCollectionManifest,
@@ -28,6 +29,11 @@ import {
 } from '../../projector/source-document.js';
 import { isCollectableProjectSourceKind } from '../../projector/project-source-writer.js';
 import { sourceRetrievalMeaningFromDescriptor } from '../../projector/source-contracts.js';
+import {
+  boundRawSourceInputsAreSafe,
+  inspectRawSourceInputs,
+  rawSourceInputSanitizationIsSafe,
+} from '../../projector/raw-source-inputs.js';
 import { consumePreparedSource } from '../../sanitizer/approval.js';
 import {
   createProjectSecurityService,
@@ -76,6 +82,7 @@ export interface SessionCompilePlanner {
 
 export interface CreateSessionCompilePlannerOptions {
   readonly hubRoot: string;
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly knowledgeRoot: string;
   /** @internal Verification seam for phase ordering. */
   readonly onPhase?: (phase: SessionCompilePlannerPhase) => void;
@@ -104,7 +111,7 @@ function denied(
 async function sanitizeCandidateText(
   candidate: CollectionCandidate,
   body: string,
-  sourceKind: Extract<SecuritySourceKind, 'code' | 'markdown' | 'planning' | 'text'>,
+  sourceKind: Extract<SecuritySourceKind, 'code' | 'json' | 'markdown' | 'planning' | 'text'>,
   security: ReturnType<typeof createProjectSecurityService>,
   policy: LoadedSecurityPolicy,
   projectId: string,
@@ -208,6 +215,9 @@ async function assertStoredSource(
       ...(candidate.originMappings === undefined
         ? {}
         : { originMappings: candidate.originMappings }),
+      ...(candidate.jsonOrigins === undefined
+        ? {}
+        : { jsonOrigins: candidate.jsonOrigins }),
       producer: candidate.producer,
       projectId,
       source: candidate.sourceUri,
@@ -262,7 +272,10 @@ async function buildPlannedSources(input: {
     }
     const file = input.files.get(candidate.sourceRef);
     if (file === undefined || file.contentDigest !== candidate.contentDigest ||
-        file.contentDigest !== candidate.sourceRevision) return denied(input.projectId);
+        (candidate.descriptor?.schemaVersion === 'buildlore.source-descriptor.v2'
+          ? !candidate.descriptor.inputBindings.some((binding) =>
+              binding.sourceRef === file.sourceRef && binding.contentHash === file.contentDigest)
+          : file.contentDigest !== candidate.sourceRevision)) return denied(input.projectId);
     input.onPhase?.('source-bound');
     const approvedTitle = await sanitizeCandidateText(
       candidate,
@@ -280,6 +293,31 @@ async function buildPlannedSources(input: {
       input.policy,
       input.projectId,
     );
+    for (const rawInput of inspectRawSourceInputs(candidate)) {
+      const rawBodyDigest = sessionSha256(rawInput.body);
+      const rawResult = await input.security.prepareSource({
+        body: rawInput.body,
+        bodyDigest: rawBodyDigest,
+        projectId: input.projectId,
+        source: candidate.sourceUri,
+        sourceKind: candidate.sourceKind,
+        sourceRevisionOrContentSha256: candidate.sourceRevision,
+      });
+      const rawPrepared = rawResult.ok ? consumePreparedSource(rawResult.prepared) : null;
+      if (!rawResult.ok || rawPrepared === null ||
+          rawPrepared.inputBodyDigest !== rawBodyDigest ||
+          rawPrepared.approvedBodyDigest !== rawResult.report.outputDigest ||
+          rawPrepared.policyDigest !== input.policy.digest ||
+          rawPrepared.projectId !== input.projectId ||
+          rawPrepared.source !== candidate.sourceUri ||
+          rawPrepared.sourceKind !== candidate.sourceKind ||
+          rawPrepared.sourceRevisionOrContentSha256 !== candidate.sourceRevision ||
+          !rawSourceInputSanitizationIsSafe(
+            rawInput,
+            rawPrepared.approvedBody,
+            rawResult.report.summaries,
+          )) return denied(input.projectId);
+    }
     input.onPhase?.('source-sanitized');
     const storedSource = await assertStoredSource(
       input.workspace,
@@ -298,6 +336,9 @@ async function buildPlannedSources(input: {
         ...(candidate.originMappings === undefined
           ? {}
           : { originMappings: candidate.originMappings }),
+        ...(candidate.jsonOrigins === undefined
+          ? {}
+          : { jsonOrigins: candidate.jsonOrigins }),
         sanitizedBody: storedSource.body,
         sourceId: id,
         sourceRef: candidate.sourceRef,
@@ -354,7 +395,9 @@ export function createSessionCompilePlanner(
         const workspace = await resolveProjectWorkspace(options.knowledgeRoot, projectId, {
           mustExist: true,
         });
-        const profile = await resolveRegisteredProfileBinding(options.knowledgeRoot, projectId);
+        const profile = await resolveRegisteredProfileBinding(options.knowledgeRoot, projectId, {
+          registrations: options.jsonKnowledgeAdapters ?? [],
+        });
         if (resolve(options.knowledgeRoot, record.workspacePath) !== workspace ||
             profile.workspace !== workspace) {
           return denied(projectId);
@@ -366,26 +409,44 @@ export function createSessionCompilePlanner(
           record.entry.sourceRepository,
         );
         options.onPhase?.('binding-resolved');
-        const loadedManifest = await readSourceCollectionManifest(binding.checkout, projectId);
+        const loadedManifest = await readSourceCollectionManifest(binding.checkout, projectId, {
+          sourceAdapterRegistry: profile.sourceAdapters,
+        });
         const inventory = await selectDeclaredSourceFiles(binding.checkout, loadedManifest, {
           limits: {
             maxAggregateBytes: SESSION_COMPILE_LIMITS.maxPlanBytes,
             maxFileBytes: SESSION_COMPILE_LIMITS.maxSourceBytes,
             maxFileCount: SESSION_COMPILE_LIMITS.maxSources,
           },
+          sourceAdapterRegistry: profile.sourceAdapters,
         });
-        const collection = await createSourceCollectionAdapter().collect({
+        const collection = await createSourceCollectionAdapter({
+          ...(options.jsonKnowledgeAdapters === undefined
+            ? {}
+            : { jsonKnowledgeAdapters: options.jsonKnowledgeAdapters }),
+        }).collect({
           checkout: binding.checkout,
           ingestedAt: FIXED_COLLECTION_TIMESTAMP,
           inventory,
           loadedManifest,
           sourceAdapterRegistry: profile.sourceAdapters,
         });
-        if (collection.notices.length > 0) return denied(projectId);
+        if (collection.notices.length > 0 || collection.entries.some((entry) =>
+          entry.decision === 'blocked' || entry.decision === 'error' ||
+          entry.decision === 'quarantine')) return denied(projectId);
         options.onPhase?.('sources-collected');
         const policy = await readSecurityPolicy(options.knowledgeRoot, projectId);
         if (policy.workspace !== workspace) return denied(projectId);
         options.onPhase?.('policy-resolved');
+        const security = createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot });
+        if (!await boundRawSourceInputsAreSafe(collection, {
+          policyDigest: policy.digest,
+          projectId,
+          security,
+          source: `buildlore://project/${projectId}/selected-json-inputs`,
+          sourceKind: 'json',
+          sourceRevision: loadedManifest.manifestDigest,
+        })) return denied(projectId);
         const sources = await buildPlannedSources({
           candidates: collection.candidates,
           checkout: binding.checkout,
@@ -393,7 +454,7 @@ export function createSessionCompilePlanner(
           ...(options.onPhase === undefined ? {} : { onPhase: options.onPhase }),
           policy,
           projectId,
-          security: createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot }),
+          security,
           workspace,
         });
         options.onPhase?.('sources-verified');
@@ -402,12 +463,14 @@ export function createSessionCompilePlanner(
           options.knowledgeRoot,
           workspace,
           egressRequest,
+          options.jsonKnowledgeAdapters ?? [],
         );
         await verifyAndConsumeCompilerEgress(
           permit,
           options.knowledgeRoot,
           workspace,
           egressRequest,
+          options.jsonKnowledgeAdapters ?? [],
         );
         options.onPhase?.('egress-authorized');
         const knowledge = await readSessionKnowledgeInventory(workspace, projectId);
@@ -415,6 +478,7 @@ export function createSessionCompilePlanner(
         const freshProfile = await resolveRegisteredProfileBinding(
           options.knowledgeRoot,
           projectId,
+          { registrations: options.jsonKnowledgeAdapters ?? [] },
         );
         if (freshProfile.workspace !== profile.workspace ||
             freshProfile.bindingDigest !== profile.bindingDigest) {

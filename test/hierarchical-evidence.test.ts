@@ -85,6 +85,11 @@ function fixture(
   contents: readonly string[] = CONTENT,
   largeWritingBrief = false,
   splitEvidenceLines = false,
+  firstEvidenceOrigin?: Readonly<{
+    jsonPointer: string;
+    range: Readonly<{ endColumn: number; endLine: number; startColumn: number; startLine: number }>;
+    sourceRef: string;
+  }>,
 ): EvidenceFixture {
   const longItems = (label: string, count: number): readonly string[] => Object.freeze(
     Array.from({ length: count }, (_, index) =>
@@ -109,7 +114,9 @@ function fixture(
     const sourceId = `source-${hierarchySha256(`source-${String(index)}`)
       .slice('sha256:'.length)}`;
     const sourceRevision = hierarchySha256(`revision-${String(index)}`);
-    const sourceRef = `docs/source-${String(index)}.md`;
+    const sourceRef = index === 0 && firstEvidenceOrigin !== undefined
+      ? 'adapter/combined.json'
+      : `docs/source-${String(index)}.md`;
     const sanitizedContentDigest = hierarchySha256(sanitizedContent);
     sources.push(Object.freeze({
       sourceId,
@@ -124,7 +131,7 @@ function fixture(
         projectId: PROJECT_ID,
         rulesVersion: SANITIZER_RULES_VERSION,
         source: sourceRef,
-        sourceKind: 'markdown',
+        sourceKind: index === 0 && firstEvidenceOrigin !== undefined ? 'json' : 'markdown',
         sourceRevisionOrContentSha256: sourceRevision,
         untrustedData,
       }),
@@ -174,6 +181,15 @@ function fixture(
         sourceRef,
         kind: index === 2 ? 'fenced-code' : 'paragraph',
         ordinal: segmentIndex + 1,
+        ...(index === 0 && segmentIndex === 0 && firstEvidenceOrigin !== undefined
+          ? {
+              jsonPointer: firstEvidenceOrigin.jsonPointer,
+              origin: {
+                range: firstEvidenceOrigin.range,
+                sourceRef: firstEvidenceOrigin.sourceRef,
+              },
+            }
+          : {}),
         range: {
           startLine: segment.startLine,
           startColumn: 1,
@@ -503,6 +519,52 @@ function resignGenerationProposal(
 }
 
 describe('bounded hierarchical evidence exchange', () => {
+  it('cites a multi-input JSON evidence unit at its actual raw file and range', () => {
+    const rawRange = Object.freeze({
+      endColumn: 32,
+      endLine: 4,
+      startColumn: 17,
+      startLine: 4,
+    });
+    const value = fixture(
+      hierarchySha256('sanitizer'),
+      false,
+      'internal',
+      'Explain exact JSON provenance',
+      [
+        '# Attempts\nChanged: src/projector/json-source-adapter.ts',
+        '# Context\nMaintenance context remains available.',
+      ],
+      false,
+      false,
+      {
+        jsonPointer: '/changedFiles/0',
+        range: rawRange,
+        sourceRef: 'runs/attempt-b.json',
+      },
+    );
+    const blueprint = value.outline.blueprints.find((candidate) =>
+      candidate.evidenceScope.sourceIds.includes(value.sources[0]!.sourceId));
+    if (blueprint === undefined) throw new Error('Expected JSON evidence blueprint.');
+    const selectedUnit = value.snapshot.textUnits.find((candidate) =>
+      candidate.ordinal >= 1 && candidate.sourceId === value.sources[0]!.sourceId);
+    if (selectedUnit === undefined) throw new Error('Expected JSON evidence unit.');
+    const pack = createEvidencePack({
+      blueprint,
+      conflicts: [],
+      gaps: [],
+      selectedUnitIds: [selectedUnit.unitId],
+      snapshot: value.snapshot,
+      sources: value.sources,
+    }, PROJECT_ID);
+    expect(pack.units).toHaveLength(1);
+    expect(pack.units[0]?.citation).toMatchObject({
+      jsonPointer: '/changedFiles/0',
+      range: rawRange,
+      sourceRef: 'runs/attempt-b.json',
+    });
+  });
+
   it('deterministically reports evidence removed to keep an exchange within 512 KiB', async () => {
     const contents = Object.freeze([
       '# Primary\nSmall primary evidence remains available after byte truncation.',

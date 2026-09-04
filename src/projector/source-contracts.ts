@@ -6,6 +6,7 @@ import { ProjectionError } from './errors.js';
 import { unicodeScalarLength } from './text-units.js';
 
 export const SOURCE_DESCRIPTOR_SCHEMA_VERSION = 'buildlore.source-descriptor.v1' as const;
+export const SOURCE_DESCRIPTOR_V2_SCHEMA_VERSION = 'buildlore.source-descriptor.v2' as const;
 export const SOURCE_RETRIEVAL_MEANING_SCHEMA_VERSION =
   'buildlore.source-retrieval-meaning.v1' as const;
 export const SOURCE_ADAPTER_REGISTRATION_VERSION = 1 as const;
@@ -14,7 +15,7 @@ export const MAX_SOURCE_METADATA_DEPTH = 8;
 export const MAX_SOURCE_METADATA_KEYS = 64;
 
 export type GenericSourceKind = 'code' | 'markdown' | 'text';
-export type RegisteredSourceKind = GenericSourceKind | 'execution' | 'planning';
+export type RegisteredSourceKind = GenericSourceKind | 'execution' | 'json' | 'planning';
 export type RegisteredMediaType =
   | 'application/json'
   | 'application/x-ndjson'
@@ -85,6 +86,39 @@ export interface SourceDescriptorV1 {
   readonly sourceUri: string;
 }
 
+export interface SourceInputBindingV1 {
+  readonly contentHash: `sha256:${string}`;
+  readonly sourceRef: string;
+}
+
+export interface SourceProfileBindingV1 {
+  readonly contentDigest: `sha256:${string}`;
+  readonly id: string;
+  readonly schemaVersion: string;
+}
+
+export interface SourceDescriptorV2 {
+  readonly adapterConfigDigest?: `sha256:${string}`;
+  readonly adapterRegistrationDigest?: `sha256:${string}`;
+  readonly adapterId: string;
+  readonly adapterVersion: number;
+  readonly contentHash: `sha256:${string}`;
+  readonly declarationId: string;
+  readonly inputBindings: readonly SourceInputBindingV1[];
+  readonly kind: RegisteredSourceKind;
+  readonly mediaType: RegisteredMediaType;
+  readonly metadata?: SourceMetadataV1;
+  readonly profileBinding?: SourceProfileBindingV1;
+  readonly projectId: string;
+  readonly projectionRevision: `sha256:${string}`;
+  readonly schemaVersion: typeof SOURCE_DESCRIPTOR_V2_SCHEMA_VERSION;
+  readonly sourceRef: string;
+  readonly sourceRevision: `sha256:${string}`;
+  readonly sourceUri: string;
+}
+
+export type SourceDescriptor = SourceDescriptorV1 | SourceDescriptorV2;
+
 export interface SourceOriginRangeV1 {
   readonly endColumn: number;
   readonly endLine: number;
@@ -95,6 +129,18 @@ export interface SourceOriginRangeV1 {
 export interface SourceRangeMappingV1 {
   readonly canonical: SourceOriginRangeV1;
   readonly origin: SourceOriginRangeV1;
+}
+
+export interface SourceJsonOriginV1 {
+  readonly contentHash: `sha256:${string}`;
+  readonly jsonPointer: string;
+  readonly range: SourceOriginRangeV1;
+  readonly sourceRef: string;
+}
+
+export interface SourceJsonOriginMappingV1 {
+  readonly canonical: SourceOriginRangeV1;
+  readonly origin: SourceJsonOriginV1;
 }
 
 export interface SourceAdapterKindRegistrationV1 {
@@ -130,6 +176,7 @@ const MEDIA_TYPES = new Set<RegisteredMediaType>([
 const REGISTERED_KINDS = new Set<RegisteredSourceKind>([
   'code',
   'execution',
+  'json',
   'markdown',
   'planning',
   'text',
@@ -375,7 +422,7 @@ export function neutralSourceRetrievalMeaning(): SourceRetrievalMeaningV1 {
 }
 
 export function sourceRetrievalMeaningFromDescriptor(
-  descriptor: SourceDescriptorV1 | undefined,
+  descriptor: SourceDescriptor | undefined,
 ): BoundSourceRetrievalMeaningV1 {
   const raw = descriptor?.metadata?.values.retrievalMeaning;
   if (raw === undefined) {
@@ -459,9 +506,50 @@ export function parseRegisteredMediaType(value: unknown): RegisteredMediaType {
   return value as RegisteredMediaType;
 }
 
-export function parseSourceDescriptor(value: unknown): SourceDescriptorV1 {
+function parseInputBindings(value: unknown): readonly SourceInputBindingV1[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 128) {
+    return fail('Source descriptor input bindings are invalid.');
+  }
+  const result = value.map((entry) => {
+    if (!isRecord(entry)) return fail('Source descriptor input binding is invalid.');
+    exactKeys(entry, ['contentHash', 'sourceRef']);
+    return Object.freeze({
+      contentHash: digest(entry.contentHash),
+      sourceRef: validatePortableSourceRef(entry.sourceRef),
+    });
+  });
+  const identities = result.map((entry) => `${entry.sourceRef}\u0000${entry.contentHash}`);
+  if (
+    new Set(result.map((entry) => entry.sourceRef)).size !== result.length ||
+    identities.some((identity, index) => index > 0 && identity <= (identities[index - 1] ?? ''))
+  ) return fail('Source descriptor input bindings are invalid.');
+  return Object.freeze(result);
+}
+
+function parseProfileBinding(value: unknown): SourceProfileBindingV1 {
+  if (!isRecord(value)) return fail('Source descriptor profile binding is invalid.');
+  exactKeys(value, ['contentDigest', 'id', 'schemaVersion']);
+  return Object.freeze({
+    contentDigest: digest(value.contentDigest),
+    id: boundedIdentifier(value.id, ADAPTER_ID_PATTERN, 128),
+    schemaVersion: boundedIdentifier(value.schemaVersion, ADAPTER_ID_PATTERN, 128),
+  });
+}
+
+export function validateJsonPointer(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    unicodeScalarLength(value) > 1024 ||
+    (value !== '' && !value.startsWith('/')) ||
+    /~(?![01])/u.test(value) ||
+    hasUnsafeCharacter(value)
+  ) return fail('JSON Pointer is invalid.');
+  return value;
+}
+
+export function parseSourceDescriptor(value: unknown): SourceDescriptor {
   if (!isRecord(value)) return fail('Source descriptor is invalid.');
-  exactKeys(value, [
+  const commonKeys = [
     'adapterId',
     'adapterVersion',
     'contentHash',
@@ -473,8 +561,18 @@ export function parseSourceDescriptor(value: unknown): SourceDescriptorV1 {
     'sourceRef',
     'sourceRevision',
     'sourceUri',
-  ], ['metadata']);
-  if (value.schemaVersion !== SOURCE_DESCRIPTOR_SCHEMA_VERSION) {
+  ];
+  const isV2 = value.schemaVersion === SOURCE_DESCRIPTOR_V2_SCHEMA_VERSION;
+  exactKeys(
+    value,
+    isV2
+      ? [...commonKeys, 'inputBindings', 'projectionRevision']
+      : commonKeys,
+    isV2
+      ? ['adapterConfigDigest', 'adapterRegistrationDigest', 'metadata', 'profileBinding']
+      : ['metadata'],
+  );
+  if (value.schemaVersion !== SOURCE_DESCRIPTOR_SCHEMA_VERSION && !isV2) {
     return fail('Source descriptor schema is unsupported.');
   }
   let projectId: string;
@@ -488,7 +586,7 @@ export function parseSourceDescriptor(value: unknown): SourceDescriptorV1 {
   if (typeof value.sourceUri !== 'string' || !SAFE_SOURCE_URI_PATTERN.test(value.sourceUri)) {
     return fail('Source descriptor URI is invalid.');
   }
-  return Object.freeze({
+  const common = {
     adapterId: boundedIdentifier(value.adapterId, ADAPTER_ID_PATTERN, 128),
     adapterVersion: value.adapterVersion === SOURCE_ADAPTER_REGISTRATION_VERSION
       ? SOURCE_ADAPTER_REGISTRATION_VERSION
@@ -499,10 +597,35 @@ export function parseSourceDescriptor(value: unknown): SourceDescriptorV1 {
     mediaType: parseRegisteredMediaType(value.mediaType),
     ...(value.metadata === undefined ? {} : { metadata: parseSourceMetadata(value.metadata) }),
     projectId,
-    schemaVersion: SOURCE_DESCRIPTOR_SCHEMA_VERSION,
     sourceRef: validatePortableSourceRef(value.sourceRef),
     sourceRevision: digest(value.sourceRevision),
     sourceUri: value.sourceUri,
+  };
+  if (!isV2) {
+    return Object.freeze({
+      ...common,
+      schemaVersion: SOURCE_DESCRIPTOR_SCHEMA_VERSION,
+    });
+  }
+  const inputBindings = parseInputBindings(value.inputBindings);
+  if (
+    !inputBindings.some((entry) =>
+      entry.sourceRef === common.sourceRef && entry.contentHash === common.contentHash)
+  ) return fail('Source descriptor input binding is invalid.');
+  return Object.freeze({
+    ...common,
+    ...(value.adapterConfigDigest === undefined
+      ? {}
+      : { adapterConfigDigest: digest(value.adapterConfigDigest) }),
+    ...(value.adapterRegistrationDigest === undefined
+      ? {}
+      : { adapterRegistrationDigest: digest(value.adapterRegistrationDigest) }),
+    inputBindings,
+    ...(value.profileBinding === undefined
+      ? {}
+      : { profileBinding: parseProfileBinding(value.profileBinding) }),
+    projectionRevision: digest(value.projectionRevision),
+    schemaVersion: SOURCE_DESCRIPTOR_V2_SCHEMA_VERSION,
   });
 }
 

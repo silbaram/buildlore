@@ -5,6 +5,7 @@ import { validateProjectId } from '../../knowledge/validation.js';
 import {
   neutralSourceRetrievalMeaning,
   parseSourceRetrievalMeaning,
+  validateJsonPointer,
   validatePortableSourceRef,
   validateSourceRetrievalSupersessionGraph,
   type SourceRetrievalMeaningOrigin,
@@ -393,7 +394,9 @@ function textUnitWithoutId(unit: Omit<TextUnitV1, 'unitId'>): Readonly<Record<st
     sourceRevision: unit.sourceRevision,
     sourceRef: unit.sourceRef,
     kind: unit.kind,
+    ...(unit.jsonPointer === undefined ? {} : { jsonPointer: unit.jsonPointer }),
     ordinal: unit.ordinal,
+    ...(unit.origin === undefined ? {} : { origin: unit.origin }),
     range: unit.range,
     contentDigest: unit.contentDigest,
     topicLabel: unit.topicLabel,
@@ -419,7 +422,20 @@ export function createTextUnit(input: TextUnitInput): TextUnitV1 {
     sourceRevision: input.sourceRevision,
     sourceRef: input.sourceRef,
     kind: input.kind,
+    ...(input.jsonPointer === undefined ? {} : { jsonPointer: input.jsonPointer }),
     ordinal: input.ordinal,
+    ...(input.origin === undefined ? {} : {
+      origin: Object.freeze({
+        range: parseTextUnitRange(input.origin.range, input.projectId),
+        sourceRef: (() => {
+          try {
+            return validatePortableSourceRef(input.origin.sourceRef);
+          } catch {
+            return invalid(input.projectId);
+          }
+        })(),
+      }),
+    }),
     range: canonicalRange,
     contentDigest: input.contentDigest,
     topicLabel,
@@ -437,6 +453,7 @@ export function parseTextUnit(value: unknown, expectedProjectId: string): TextUn
     'contentDigest',
     'kind',
     'ordinal',
+    ...(Object.hasOwn(unit, 'origin') ? ['origin'] : []),
     'projectId',
     'range',
     'schemaVersion',
@@ -445,6 +462,7 @@ export function parseTextUnit(value: unknown, expectedProjectId: string): TextUn
     'sourceRevision',
     'topicLabel',
     'unitId',
+    ...(Object.hasOwn(unit, 'jsonPointer') ? ['jsonPointer'] : []),
   ], projectId);
   if (
     unit.schemaVersion !== TEXT_UNIT_SCHEMA_VERSION ||
@@ -467,8 +485,27 @@ export function parseTextUnit(value: unknown, expectedProjectId: string): TextUn
     sourceRevision: digest(unit.sourceRevision, projectId),
     sourceRef,
     kind: unit.kind as TextUnitKind,
+    ...(unit.jsonPointer === undefined
+      ? {}
+      : { jsonPointer: validateJsonPointer(unit.jsonPointer) }),
     ordinal: safeInteger(unit.ordinal, projectId, 0,
       HIERARCHICAL_COMPILATION_LIMITS.maxTasks - 1),
+    ...(unit.origin === undefined ? {} : {
+      origin: (() => {
+        const origin = record(unit.origin, projectId);
+        exactKeys(origin, ['range', 'sourceRef'], projectId);
+        let originSourceRef: string;
+        try {
+          originSourceRef = validatePortableSourceRef(origin.sourceRef);
+        } catch {
+          return invalid(projectId);
+        }
+        return Object.freeze({
+          range: parseTextUnitRange(origin.range, projectId),
+          sourceRef: originSourceRef,
+        });
+      })(),
+    }),
     range: parseTextUnitRange(unit.range, projectId),
     contentDigest: digest(unit.contentDigest, projectId),
     topicLabel: unit.topicLabel === null

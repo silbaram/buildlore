@@ -24,6 +24,7 @@ import {
 import { isNodeError } from '../../knowledge/errors.js';
 import { resolveProjectWorkspace } from '../../knowledge/paths.js';
 import { decodeUtf8Strict, parseJsonStrict } from '../../knowledge/strict-json.js';
+import { validateJsonPointer } from '../../projector/source-contracts.js';
 import { parseEmbeddingIdentityV2 } from '../embedding/profile.js';
 import type { ApprovedWikiMeaningSignalV1 } from '../hierarchical.js';
 import {
@@ -587,11 +588,25 @@ function parseChunk(value: unknown, expectedProjectId: string, rowOrdinal: numbe
     return fail('SEMANTIC_INDEX_INCOMPATIBLE', 'artifact-invalid');
   }
   const citations = value.citationLocators.map((item) => {
-    if (!isRecord(item) || !exactKeys(item, ['citationId', 'sourceId']) ||
+    if (!isRecord(item) || !exactKeys(item, [
+      'citationId', 'sourceId', ...(Object.hasOwn(item, 'jsonPointer') ? ['jsonPointer'] : []),
+    ]) ||
         !safeId(item.citationId) || !safeId(item.sourceId)) {
       return fail('SEMANTIC_INDEX_INCOMPATIBLE', 'artifact-invalid');
     }
-    return Object.freeze({ citationId: item.citationId, sourceId: item.sourceId });
+    let jsonPointer: string | undefined;
+    try {
+      jsonPointer = item.jsonPointer === undefined
+        ? undefined
+        : validateJsonPointer(item.jsonPointer);
+    } catch {
+      return fail('SEMANTIC_INDEX_INCOMPATIBLE', 'artifact-invalid');
+    }
+    return Object.freeze({
+      citationId: item.citationId,
+      ...(jsonPointer === undefined ? {} : { jsonPointer }),
+      sourceId: item.sourceId,
+    });
   });
   if (new Set(citations.map((item) => `${item.citationId}\u0000${item.sourceId}`)).size !==
       citations.length) fail('SEMANTIC_INDEX_INCOMPATIBLE', 'artifact-invalid');

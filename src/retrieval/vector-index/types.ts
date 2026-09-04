@@ -48,6 +48,7 @@ export interface SemanticChunkerIdentityV1 {
 
 export interface RetrievalChunkCitationLocatorV1 {
   readonly citationId: string;
+  readonly jsonPointer?: string;
   readonly sourceId: string;
 }
 

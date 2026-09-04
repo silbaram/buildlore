@@ -675,7 +675,7 @@ function validateSourceOptions(
     typeof id !== 'string' ||
     id.length > 64 ||
     !PROJECT_ID_PATTERN.test(id) ||
-    (kind !== 'code' && kind !== 'markdown' && kind !== 'text') ||
+    (kind !== 'code' && kind !== 'json' && kind !== 'markdown' && kind !== 'text') ||
     typeof path !== 'string'
   ) throw new CliUsageError('CLI_ARGUMENT_INVALID');
   try {

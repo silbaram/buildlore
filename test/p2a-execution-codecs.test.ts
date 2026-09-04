@@ -70,7 +70,7 @@ function run(overrides: Readonly<Record<string, unknown>> = {}): Record<string, 
     startedAt: '2026-08-20T01:00:00.000Z',
     status: 'finished',
     taskContractSha256: TASK_CONTRACT,
-    taskGraphRef: '/private/stale/task-graph.json',
+    taskGraphRef: 'iterations/v5-execution-knowledge-projector/gate-c-task-graph/task-graph.json',
     taskId: 'task-001',
     taskTitle: 'Untrusted run title',
     updatedAt: '2026-08-20T01:01:00.000Z',
@@ -103,7 +103,7 @@ function runIndex(overrides: Readonly<Record<string, unknown>> = {}): Record<str
       runRef: 'v5-execution-knowledge-projector/run-2026-08-20T01-00-00-000Z-task-001.json',
       startedAt: '2026-08-20T01:00:00.000Z',
       status: 'finished',
-      taskGraphRef: '/private/stale/task-graph.json',
+      taskGraphRef: 'iterations/v5-execution-knowledge-projector/gate-c-task-graph/task-graph.json',
       taskId: 'task-001',
       workspaceRef: '/private/workspace',
     }],
@@ -123,9 +123,11 @@ describe('P2A execution codecs', () => {
     expect(taskContractSha256({ ...TASK, status: 'todo' })).toBe(TASK_CONTRACT);
     expect(taskContractSha256({ ...TASK, status: 'blocked', blockReason: 'other' }))
       .toBe(TASK_CONTRACT);
+    expect(taskContractSha256({ ...TASK, intent: 'Mutable execution intent.' }))
+      .toBe(TASK_CONTRACT);
   });
 
-  it('decodes p2a.run.v2 into a bounded safe model without raw trace paths', () => {
+  it('decodes p2a.run.v2 into a bounded model without raw trace output', () => {
     const result = decodeP2aRun(run({
       changedFiles: ['src/projector/execution-types.ts', '문서/실행-기록.md'],
       reproduction: {
@@ -143,9 +145,11 @@ describe('P2A execution codecs', () => {
       taskContractSha256: TASK_CONTRACT,
       taskId: 'task-001',
       verification: [expect.objectContaining({ command: 'npm test', status: 'passed' })],
+      workspaceRef: '/private/workspace',
     });
     expect(JSON.stringify(result.value)).not.toContain('RAW-STD');
-    expect(JSON.stringify(result.value)).not.toContain('/private/');
+    expect(result.value).not.toHaveProperty('workspacePath');
+    expect(JSON.stringify(result.value)).not.toContain('reproduction-script');
   });
 
   it.each([
@@ -159,7 +163,7 @@ describe('P2A execution codecs', () => {
   });
 
   it('quarantines unsupported layouts, invalid timestamps and project mismatches', () => {
-    expect(decodeP2aRun(run({ sourceLayout: 'maintenance' }), 'buildlore'))
+    expect(decodeP2aRun(run({ sourceLayout: 'server' }), 'buildlore'))
       .toEqual({ ok: false, reasonCode: 'unsupported_layout' });
     expect(decodeP2aRun(run({ status: 'done' }), 'buildlore'))
       .toEqual({ ok: false, reasonCode: 'malformed_status' });
@@ -179,6 +183,47 @@ describe('P2A execution codecs', () => {
       .toEqual({ ok: false, reasonCode: 'project_mismatch' });
     expect(decodeP2aRun(run({ sourceSpecRef: '../gate-b-spec/spec.json\nprivate' }), 'buildlore'))
       .toEqual({ ok: false, reasonCode: 'path_unsafe' });
+  });
+
+  it('decodes the current maintenance layout without an execution envelope', () => {
+    const maintenance = run({
+      executionEnvelope: undefined,
+      executionEnvelopeSha256: undefined,
+      iterationId: 'maintenance',
+      sourceLayout: 'maintenance',
+      sourceSpecRef: '../../../current-spec.json',
+      taskGraphRef: 'iterations/maintenance/gate-c-task-graph/task-graph.json',
+    });
+    delete maintenance.executionEnvelope;
+    delete maintenance.executionEnvelopeSha256;
+    const decoded = decodeP2aRun(maintenance, 'buildlore');
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) throw new Error('maintenance run should decode');
+    expect(decoded.value.sourceLayout).toBe('maintenance');
+  });
+
+  it('rejects unknown run kinds and ambiguous embedded/reference envelopes', () => {
+    expect(decodeP2aRun(run({ runKind: 'final_unknown' }), 'buildlore'))
+      .toEqual({ ok: false, reasonCode: 'unsupported_schema' });
+    expect(decodeP2aRun(run({
+      executionEnvelopeRef: { sha256: run().executionEnvelopeSha256 },
+    }), 'buildlore')).toEqual({ ok: false, reasonCode: 'unsupported_schema' });
+  });
+
+  it('binds passed final verification evidence to the declared revisions', () => {
+    const value = run({
+      productRevisionSha256: 'b'.repeat(64),
+      runKind: 'final_verification',
+      verificationScope: 'full',
+      workspaceRevisionSha256: 'd'.repeat(64),
+    });
+    value.verification = (value.verification as Array<Record<string, unknown>>).map((entry) => ({
+      ...entry,
+      productRevisionSha256: 'c'.repeat(64),
+      workspaceRevisionSha256: 'd'.repeat(64),
+    }));
+    expect(decodeP2aRun(value, 'buildlore'))
+      .toEqual({ ok: false, reasonCode: 'lineage_mismatch' });
   });
 
   it('quarantines unsafe structured evidence paths', () => {
@@ -217,8 +262,51 @@ describe('P2A execution codecs', () => {
     });
   });
 
-  it('uses index runs only and ignores cross-iteration task grouping semantics', () => {
-    const index = runIndex({
+  it('retains a task grouping only when it accounts for every indexed run', () => {
+    const result = decodeP2aRunIndex(runIndex(), 'buildlore');
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    if (!result.ok) throw new Error('index should decode');
+    expect(result.value.runs).toHaveLength(1);
+    expect(result.value.tasks).toEqual([{
+      latestRunId: 'run-2026-08-20T01-00-00-000Z-task-001',
+      runIds: ['run-2026-08-20T01-00-00-000Z-task-001'],
+      taskId: 'task-001',
+    }]);
+  });
+
+  it('accepts current retrospective counters and known run kinds in the run index', () => {
+    const value = runIndex({
+      retrospective: {
+        iterations: [{
+          interruptionCounts: {
+            gate_return_invalid: 0,
+            gate_return_valid: 0,
+            implementation_decision: 0,
+            user_correction: 1,
+          },
+          iterationId: 'maintenance',
+          reasonCounts: { completed_maintenance: 1, superseded: 0 },
+          runCount: 1,
+          scope: 'pruned_run_history',
+          statusCounts: { blocked: 0, failed: 0, finished: 1 },
+          verificationCount: 4,
+          verificationDuration: { maxMs: 10, sampleCount: 4, totalMs: 20 },
+          verificationStatusCounts: {
+            failed: 0, not_run: 0, passed: 4, skipped: 0, unavailable: 0,
+          },
+        }],
+      },
+    });
+    const entries = value.runs as Array<Record<string, unknown>>;
+    entries[0] = { ...entries[0], runKind: 'final_verification' };
+    expect(decodeP2aRunIndex(value, 'buildlore')).toEqual(expect.objectContaining({ ok: true }));
+    entries[0] = { ...entries[0], runKind: 'final_unknown' };
+    expect(decodeP2aRunIndex(value, 'buildlore'))
+      .toEqual({ ok: false, reasonCode: 'run_reference_invalid' });
+  });
+
+  it('rejects task groupings that reference an unindexed or mismatched run', () => {
+    expect(decodeP2aRunIndex(runIndex({
       tasks: [{
         latestRunId: 'run-2026-08-20T01-00-00-000Z-task-001',
         runIds: [
@@ -227,12 +315,7 @@ describe('P2A execution codecs', () => {
         ],
         taskId: 'task-001',
       }],
-    });
-    const result = decodeP2aRunIndex(index, 'buildlore');
-    expect(result).toEqual(expect.objectContaining({ ok: true }));
-    if (!result.ok) throw new Error('index should decode');
-    expect(result.value.runs).toHaveLength(1);
-    expect(result.value).not.toHaveProperty('tasks');
+    }), 'buildlore')).toEqual({ ok: false, reasonCode: 'run_reference_invalid' });
   });
 
   it('rejects unsafe or duplicate run references', () => {

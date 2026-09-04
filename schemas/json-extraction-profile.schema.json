@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/json-extraction-profile.schema.json",
+  "title": "BuildLore JSON Extraction Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "match", "schemaVersion"],
+  "properties": {
+    "exclude": { "$ref": "#/$defs/pointerPatterns" },
+    "id": { "$ref": "#/$defs/id" },
+    "include": { "$ref": "#/$defs/pointerPatterns" },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["equals", "pointer"],
+      "properties": {
+        "equals": { "type": ["boolean", "null", "number", "string"] },
+        "pointer": { "$ref": "#/$defs/exactPointer" }
+      }
+    },
+    "required": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/exactPointer" },
+      "uniqueItems": true,
+      "x-buildlore-canonicalOrder": true
+    },
+    "schemaVersion": { "const": "buildlore.json-extraction-profile.v1" },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/section" },
+      "x-buildlore-nonOverlappingPointers": true
+    },
+    "title": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pointer"],
+      "properties": { "pointer": { "$ref": "#/$defs/exactPointer" } }
+    }
+  },
+  "x-buildlore-includeExcludeDisjoint": true,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+    },
+    "exactPointer": {
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^(?:|/(?:[^~*]|~[01])*)$"
+    },
+    "pointerPattern": {
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^(?:|/(?:\\*|(?:[^~*]|~[01])+)(?:/(?:\\*|(?:[^~*]|~[01])+))*)$"
+    },
+    "pointerPatterns": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/pointerPattern" },
+      "uniqueItems": true,
+      "x-buildlore-canonicalOrder": true
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pointer", "title"],
+      "properties": {
+        "arrayMode": { "enum": ["ordered-list", "sections", "table"] },
+        "displayLabels": {
+          "type": "object",
+          "maxProperties": 64,
+          "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "x-buildlore-canonicalKeys": true
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "uniqueItems": true
+        },
+        "pointer": { "$ref": "#/$defs/exactPointer" },
+        "sort": {
+          "oneOf": [
+            { "const": "canonical-key" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pointer"],
+              "properties": {
+                "direction": { "enum": ["ascending", "descending"] },
+                "pointer": { "$ref": "#/$defs/exactPointer" }
+              }
+            }
+          ]
+        },
+        "title": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    }
+  }
+}

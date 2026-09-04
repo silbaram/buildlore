@@ -30,6 +30,7 @@ export interface CitationRangeV1 {
 
 export interface CitationRecordV1 {
   readonly citationId: string;
+  readonly jsonPointer?: string;
   readonly pageRef: WikiPageRef;
   readonly projectId: string;
   readonly range: CitationRangeV1;

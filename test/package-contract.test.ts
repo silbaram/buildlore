@@ -48,6 +48,14 @@ describe('package contract', () => {
       new URL('../schemas/profile-binding.schema.json', import.meta.url),
       'utf8',
     )) as { readonly oneOf?: readonly unknown[] };
+    const profileV2 = JSON.parse(await readFile(
+      new URL('../schemas/profile-binding-v2.schema.json', import.meta.url),
+      'utf8',
+    )) as Readonly<Record<string, unknown>>;
+    const extractionProfile = JSON.parse(await readFile(
+      new URL('../schemas/json-extraction-profile.schema.json', import.meta.url),
+      'utf8',
+    )) as Readonly<Record<string, unknown>>;
     const metadata = JSON.parse(await readFile(
       new URL('../schemas/source-metadata.schema.json', import.meta.url),
       'utf8',
@@ -60,8 +68,16 @@ describe('package contract', () => {
       new URL('../schemas/source-descriptor.schema.json', import.meta.url),
       'utf8',
     )) as Readonly<Record<string, unknown>>;
+    const descriptorV2 = JSON.parse(await readFile(
+      new URL('../schemas/source-descriptor-v2.schema.json', import.meta.url),
+      'utf8',
+    )) as Readonly<Record<string, unknown>>;
     const sourceDocument = JSON.parse(await readFile(
       new URL('../schemas/source-document-v2.schema.json', import.meta.url),
+      'utf8',
+    )) as Readonly<Record<string, unknown>>;
+    const sourceDocumentV3 = JSON.parse(await readFile(
+      new URL('../schemas/source-document-v3.schema.json', import.meta.url),
       'utf8',
     )) as Readonly<Record<string, unknown>>;
     const wikiExport = JSON.parse(await readFile(
@@ -74,6 +90,10 @@ describe('package contract', () => {
     )) as { readonly $defs: Readonly<Record<string, unknown>> };
 
     expect(profile.oneOf).toHaveLength(2);
+    expect(JSON.stringify(profileV2)).toContain('registrationDigest');
+    expect(JSON.stringify(extractionProfile)).toContain('json-extraction-profile.v1');
+    expect(JSON.stringify(descriptorV2)).toContain('"json"');
+    expect(JSON.stringify(sourceDocumentV3)).toContain('jsonOrigins');
     expect(metadata).toMatchObject({
       'x-buildlore-maxAggregateKeys': 64,
       'x-buildlore-maxDepth': 8,
@@ -234,9 +254,13 @@ describe('package contract', () => {
       'source-collection-manifest.schema.json',
       'source-collection-manifest-v2.schema.json',
       'source-descriptor.schema.json',
+      'source-descriptor-v2.schema.json',
       'source-document-v2.schema.json',
+      'source-document-v3.schema.json',
+      'json-extraction-profile.schema.json',
       'source-metadata.schema.json',
       'profile-binding.schema.json',
+      'profile-binding-v2.schema.json',
       'wiki-export.schema.json',
       'compile-plan.schema.json',
       'compile-proposal.schema.json',
@@ -452,9 +476,13 @@ describe('package contract', () => {
       'source-collection-manifest.schema.json',
       'source-collection-manifest-v2.schema.json',
       'source-descriptor.schema.json',
+      'source-descriptor-v2.schema.json',
       'source-document-v2.schema.json',
+      'source-document-v3.schema.json',
+      'json-extraction-profile.schema.json',
       'source-metadata.schema.json',
       'profile-binding.schema.json',
+      'profile-binding-v2.schema.json',
       'wiki-export.schema.json',
       'compile-plan.schema.json',
       'compile-proposal.schema.json',

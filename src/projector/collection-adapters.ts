@@ -2,6 +2,8 @@ import type { Sha256Digest, SourceCheckoutHandle } from '../knowledge/local-proj
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import { ProjectionError } from './errors.js';
 import { createGenericProjectionSourceAdapter } from './generic-source-adapter.js';
+import { createJsonProjectionSourceAdapter } from './json-source-adapter.js';
+import type { RegisteredJsonKnowledgeAdapterV1 } from './json-knowledge-adapter.js';
 import {
   createP2aArtifactAdapter,
   type P2aArtifactAdapter,
@@ -12,6 +14,7 @@ import {
   createBuiltInSourceAdapterRegistry,
   GENERIC_SOURCE_ADAPTER_ID,
   genericSourceAdapter,
+  jsonSourceAdapter,
   P2A_SOURCE_ADAPTER_ID,
   p2aSourceAdapter,
   type SourceAdapterRegistry,
@@ -22,6 +25,7 @@ import {
   type BoundSourceRetrievalMeaningV1,
   type RegisteredMediaType,
   type SourceAdapterRegistrationV1,
+  type SourceJsonOriginMappingV1,
   type SourceOriginRangeV1,
   type SourceRangeMappingV1,
 } from './source-contracts.js';
@@ -35,6 +39,11 @@ import {
   type SourceSelectionInventory,
 } from './source-manifest.js';
 import type { SourceDocument } from './types.js';
+import {
+  bindRawSourceInputs,
+  inspectRawSourceInputs,
+  type RawSourceInputV1,
+} from './raw-source-inputs.js';
 
 export interface CollectionCandidate extends ProjectSourceInput {
   readonly adapterDocumentKind?: string;
@@ -45,6 +54,7 @@ export interface CollectionCandidate extends ProjectSourceInput {
   readonly declarationId: string;
   readonly documentKind: SourceDocumentKind;
   readonly mediaType?: RegisteredMediaType;
+  readonly jsonOrigins?: readonly SourceJsonOriginMappingV1[];
   readonly producer: ProjectSourceProducer;
   readonly projectId: string;
   readonly rangeMappings?: readonly SourceRangeMappingV1[];
@@ -108,6 +118,7 @@ export interface SourceCollectionAdapter {
 
 export interface CreateSourceCollectionAdapterOptions {
   readonly includeP2a?: boolean;
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly p2aArtifactAdapter?: P2aArtifactAdapter;
   readonly sourceAdapterRegistry?: SourceAdapterRegistry;
 }
@@ -195,9 +206,11 @@ function registeredRuntimeAdapters(
   const p2aArtifactAdapter = options.p2aArtifactAdapter ?? createP2aArtifactAdapter();
   const adapters = [
     createGenericProjectionSourceAdapter(genericSourceAdapter()),
+    createJsonProjectionSourceAdapter(jsonSourceAdapter()),
     ...(options.includeP2a === false
       ? []
       : [createP2aProjectionSourceAdapter(p2aSourceAdapter(), p2aArtifactAdapter)]),
+    ...(options.jsonKnowledgeAdapters ?? []).map((adapter) => adapter.runtime),
   ];
   const result = new Map<string, SourceAdapterV1>();
   for (const adapter of adapters) {
@@ -219,13 +232,17 @@ export function createSourceCollectionAdapter(
       const selected = selectedFilesByIdentity(input);
       const registry = input.sourceAdapterRegistry ?? options.sourceAdapterRegistry ??
         createBuiltInSourceAdapterRegistry({
-        includeP2a: options.includeP2a ?? input.loadedManifest.manifest.sources.some((source) =>
-          ('adapterId' in source && source.adapterId === P2A_SOURCE_ADAPTER_ID) ||
-          ('documentKind' in source && source.documentKind === 'p2a-planning')),
+          includeP2a: options.includeP2a ?? input.loadedManifest.manifest.sources.some((source) =>
+            ('adapterId' in source && source.adapterId === P2A_SOURCE_ADAPTER_ID) ||
+            ('documentKind' in source && source.documentKind === 'p2a-planning')),
+          ...(options.jsonKnowledgeAdapters === undefined
+            ? {}
+            : { registrations: options.jsonKnowledgeAdapters }),
         });
       const candidates: CollectionCandidate[] = [];
       const entries: SourceAdapterProjectionEntryV1[] = [];
       const notices: SourceAdapterNoticeV1[] = [];
+      const rawSourceInputs: RawSourceInputV1[] = [];
       const filesByAdapter = new Map<string, SelectedSourceFile[]>();
       for (const file of selected.values()) {
         const adapterId = adapterIdFor(file);
@@ -261,6 +278,7 @@ export function createSourceCollectionAdapter(
           selectedFiles: Object.freeze([...files].sort((left, right) =>
             compareText(left.sourceRef, right.sourceRef))),
         });
+        rawSourceInputs.push(...inspectRawSourceInputs(projected));
         const selectedBindings = new Set(files.map((file) =>
           `${file.declarationId}\u0000${file.sourceRef}`));
         if (projected.candidates.some((candidate) =>
@@ -295,7 +313,7 @@ export function createSourceCollectionAdapter(
           sourceRetrievalMeaningFromDescriptor(candidate.descriptor)).meaning,
         sourceRef: candidate.sourceRef,
       })));
-      return Object.freeze({
+      return bindRawSourceInputs(Object.freeze({
         candidates: Object.freeze(candidates),
         entries: Object.freeze([...entries].sort((left, right) =>
           compareText(
@@ -307,7 +325,7 @@ export function createSourceCollectionAdapter(
             `${left.adapterId}:${left.sourceRef}:${left.code}:${left.fieldName ?? ''}`,
             `${right.adapterId}:${right.sourceRef}:${right.code}:${right.fieldName ?? ''}`,
           ))),
-      });
+      }), rawSourceInputs);
     },
   };
 }

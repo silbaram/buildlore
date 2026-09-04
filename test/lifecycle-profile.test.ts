@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createBuildLoreLifecycleProfile,
   createBuiltInProfileBinding,
+  createProfileBindingV2,
   deriveLifecyclePageId,
   evaluateLifecycleReview,
   isLifecycleTransitionAllowed,
@@ -207,6 +208,15 @@ describe('BuildLore lifecycle profile contract', () => {
     ]);
     expect(registerProfileBinding(general).sourceAdapters.list().map((entry) => entry.adapterId))
       .toEqual(['buildlore.generic']);
+    expect(() => registerProfileBinding(general).sourceAdapters.resolve({
+      adapterId: 'buildlore.json',
+      adapterVersion: 1,
+      kind: 'json',
+    })).toThrow();
+    const generalWithJson = createProfileBindingV2('general', 'en');
+    expect(generalWithJson.schemaVersion).toBe('buildlore.profile-binding.v2');
+    expect(registerProfileBinding(generalWithJson).sourceAdapters.list().map((entry) =>
+      entry.adapterId)).toEqual(['buildlore.generic', 'buildlore.json']);
     expect(registerProfileBinding(development).sourceAdapters.resolve({
       adapterId: 'buildlore.p2a',
       adapterVersion: 1,

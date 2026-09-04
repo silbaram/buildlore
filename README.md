@@ -111,6 +111,82 @@ LF. Keep top-level fields in this order: `projectId`, `schemaVersion`,
 unique ASCII `id`. BuildLore rejects a semantically equivalent file if its field
 order, declaration order, indentation, or newline bytes are not canonical.
 
+#### Generic JSON and JSON knowledge adapters
+
+Use `buildlore.sources.v2` to collect JSON as a normal, producer-neutral source. A
+directory declaration selects every matching regular `.json` file below the declared
+path; it does not require one entry per file:
+
+```json
+{
+  "projectId": "a",
+  "schemaVersion": "buildlore.sources.v2",
+  "sourceRepository": "https://github.com/acme/a.git",
+  "sources": [
+    {
+      "adapterId": "buildlore.json",
+      "adapterVersion": 1,
+      "id": "run-data",
+      "kind": "json",
+      "path": "artifacts/runs",
+      "pathType": "directory",
+      "recursive": true
+    }
+  ]
+}
+```
+
+The project `profile-binding.json` must use `buildlore.profile-binding.v2` and bind
+the exact adapter registration digest. Generate this contract with the exported
+`createProfileBindingV2(...)` API instead of inventing a digest. Existing v1 profile
+bindings remain readable but intentionally authorize only their legacy adapters.
+After the v2 binding is installed, `source add --kind json` can add the built-in JSON
+declaration.
+
+The built-in JSON adapter performs strict UTF-8 and JSON parsing, rejects duplicate
+keys and bounded-resource violations, orders object keys canonically, and emits a
+deterministic Markdown evidence source. `SourceDocument` v3 records the original
+`sourceRef`, RFC 6901 JSON Pointer, input hash, and source location for every emitted
+range. Those pointers survive compile, activation, semantic indexing, query, and
+citation lookup.
+
+For code-free specialization, put sorted `profiles` plus optional `profileRequired`
+under the declaration's `buildlore.json-metadata.v1` metadata values. The public
+`json-extraction-profile.schema.json` contract defines exact match, include/exclude,
+title, section, array, display-label, and sort rules. Ambiguous matches, a required
+profile that does not match, invalid pointers, or incompatible rules fail closed; the
+adapter never guesses domain meaning.
+
+Trusted hosts can register a versioned local adapter with
+`registerJsonKnowledgeAdapter(...)`, add its exact registration to
+`createProfileBindingV2(...)`, and inject the returned definition through the
+`jsonKnowledgeAdapters` construction option on sync, source management, compiler,
+and activation services; Wiki read accepts the same definitions through
+`sourceAdapterRegistrations`. The adapter receives only BuildLore-confined,
+deeply frozen parsed documents and provenance. It receives no writer, filesystem,
+network, environment, clock, or process capability, and BuildLore validates its
+bounded drafts before the common sanitizer and atomic writer.
+
+`p2aRunJsonKnowledgeAdapter()` is an optional reference adapter built on that same
+public contract. A trusted host must register and inject it explicitly, then declare
+the common P2A artifact root (the directory containing both `runs/` and
+`iterations/`) with adapter ID `buildlore.p2a-run`. JSON outside the P2A run lineage
+is excluded. The adapter accepts supported `p2a.run.v2` and `p2a.run_index.v1`
+documents only when the index, task graph, source spec, task contract, and referenced
+execution envelope match exactly. It merges matching implementation/final-verification
+evidence, keeps failure-to-success history, and deduplicates verification. Unknown
+run schemas and lineage mismatches are quarantined rather than interpreted.
+
+Run `sync --dry-run` first. JSON parse/profile/adapter failures and quarantine entries
+return value-free reason codes; correct the source, binding, profile, or index and run
+the preview again. The sanitizer scans the complete raw JSON bytes, including fields
+excluded from projected text, so hiding a suspected secret with an extraction rule
+cannot make the source eligible. The P2A reference adapter treats only verified digest
+fields as hashes and permits the common sanitizer to redact workspace paths from its
+raw security copy; suspected credentials or other unsafe trace content still fail
+closed. A failed preview or sync writes no partial source and does not replace healthy
+Wiki or semantic-index authority.
+
 ### 3. Register and bind projects from the hub
 
 Every operation uses an explicit project ID; BuildLore never infers a default project.

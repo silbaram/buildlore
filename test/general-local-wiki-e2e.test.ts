@@ -63,7 +63,7 @@ interface SourceFixture {
 
 interface RetrievalQualityQuery {
   readonly expectedPageRef: string;
-  readonly kind: GenericSourceKind;
+  readonly kind: GenericSourceKind | 'json';
   readonly query: string;
 }
 

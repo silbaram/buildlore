@@ -56,7 +56,7 @@ import {
 
 const PAGE_REF_PATTERN = /^(concepts|decisions|failures|queries|verifications)\/([a-z0-9]+(?:-[a-z0-9]+)*)$/u;
 const SAFE_CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,1024}$/u;
-const SOURCE_FILE_PATTERN = /^(?:code|markdown|planning|text)--[a-f0-9]{64}\.md$/u;
+const SOURCE_FILE_PATTERN = /^(?:code|json|markdown|planning|text)--[a-f0-9]{64}\.md$/u;
 const SOURCE_HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const MAX_PAGE_COUNT = 4_096;
 const MAX_LIST_LIMIT = 100;
@@ -81,6 +81,7 @@ export interface CreateWikiReadOptions {
   readonly backend?: WikiBackend;
   readonly corpus?: ProjectCorpusPort;
   readonly knowledgeRoot: string;
+  readonly sourceAdapterRegistrations?: readonly SourceAdapterDefinitionV1[];
   readonly reviewStoreFactory?: (workspace: string, projectId: string) => SessionReviewStore;
 }
 
@@ -431,6 +432,7 @@ async function citationFromStoredSource(input: {
   readonly compilerSourceId: string;
   readonly expectedCompilerSourceHashes?: ReadonlySet<string>;
   readonly expectedOriginalFile?: string;
+  readonly expectedJsonPointer?: string;
   readonly expectedQuoteDigest?: string;
   readonly pageRef: WikiPageRef;
   readonly projectId: string;
@@ -471,10 +473,12 @@ async function citationFromStoredSource(input: {
   } catch {
     return fail('WIKI_CITATION_INVALID', input.projectId);
   }
-  if (input.expectedOriginalFile !== undefined &&
-      document.buildlore.descriptor !== undefined &&
-      document.buildlore.descriptor.sourceRef !== input.expectedOriginalFile) {
-    return fail('WIKI_CITATION_INVALID', input.projectId);
+  if (input.expectedOriginalFile !== undefined && document.buildlore.descriptor !== undefined) {
+    const descriptor = document.buildlore.descriptor;
+    const bound = descriptor.sourceRef === input.expectedOriginalFile ||
+      (descriptor.schemaVersion === 'buildlore.source-descriptor.v2' &&
+        descriptor.inputBindings.some((entry) => entry.sourceRef === input.expectedOriginalFile));
+    if (!bound) return fail('WIKI_CITATION_INVALID', input.projectId);
   }
   let rangeAdapter: SourceAdapterDefinitionV1 | undefined;
   if (document.buildlore.descriptor !== undefined) {
@@ -503,30 +507,52 @@ async function citationFromStoredSource(input: {
     canonicalEnd = mapping.canonical.startLine + input.citationLineEnd - mapping.origin.startLine;
   }
   const bodyLines = document.body.split('\n');
+  const jsonOrigin = document.buildlore.jsonOrigins?.find((mapping) => {
+    if (input.expectedOriginalFile !== undefined &&
+        mapping.origin.sourceRef !== input.expectedOriginalFile) return false;
+    if (input.expectedJsonPointer !== undefined &&
+        mapping.origin.jsonPointer !== input.expectedJsonPointer) return false;
+    if (input.expectedOriginalFile !== undefined &&
+        (input.citationLineStart < mapping.origin.range.startLine ||
+          input.citationLineEnd > mapping.origin.range.endLine)) return false;
+    const quote = bodyLines[mapping.canonical.startLine - 1];
+    return input.expectedQuoteDigest === undefined ||
+      (quote !== undefined && sessionSha256(quote) === input.expectedQuoteDigest);
+  });
+  if (jsonOrigin !== undefined) {
+    canonicalStart = jsonOrigin.canonical.startLine;
+    canonicalEnd = jsonOrigin.canonical.endLine;
+    sourceRef = jsonOrigin.origin.sourceRef;
+  }
+  if (document.buildlore.jsonOrigins !== undefined && jsonOrigin === undefined) {
+    return fail('WIKI_CITATION_INVALID', input.projectId);
+  }
   const quote = bodyLines[canonicalStart - 1];
   if (quote === undefined || (input.expectedQuoteDigest !== undefined &&
       sessionSha256(quote) !== input.expectedQuoteDigest)) {
     return fail('WIKI_CITATION_INVALID', input.projectId);
   }
-  const range = mappedRange(
-    canonicalStart,
-    canonicalEnd,
-    document.buildlore.originMappings,
-    rangeAdapter,
-    document.body,
-    input.projectId,
-  );
+  const range = jsonOrigin?.origin.range ?? mappedRange(
+      canonicalStart,
+      canonicalEnd,
+      document.buildlore.originMappings,
+      rangeAdapter,
+      document.body,
+      input.projectId,
+    );
   const sourceRevision = document.buildlore.sourceRevision;
   return Object.freeze({
     citationId: 'citation-' + sha256(serializeCanonicalJson({
       pageRef: input.pageRef,
       projectId: input.projectId,
+      ...(jsonOrigin === undefined ? {} : { jsonPointer: jsonOrigin.origin.jsonPointer }),
       range,
       sourceRef,
       sourceRevision,
     })).slice('sha256:'.length),
     pageRef: input.pageRef,
     projectId: input.projectId,
+    ...(jsonOrigin === undefined ? {} : { jsonPointer: jsonOrigin.origin.jsonPointer }),
     range,
     sourceRef,
     sourceRevision,
@@ -685,6 +711,7 @@ async function proofCitations(
       citationLineStart: binding.originalLine,
       compilerSourceId: binding.compilerSourceId,
       expectedOriginalFile: binding.originalFile,
+      ...(binding.jsonPointer === undefined ? {} : { expectedJsonPointer: binding.jsonPointer }),
       expectedQuoteDigest: binding.quoteDigest,
       pageRef: pageRef(page.pageId, projectId),
       projectId,
@@ -761,7 +788,9 @@ export function createWikiReadService(options: CreateWikiReadOptions): WikiServi
     const workspace = await resolveProjectWorkspace(options.knowledgeRoot, projectId, {
       mustExist: true,
     });
-    const profile = await resolveRegisteredProfileBinding(options.knowledgeRoot, projectId);
+    const profile = await resolveRegisteredProfileBinding(options.knowledgeRoot, projectId, {
+      registrations: options.sourceAdapterRegistrations ?? [],
+    });
     if (record.entry.projectId !== projectId || profile.workspace !== workspace) {
       return fail('WIKI_SNAPSHOT_CHANGED', projectId);
     }

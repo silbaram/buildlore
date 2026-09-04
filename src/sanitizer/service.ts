@@ -68,6 +68,7 @@ const SOURCE_KINDS = new Set([
   'code',
   'compiler-cache',
   'execution',
+  'json',
   'markdown',
   'planning',
   'profile',

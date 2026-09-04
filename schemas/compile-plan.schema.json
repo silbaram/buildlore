@@ -128,8 +128,21 @@
       ],
       "properties": {
         "anchorId": { "type": "string", "pattern": "^anchor-[a-f0-9]{64}$" },
+        "canonicalLine": { "type": "integer", "minimum": 1 },
         "originalFile": { "type": "string", "minLength": 1, "maxLength": 512 },
         "originalLine": { "type": "integer", "minimum": 1 },
+        "originalRange": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["endColumn", "endLine", "startColumn", "startLine"],
+          "properties": {
+            "endColumn": { "type": "integer", "minimum": 1 },
+            "endLine": { "type": "integer", "minimum": 1 },
+            "startColumn": { "type": "integer", "minimum": 1 },
+            "startLine": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "jsonPointer": { "type": "string", "maxLength": 1024 },
         "quote": { "type": "string", "minLength": 1, "maxLength": 512 },
         "quoteDigest": { "$ref": "#/$defs/digest" },
         "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" }
@@ -234,7 +247,7 @@
         "compilerSourceContentDigest": { "$ref": "#/$defs/digest" },
         "compilerSourceId": {
           "type": "string",
-          "pattern": "^(code|markdown|planning|text)--[a-f0-9]{64}\\.md$"
+          "pattern": "^(code|json|markdown|planning|text)--[a-f0-9]{64}\\.md$"
         },
         "originalContentDigest": { "$ref": "#/$defs/digest" },
         "revision": { "$ref": "#/$defs/digest" },
@@ -242,7 +255,7 @@
         "sanitizedBody": { "type": "string", "minLength": 1, "maxLength": 524288 },
         "sanitizedContentDigest": { "$ref": "#/$defs/digest" },
         "sourceId": { "type": "string", "pattern": "^source-[a-f0-9]{64}$" },
-        "sourceKind": { "enum": ["code", "markdown", "planning", "text"] },
+        "sourceKind": { "enum": ["code", "json", "markdown", "planning", "text"] },
         "sourceRef": { "type": "string", "minLength": 1, "maxLength": 512 },
         "title": { "type": "string", "minLength": 1, "maxLength": 500 }
       }

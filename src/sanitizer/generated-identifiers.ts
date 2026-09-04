@@ -1,6 +1,7 @@
 export const GENERATED_SOURCE_KINDS = Object.freeze([
   'code',
   'execution',
+  'json',
   'markdown',
   'planning',
   'text',

@@ -7,7 +7,11 @@ export const EXECUTION_INCLUSION_POLICY_VERSION =
   'buildlore.execution-inclusion.v1' as const;
 
 export type ExecutionRunStatus = 'blocked' | 'failed' | 'finished' | 'started';
-export type ExecutionSourceLayout = 'graph' | 'iteration';
+export type ExecutionSourceLayout = 'graph' | 'handoff' | 'iteration' | 'maintenance';
+export type ExecutionRunKind =
+  | 'final_acceptance_review'
+  | 'final_verification'
+  | 'final_visual_review';
 export type ExecutionDecision = 'blocked' | 'exclude' | 'include' | 'quarantine';
 export type ExecutionIncludeReason =
   | 'failed_or_blocked'
@@ -34,17 +38,30 @@ export type ExecutionReasonCode =
   | 'security_quarantine';
 
 export interface ExecutionVerificationSummary {
+  readonly argv?: readonly string[];
   readonly command: string;
   readonly exitCode: number | null;
   readonly finishedAt: string | null;
+  readonly gitHeadSha?: string;
+  readonly productRevisionSha256?: string;
+  readonly relatedFilesSha256?: string;
+  readonly scope?: 'full' | 'related';
+  readonly selectedFileCount?: number;
   readonly source: 'command' | 'config' | 'manual';
   readonly startedAt: string | null;
   readonly status: 'failed' | 'not_run' | 'passed' | 'skipped' | 'unavailable';
   readonly type: 'custom' | 'lint' | 'test' | 'typecheck';
+  readonly workspaceRevisionSha256?: string;
 }
 
 export interface ObservedP2aRun {
+  readonly agentTool: string;
   readonly changedFiles: readonly string[];
+  readonly currentDevelopmentContractRef?: string;
+  readonly currentDevelopmentContractSha256?: string;
+  readonly embeddedExecutionEnvelope?: Readonly<Record<string, unknown>>;
+  readonly executionEnvelopeSha256?: string;
+  readonly executionEnvelopeReferenceSha256?: string;
   readonly failureClass?: string;
   readonly finishedAt: string | null;
   readonly fixSummaries: readonly string[];
@@ -54,8 +71,10 @@ export interface ObservedP2aRun {
   readonly localizationFiles: readonly string[];
   readonly localizationFindings: readonly string[];
   readonly projectId: string;
+  readonly productRevisionSha256?: string;
   readonly reproductionSteps: readonly string[];
   readonly runId: string;
+  readonly runKind: ExecutionRunKind | null;
   readonly sourceGateRefs: readonly Readonly<{
     path: string;
     sha256: string;
@@ -65,25 +84,41 @@ export interface ObservedP2aRun {
   readonly startedAt: string;
   readonly status: ExecutionRunStatus;
   readonly taskContractSha256: string;
+  readonly taskGraphRef: string;
   readonly taskId: string;
   readonly taskTitle: string;
   readonly updatedAt: string;
   readonly verification: readonly ExecutionVerificationSummary[];
+  readonly verificationScope?: 'full' | 'relevant';
+  readonly workspaceRevisionSha256?: string;
+  readonly gitHeadSha?: string;
+  readonly workspaceRef: string;
 }
 
 export interface P2aRunIndexEntry {
+  readonly agentTool: string;
   readonly finishedAt: string | null;
   readonly iterationId: string;
   readonly runId: string;
+  readonly runKind: ExecutionRunKind | null;
   readonly runRef: string;
   readonly startedAt: string;
   readonly status: ExecutionRunStatus;
+  readonly taskGraphRef: string;
+  readonly taskId: string;
+  readonly workspaceRef: string;
+}
+
+export interface P2aRunIndexTask {
+  readonly latestRunId: string | null;
+  readonly runIds: readonly string[];
   readonly taskId: string;
 }
 
 export interface P2aRunIndex {
   readonly projectId: string;
   readonly runs: readonly P2aRunIndexEntry[];
+  readonly tasks: readonly P2aRunIndexTask[];
 }
 
 export interface CanonicalTaskLineage {

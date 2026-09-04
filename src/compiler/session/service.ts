@@ -2,6 +2,7 @@ import { validateProjectId } from '../../knowledge/validation.js';
 import { resolveProjectWorkspace } from '../../knowledge/paths.js';
 import { showProject } from '../../knowledge/workspace.js';
 import { createProfileBindingPreflight } from '../../profile/preflight.js';
+import type { RegisteredJsonKnowledgeAdapterV1 } from '../../projector/json-knowledge-adapter.js';
 import { isGeneratedIdentifier } from '../../sanitizer/index.js';
 import { compareSessionText, digestSessionValue } from './canonical.js';
 import {
@@ -32,6 +33,7 @@ import type {
 
 export interface CreateProjectSessionCompilerOptions {
   readonly hubRoot: string;
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly knowledgeRoot: string;
 }
 
@@ -181,11 +183,16 @@ function createProjectSessionCompilerInternal(
 ): ProjectSessionCompilerPort {
   const planner = options.planner ?? createSessionCompilePlanner({
     hubRoot: options.hubRoot,
+    ...(options.jsonKnowledgeAdapters === undefined
+      ? {}
+      : { jsonKnowledgeAdapters: options.jsonKnowledgeAdapters }),
     knowledgeRoot: options.knowledgeRoot,
   });
   const admission = options.admission ?? createSessionCompileAdmission();
   const review = options.review ?? createSessionReviewService();
-  const profilePreflight = createProfileBindingPreflight(options.knowledgeRoot);
+  const profilePreflight = createProfileBindingPreflight(options.knowledgeRoot, {
+    registrations: options.jsonKnowledgeAdapters ?? [],
+  });
   async function reviewWorkspace(projectId: string): Promise<string> {
     const [record, workspace, profile] = await Promise.all([
       showProject(options.knowledgeRoot, projectId),

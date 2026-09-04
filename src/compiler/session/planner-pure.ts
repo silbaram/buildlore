@@ -13,7 +13,10 @@ import {
   type SessionPlanTask,
   type SessionRequestedPageKind,
 } from './types.js';
-import type { SourceRangeMappingV1 } from '../../projector/source-contracts.js';
+import type {
+  SourceJsonOriginMappingV1,
+  SourceRangeMappingV1,
+} from '../../projector/source-contracts.js';
 
 interface SectionDraft {
   readonly endLine: number;
@@ -30,6 +33,7 @@ const MAX_HEADING_TOKEN_CODE_POINTS = 256;
 
 export function createSessionCitationAnchors(input: {
   readonly originMappings?: readonly SourceRangeMappingV1[];
+  readonly jsonOrigins?: readonly SourceJsonOriginMappingV1[];
   readonly originalBody: string;
   readonly sanitizedBody: string;
   readonly sourceId: string;
@@ -44,25 +48,36 @@ export function createSessionCitationAnchors(input: {
     const mapping = input.originMappings?.find((candidate) =>
       canonicalLine >= candidate.canonical.startLine &&
       canonicalLine <= candidate.canonical.endLine);
-    const originalLine = mapping === undefined
+    const jsonOrigin = input.jsonOrigins?.find((candidate) =>
+      canonicalLine >= candidate.canonical.startLine &&
+      canonicalLine <= candidate.canonical.endLine);
+    const originalLine = jsonOrigin?.origin.range.startLine ?? (mapping === undefined
       ? canonicalLine
-      : mapping.origin.startLine + canonicalLine - mapping.canonical.startLine;
+      : mapping.origin.startLine + canonicalLine - mapping.canonical.startLine);
+    const originalFile = jsonOrigin?.origin.sourceRef ?? input.sourceRef;
+    const originalRange = jsonOrigin?.origin.range;
     if (
       quote === undefined ||
       quote.trim().length === 0 ||
       quote.length > SESSION_COMPILE_LIMITS.maxQuoteCodeUnits ||
-      originalLines[originalLine - 1] !== quote
+      (jsonOrigin === undefined && originalLines[originalLine - 1] !== quote)
     ) continue;
     const quoteDigest = sessionSha256(quote);
     anchors.push(Object.freeze({
       anchorId: 'anchor-' + digestSessionValue({
-        originalFile: input.sourceRef,
+        ...(jsonOrigin === undefined ? {} : { canonicalLine }),
+        ...(jsonOrigin === undefined ? {} : { jsonPointer: jsonOrigin.origin.jsonPointer }),
+        originalFile,
         originalLine,
+        ...(originalRange === undefined ? {} : { originalRange }),
         quoteDigest,
         sourceId: input.sourceId,
       }).slice('sha256:'.length),
-      originalFile: input.sourceRef,
+      ...(jsonOrigin === undefined ? {} : { canonicalLine }),
+      ...(jsonOrigin === undefined ? {} : { jsonPointer: jsonOrigin.origin.jsonPointer }),
+      originalFile,
       originalLine,
+      ...(originalRange === undefined ? {} : { originalRange }),
       quote,
       quoteDigest,
       sourceId: input.sourceId,

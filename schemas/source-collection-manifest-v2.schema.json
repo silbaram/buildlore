@@ -72,7 +72,7 @@
         "adapterId": { "$ref": "#/$defs/adapterId" },
         "adapterVersion": { "const": 1 },
         "id": { "$ref": "#/$defs/safeId" },
-        "kind": { "enum": ["code", "markdown", "planning", "text"] },
+        "kind": { "enum": ["code", "json", "markdown", "planning", "text"] },
         "metadata": { "$ref": "source-metadata.schema.json" },
         "path": { "$ref": "#/$defs/relativePath" },
         "pathType": { "enum": ["directory", "file"] },
@@ -104,6 +104,23 @@
             },
             {
               "properties": {
+                "adapterId": { "const": "buildlore.json" },
+                "kind": { "const": "json" },
+                "metadata": {
+                  "allOf": [
+                    { "$ref": "source-metadata.schema.json" },
+                    {
+                      "properties": {
+                        "namespace": { "const": "buildlore.json" },
+                        "schemaVersion": { "const": "buildlore.json-metadata.v1" }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
                 "adapterId": { "const": "buildlore.p2a" },
                 "kind": { "const": "planning" },
                 "metadata": {
@@ -117,6 +134,16 @@
                     }
                   ]
                 }
+              }
+            },
+            {
+              "properties": {
+                "adapterId": {
+                  "not": {
+                    "enum": ["buildlore.generic", "buildlore.json", "buildlore.p2a"]
+                  }
+                },
+                "kind": { "const": "json" }
               }
             }
           ]

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/source-document-v3.schema.json",
+  "title": "BuildLore SourceDocument v3",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "title", "source", "ingestedAt", "body", "buildlore"],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.source.v3" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[\\u0020-\\u007e]+$",
+      "x-buildlore-equals": "buildlore.descriptor.sourceUri"
+    },
+    "ingestedAt": { "type": "string", "format": "date-time" },
+    "sourceType": { "enum": ["web", "file", "image", "pdf", "transcript"] },
+    "body": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100001,
+      "pattern": "^(?![\\s\\S]*[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f\\uD800-\\uDFFF])(?=[\\s\\S]*\\S)(?![\\s\\S]*\\n\\n$)[\\s\\S]*\\n$",
+      "x-buildlore-contentHash": "buildlore.contentHash"
+    },
+    "buildlore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "sourceKind",
+        "producer",
+        "projectId",
+        "sourceRevision",
+        "contentHash",
+        "descriptor",
+        "jsonOrigins"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "buildlore.source.v3" },
+        "sourceKind": {
+          "enum": ["code", "execution", "json", "markdown", "planning", "text"],
+          "x-buildlore-equals": "descriptor.kind"
+        },
+        "producer": { "type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "projectId": { "$ref": "source-descriptor-v2.schema.json#/$defs/projectId" },
+        "sourceRevision": {
+          "$ref": "#/$defs/digest",
+          "x-buildlore-equals": "descriptor.projectionRevision"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/digest",
+          "x-buildlore-digestOf": "body"
+        },
+        "descriptor": { "$ref": "source-descriptor-v2.schema.json" },
+        "jsonOrigins": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/jsonOriginMapping" },
+          "x-buildlore-boundedBy": "body",
+          "x-buildlore-canonicalRanges": "strictly-ordered-non-overlapping"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endColumn", "endLine", "startColumn", "startLine"],
+      "x-buildlore-orderedRange": true,
+      "properties": {
+        "endColumn": { "type": "integer", "minimum": 1 },
+        "endLine": { "type": "integer", "minimum": 1 },
+        "startColumn": { "type": "integer", "minimum": 1 },
+        "startLine": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "jsonOriginMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonical", "origin"],
+      "properties": {
+        "canonical": { "$ref": "#/$defs/range" },
+        "origin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["contentHash", "jsonPointer", "range", "sourceRef"],
+          "properties": {
+            "contentHash": { "$ref": "#/$defs/digest" },
+            "jsonPointer": {
+              "type": "string",
+              "maxLength": 1024,
+              "pattern": "^(?:|/(?:[^~]|~[01])*)$"
+            },
+            "range": { "$ref": "#/$defs/range" },
+            "sourceRef": { "$ref": "source-descriptor-v2.schema.json#/$defs/relativePath" }
+          }
+        }
+      }
+    }
+  }
+}

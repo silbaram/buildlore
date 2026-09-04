@@ -5,10 +5,12 @@ import { PROJECT_SCHEMA_VERSION } from '../knowledge/types.js';
 import { resolveProjectWorkspace } from '../knowledge/paths.js';
 import { showProject } from '../knowledge/workspace.js';
 import {
+  PROFILE_BINDING_V2_SCHEMA_VERSION,
   profileBindingForLegacyResolution,
   registerProfileBinding,
-  type RegisteredProfileBindingV1,
+  type RegisteredProfileBinding,
 } from './bindings.js';
+import type { SourceAdapterDefinitionV1 } from '../projector/source-adapter-registry.js';
 import { parseLifecycleProfile } from './codec.js';
 import { ProfileOperationError } from './errors.js';
 import { readConfinedText } from './io.js';
@@ -19,9 +21,15 @@ export interface ProfileBindingPreflight {
   resolve(projectId: string): Promise<ProfileBinding>;
 }
 
-export interface ResolvedRegisteredProfileBindingV1 extends RegisteredProfileBindingV1 {
+export type ResolvedRegisteredProfileBinding = RegisteredProfileBinding & Readonly<{
   readonly bindingDigest: `sha256:${string}`;
   readonly workspace: string;
+}>;
+
+export type ResolvedRegisteredProfileBindingV1 = ResolvedRegisteredProfileBinding;
+
+export interface ResolveRegisteredProfileBindingOptions {
+  readonly registrations?: readonly SourceAdapterDefinitionV1[];
 }
 
 async function resolveLegacyBinding(
@@ -71,7 +79,8 @@ async function resolveLegacyBinding(
 export async function resolveRegisteredProfileBinding(
   knowledgeRoot: string,
   projectId: string,
-): Promise<ResolvedRegisteredProfileBindingV1> {
+  options: ResolveRegisteredProfileBindingOptions = {},
+): Promise<ResolvedRegisteredProfileBinding> {
   const legacy = await resolveLegacyBinding(knowledgeRoot, projectId);
   const source = await readConfinedText(
     legacy.workspace,
@@ -80,7 +89,7 @@ export async function resolveRegisteredProfileBinding(
     { maximumBytes: 16 * 1024, optional: true },
   );
   const expected = profileBindingForLegacyResolution(legacy);
-  let registered: RegisteredProfileBindingV1;
+  let registered: RegisteredProfileBinding;
   let canonical: string;
   if (source === null) {
     registered = registerProfileBinding(expected);
@@ -88,12 +97,19 @@ export async function resolveRegisteredProfileBinding(
   } else {
     try {
       const decoded = JSON.parse(source) as unknown;
-      registered = registerProfileBinding(decoded);
+      registered = registerProfileBinding(decoded, options);
       canonical = serializeCanonicalJson(registered.binding);
     } catch {
       throw new ProfileOperationError('PROFILE_BINDING_INVALID', { projectId });
     }
-    if (source !== canonical || canonical !== serializeCanonicalJson(expected)) {
+    const baseMatches = registered.binding.profileId === expected.profileId &&
+      registered.binding.outputLanguage === expected.outputLanguage &&
+      registered.binding.upstreamProfile === expected.upstreamProfile &&
+      expected.adapters.every((adapter) => registered.binding.adapters.some((entry) =>
+        entry.adapterId === adapter.adapterId && entry.adapterVersion === adapter.adapterVersion));
+    if (source !== canonical || !baseMatches ||
+        (registered.binding.schemaVersion !== PROFILE_BINDING_V2_SCHEMA_VERSION &&
+          canonical !== serializeCanonicalJson(expected))) {
       throw new ProfileOperationError('PROFILE_DRIFT', { projectId });
     }
   }
@@ -104,10 +120,13 @@ export async function resolveRegisteredProfileBinding(
   });
 }
 
-export function createProfileBindingPreflight(knowledgeRoot: string): ProfileBindingPreflight {
+export function createProfileBindingPreflight(
+  knowledgeRoot: string,
+  options: ResolveRegisteredProfileBindingOptions = {},
+): ProfileBindingPreflight {
   return {
     async resolve(projectId): Promise<ProfileBinding> {
-      const registered = await resolveRegisteredProfileBinding(knowledgeRoot, projectId);
+      const registered = await resolveRegisteredProfileBinding(knowledgeRoot, projectId, options);
       return {
         mode: registered.binding.upstreamProfile,
         outputLanguage: registered.binding.outputLanguage,

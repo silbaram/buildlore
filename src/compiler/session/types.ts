@@ -36,8 +36,16 @@ export interface SessionCompileLimits {
 
 export interface SessionCitationAnchor {
   readonly anchorId: string;
+  readonly canonicalLine?: number;
+  readonly jsonPointer?: string;
   readonly originalFile: string;
   readonly originalLine: number;
+  readonly originalRange?: Readonly<{
+    readonly endColumn: number;
+    readonly endLine: number;
+    readonly startColumn: number;
+    readonly startLine: number;
+  }>;
   readonly quote: string;
   readonly quoteDigest: SessionSha256Digest;
   readonly sourceId: string;
@@ -53,7 +61,7 @@ export interface SessionPlannedSource {
   readonly sanitizedBody: string;
   readonly sanitizedContentDigest: SessionSha256Digest;
   readonly sourceId: string;
-  readonly sourceKind: 'code' | 'markdown' | 'planning' | 'text';
+  readonly sourceKind: 'code' | 'json' | 'markdown' | 'planning' | 'text';
   readonly sourceRef: string;
   readonly title: string;
 }
@@ -196,6 +204,7 @@ export interface SessionCitationBinding {
   readonly compilerSourceId: string;
   readonly originalFile: string;
   readonly originalLine: number;
+  readonly jsonPointer?: string;
   readonly quoteDigest: SessionSha256Digest;
   readonly sourceId: string;
 }

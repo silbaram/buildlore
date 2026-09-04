@@ -5,6 +5,7 @@ import {
   createProfileBindingPreflight,
   type ProfileBindingPreflight,
 } from '../profile/preflight.js';
+import type { RegisteredJsonKnowledgeAdapterV1 } from '../projector/json-knowledge-adapter.js';
 import { requiresEgress } from './capabilities.js';
 import { createLlmWikiCompilerBackend } from './backend.js';
 import { CompilerBackendError, CompilerOperationError } from './errors.js';
@@ -188,6 +189,7 @@ export interface CreateProjectCompilerOptions {
   readonly embeddingIdentityPort?: ProjectEmbeddingIdentityPort;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly knowledgeRoot: string;
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly outputLanguageCoordinator?: OutputLanguageCoordinator;
   readonly profilePreflight?: ProfileBindingPreflight;
 }
@@ -200,7 +202,9 @@ export function createProjectCompiler(options: CreateProjectCompilerOptions): Pr
   const knowledgeRoot = options.knowledgeRoot;
   const outputLanguageCoordinator = options.outputLanguageCoordinator ??
     processOutputLanguageCoordinator;
-  const profilePreflight = options.profilePreflight ?? createProfileBindingPreflight(knowledgeRoot);
+  const profilePreflight = options.profilePreflight ?? createProfileBindingPreflight(knowledgeRoot, {
+    registrations: options.jsonKnowledgeAdapters ?? [],
+  });
   const requestOrdering = new ProjectOperationCoordinator();
 
   async function resolveWorkspace(projectId: string): Promise<string> {
@@ -260,7 +264,12 @@ export function createProjectCompiler(options: CreateProjectCompilerOptions): Pr
           egressRequest = request;
           validateProviderTimeouts(request, environment);
           try {
-            egressPermit = await prepareCompilerEgress(knowledgeRoot, workspace, request);
+            egressPermit = await prepareCompilerEgress(
+              knowledgeRoot,
+              workspace,
+              request,
+              options.jsonKnowledgeAdapters ?? [],
+            );
           } catch {
             throw new CompilerOperationError(
               'COMPILER_EGRESS_DENIED',
@@ -293,6 +302,7 @@ export function createProjectCompiler(options: CreateProjectCompilerOptions): Pr
                 knowledgeRoot,
                 workspace,
                 egressRequest,
+                options.jsonKnowledgeAdapters ?? [],
               );
             } catch {
               throw new CompilerOperationError(

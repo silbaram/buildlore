@@ -262,7 +262,17 @@
         "kind": {
           "enum": ["document", "fenced-code", "heading", "list", "paragraph", "table"]
         },
+        "jsonPointer": { "type": "string", "maxLength": 1024 },
         "ordinal": { "type": "integer", "minimum": 0, "maximum": 8191 },
+        "origin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["range", "sourceRef"],
+          "properties": {
+            "range": { "$ref": "#/$defs/range" },
+            "sourceRef": { "$ref": "#/$defs/sourceRef" }
+          }
+        },
         "range": { "$ref": "#/$defs/range" },
         "contentDigest": { "$ref": "#/$defs/digest" },
         "topicLabel": {
@@ -981,6 +991,7 @@
       ],
       "properties": {
         "citationId": { "$ref": "#/$defs/citationId" },
+        "jsonPointer": { "type": "string", "maxLength": 1024 },
         "sourceId": { "$ref": "#/$defs/sourceId" },
         "sourceRevision": { "$ref": "#/$defs/digest" },
         "sourceRef": { "$ref": "#/$defs/sourceRef" },

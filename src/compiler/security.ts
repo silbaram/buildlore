@@ -18,7 +18,10 @@ import {
   validateCollectionSourceIdentityBinding,
   validateP2aSourceIdentity,
 } from '../projector/source-identity.js';
-import type { SourceAdapterRegistry } from '../projector/source-adapter-registry.js';
+import type {
+  SourceAdapterDefinitionV1,
+  SourceAdapterRegistry,
+} from '../projector/source-adapter-registry.js';
 import { resolveRegisteredProfileBinding } from '../profile/preflight.js';
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import { showProject } from '../knowledge/index.js';
@@ -82,8 +85,8 @@ function denied(): never {
 
 function isStoredSourceKind(
   value: string,
-): value is Extract<SecuritySourceKind, 'code' | 'execution' | 'markdown' | 'planning' | 'text'> {
-  return value === 'code' || value === 'execution' || value === 'markdown' ||
+): value is Extract<SecuritySourceKind, 'code' | 'execution' | 'json' | 'markdown' | 'planning' | 'text'> {
+  return value === 'code' || value === 'execution' || value === 'json' || value === 'markdown' ||
     value === 'planning' || value === 'text';
 }
 
@@ -277,7 +280,8 @@ async function providerInputs(
         return denied();
       }
       const sourceIdentity = document.buildlore.producer === 'buildlore' &&
-          (sourceKind === 'code' || sourceKind === 'markdown' || sourceKind === 'text')
+          (sourceKind === 'code' || sourceKind === 'json' ||
+            sourceKind === 'markdown' || sourceKind === 'text')
         ? validateCollectionSourceIdentityBinding({
             documentKind: sourceKind,
             projectId: request.projectId,
@@ -363,11 +367,14 @@ async function buildManifest(
   knowledgeRoot: string,
   workspace: string,
   request: CompilerRequest & { readonly capability: EgressCapability },
+  registrations: readonly SourceAdapterDefinitionV1[] = [],
 ): Promise<ProviderInputManifest> {
   const loaded = await readSecurityPolicy(knowledgeRoot, request.projectId);
   if (loaded.workspace !== workspace) return denied();
   const project = await showProject(knowledgeRoot, request.projectId);
-  const profile = await resolveRegisteredProfileBinding(knowledgeRoot, request.projectId)
+  const profile = await resolveRegisteredProfileBinding(knowledgeRoot, request.projectId, {
+    registrations,
+  })
     .catch(() => denied());
   if (profile.workspace !== workspace) return denied();
   const service = createProjectSecurityService({ knowledgeRoot });
@@ -441,9 +448,10 @@ export async function prepareCompilerEgress(
   knowledgeRoot: string,
   workspace: string,
   request: CompilerRequest & { readonly capability: EgressCapability },
+  registrations: readonly SourceAdapterDefinitionV1[] = [],
 ): Promise<CompilerSecurityPermit> {
   const stableRequest = Object.freeze({ ...request });
-  const manifest = await buildManifest(knowledgeRoot, workspace, stableRequest);
+  const manifest = await buildManifest(knowledgeRoot, workspace, stableRequest, registrations);
   return issueCompilerSecurityPermit({
     capability: manifest.capability,
     manifestDigest: manifest.digest,
@@ -459,6 +467,7 @@ export async function verifyAndConsumeCompilerEgress(
   knowledgeRoot: string,
   workspace: string,
   request: CompilerRequest & { readonly capability: EgressCapability },
+  registrations: readonly SourceAdapterDefinitionV1[] = [],
 ): Promise<void> {
   const stableRequest = Object.freeze({ ...request });
   const binding = issuedPermits.get(permit);
@@ -467,7 +476,7 @@ export async function verifyAndConsumeCompilerEgress(
       binding.manifestSchemaVersion !== PROVIDER_INPUT_MANIFEST_SCHEMA_VERSION ||
       binding.rulesVersion !== SANITIZER_RULES_VERSION) return denied();
   issuedPermits.set(permit, { ...binding, consumed: true });
-  const current = await buildManifest(knowledgeRoot, workspace, stableRequest);
+  const current = await buildManifest(knowledgeRoot, workspace, stableRequest, registrations);
   if (current.digest !== binding.manifestDigest || current.policyDigest !== binding.policyDigest ||
       current.manifestSchemaVersion !== binding.manifestSchemaVersion ||
       current.rulesVersion !== binding.rulesVersion) {

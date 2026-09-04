@@ -21,6 +21,7 @@ import { createP2aPlanningProjector } from './p2a-planning-projector.js';
 import { runHubProjectSync } from './hub-sync.js';
 import { normalizeProjectSyncSanitizationDiagnostics } from './sync-sanitization-diagnostics.js';
 import { isSafeP2aCompatibilityFieldName } from './p2a-codecs.js';
+import type { RegisteredJsonKnowledgeAdapterV1 } from './json-knowledge-adapter.js';
 import {
   PROJECTION_PLAN_SCHEMA_VERSION,
   type PlanningProjectorPort,
@@ -104,7 +105,7 @@ export interface ProjectSyncPlanEntrySummary {
   readonly decision: 'blocked' | 'error' | 'exclude' | 'include' | 'quarantine';
   readonly reasonCode: string;
   readonly security?: SanitizationReport;
-  readonly sourceKind: 'code' | 'execution' | 'markdown' | 'planning' | 'text';
+  readonly sourceKind: 'code' | 'execution' | 'json' | 'markdown' | 'planning' | 'text';
   readonly sourceRef: string | null;
   readonly sourceRevision: `sha256:${string}` | null;
   readonly target: string | null;
@@ -118,7 +119,7 @@ export interface ProjectSyncPlanSummary {
 }
 
 export interface ProjectSyncWriteSummary {
-  readonly sourceKind: 'code' | 'execution' | 'markdown' | 'planning' | 'text';
+  readonly sourceKind: 'code' | 'execution' | 'json' | 'markdown' | 'planning' | 'text';
   readonly sourceRevision: `sha256:${string}`;
   readonly target: string;
   readonly writeStatus: 'create' | 'unchanged' | 'update';
@@ -165,6 +166,7 @@ export interface ProjectSyncPort {
 
 export interface CreateProjectSyncServiceOptions {
   readonly executionProjector?: ExecutionKnowledgeProjectorPort;
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly planningProjector?: PlanningProjectorPort;
 }
 
@@ -625,6 +627,9 @@ export function createProjectSyncService(
             fail: (code, phase, failureOptions = {}) =>
               fail(code, phase, failureOptions),
           },
+          ...(options.jsonKnowledgeAdapters === undefined
+            ? {}
+            : { jsonKnowledgeAdapters: options.jsonKnowledgeAdapters }),
         });
       }
       let planningPlan: ProjectionPlan;

@@ -124,6 +124,89 @@ describe('hierarchical workflow evidence selection', () => {
     ], PROJECT_ID)).toThrowError('Hierarchical corpus contract is invalid.');
   });
 
+  it('splits JSON list and table blocks at pointer boundaries without assigning one to the virtual document', () => {
+    const listBody = [
+      '1. "alpha component architecture"',
+      '2. "beta retrieval pipeline"',
+    ].join('\n');
+    const listSource = Object.freeze({
+      ...source('1', 'data/components.json', listBody, 'json'),
+      jsonPointers: Object.freeze([
+        Object.freeze({ jsonPointer: '/components/0', line: 1 }),
+        Object.freeze({ jsonPointer: '/components/1', line: 2 }),
+      ]),
+    });
+    const tableBody = [
+      '| name |',
+      '| --- |',
+      '| alpha component |',
+    ].join('\n');
+    const tableSource = Object.freeze({
+      ...source('2', 'data/rows.json', tableBody, 'json'),
+      jsonPointers: Object.freeze([
+        Object.freeze({ jsonPointer: '/rows', line: 1 }),
+        Object.freeze({ jsonPointer: '/rows', line: 2 }),
+        Object.freeze({ jsonPointer: '/rows/0', line: 3 }),
+      ]),
+    });
+
+    const units = createSubstantiveHierarchyTextUnits(
+      [listSource, tableSource],
+      PROJECT_ID,
+    );
+    const listUnits = units.filter((unit) => unit.sourceId === listSource.sourceId);
+    const tableUnits = units.filter((unit) => unit.sourceId === tableSource.sourceId);
+    expect(listUnits.map((unit) => [unit.kind, unit.jsonPointer, unit.range])).toEqual([
+      ['document', undefined, { endColumn: 1, endLine: 1, startColumn: 1, startLine: 1 }],
+      ['list', '/components/0', { endColumn: 33, endLine: 1, startColumn: 1, startLine: 1 }],
+      ['list', '/components/1', { endColumn: 28, endLine: 2, startColumn: 1, startLine: 2 }],
+    ]);
+    expect(tableUnits.map((unit) => [unit.kind, unit.jsonPointer, unit.range])).toEqual([
+      ['document', undefined, { endColumn: 1, endLine: 1, startColumn: 1, startLine: 1 }],
+      ['table', '/rows', { endColumn: 7, endLine: 2, startColumn: 1, startLine: 1 }],
+      ['table', '/rows/0', { endColumn: 19, endLine: 3, startColumn: 1, startLine: 3 }],
+    ]);
+    expect(listUnits.slice(1).map((unit) => extractHierarchyTextUnitContent(
+      listBody,
+      unit.range,
+      PROJECT_ID,
+    ))).toEqual([
+      '1. "alpha component architecture"',
+      '2. "beta retrieval pipeline"',
+    ]);
+  });
+
+  it('keeps a custom multi-input JSON line bound to its actual file and raw range', () => {
+    const body = 'Changed: src/projector/json-source-adapter.ts';
+    const actualRange = Object.freeze({
+      endColumn: 58,
+      endLine: 7,
+      startColumn: 18,
+      startLine: 7,
+    });
+    const virtualSource = Object.freeze({
+      ...source('3', 'adapter/combined.json', body, 'json'),
+      jsonOrigins: Object.freeze([Object.freeze({
+        jsonPointer: '/changedFiles/0',
+        line: 1,
+        range: actualRange,
+        sourceRef: 'runs/attempt-a.json',
+      })]),
+    });
+
+    const unit = createSubstantiveHierarchyTextUnits([virtualSource], PROJECT_ID)
+      .find((candidate) => candidate.kind === 'paragraph');
+    expect(unit).toMatchObject({
+      jsonPointer: '/changedFiles/0',
+      origin: {
+        range: actualRange,
+        sourceRef: 'runs/attempt-a.json',
+      },
+      sourceRef: 'adapter/combined.json',
+    });
+    expect(unit?.contentDigest).toBe(hierarchySha256(body));
+  });
+
   it('selects heading-scoped units in document order before lexical fallback', () => {
     const sources = [
       source('1', 'docs/payments.md', '# Payments\n\n## Payment requests\n\n' +

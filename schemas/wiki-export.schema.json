@@ -33,6 +33,7 @@
               "required": ["citationId", "pageRef", "projectId", "range", "sourceRef", "sourceRevision"],
               "properties": {
                 "citationId": { "type": "string", "pattern": "^citation-[a-f0-9]{64}$" },
+                "jsonPointer": { "type": "string", "maxLength": 1024 },
                 "pageRef": { "$ref": "#/$defs/pageRef" },
                 "projectId": { "$ref": "#/$defs/projectId" },
                 "range": {

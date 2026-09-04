@@ -5,16 +5,20 @@ import { parseDocument } from 'yaml';
 import { SourceDocumentError, type SourceDocumentErrorCode } from './errors.js';
 import {
   parseSourceDescriptor,
+  validateJsonPointer,
   validateSourceOriginRange,
-  type SourceDescriptorV1,
+  type SourceDescriptor,
+  type SourceJsonOriginMappingV1,
   type SourceRangeMappingV1,
 } from './source-contracts.js';
 import { normalizeRfc3339Instant } from './timestamp.js';
 import { sliceUnicodeScalars, unicodeScalarLength } from './text-units.js';
 import {
   MAX_SOURCE_BODY_CHARS,
+  MAX_SOURCE_ORIGIN_MAPPINGS,
   SOURCE_DOCUMENT_SCHEMA_VERSION,
   SOURCE_DOCUMENT_V2_SCHEMA_VERSION,
+  SOURCE_DOCUMENT_V3_SCHEMA_VERSION,
   type BuildLoreSourceMetadata,
   type CreateSourceDocumentInput,
   type SourceDocument,
@@ -141,7 +145,7 @@ function sourceType(value: unknown): SourceType | undefined {
 }
 
 function parseRangeMappings(value: unknown): readonly SourceRangeMappingV1[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 128) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_SOURCE_ORIGIN_MAPPINGS) {
     return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mappings are invalid.');
   }
   let previousEndLine = 0;
@@ -164,6 +168,48 @@ function parseRangeMappings(value: unknown): readonly SourceRangeMappingV1[] {
     }
     previousEndLine = canonical.endLine;
     return Object.freeze({ canonical, origin });
+  });
+  return Object.freeze(mappings);
+}
+
+function parseJsonOrigins(value: unknown): readonly SourceJsonOriginMappingV1[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_SOURCE_ORIGIN_MAPPINGS) {
+    return invalid('SOURCE_DOCUMENT_INVALID', 'JSON origin mappings are invalid.');
+  }
+  let previousEndLine = 0;
+  let previousEndColumn = 0;
+  const mappings = value.map((entry) => {
+    if (!isRecord(entry)) {
+      return invalid('SOURCE_DOCUMENT_INVALID', 'JSON origin mapping is invalid.');
+    }
+    requireExactKeys(entry, ['canonical', 'origin']);
+    const origin = requireRecord(entry.origin, 'JSON origin');
+    requireExactKeys(origin, ['contentHash', 'jsonPointer', 'range', 'sourceRef']);
+    let canonical;
+    let range;
+    let jsonPointer;
+    try {
+      canonical = validateSourceOriginRange(entry.canonical);
+      range = validateSourceOriginRange(origin.range);
+      jsonPointer = validateJsonPointer(origin.jsonPointer);
+    } catch {
+      return invalid('SOURCE_DOCUMENT_INVALID', 'JSON origin mapping is invalid.');
+    }
+    if (
+      canonical.startLine < previousEndLine ||
+      (canonical.startLine === previousEndLine && canonical.startColumn <= previousEndColumn)
+    ) return invalid('SOURCE_DOCUMENT_INVALID', 'JSON origin mappings overlap.');
+    previousEndLine = canonical.endLine;
+    previousEndColumn = canonical.endColumn;
+    return Object.freeze({
+      canonical,
+      origin: Object.freeze({
+        contentHash: requireDigest(origin.contentHash, 'JSON origin contentHash'),
+        jsonPointer,
+        range,
+        sourceRef: requireString(origin.sourceRef, 'JSON origin sourceRef', { max: 512 }),
+      }),
+    });
   });
   return Object.freeze(mappings);
 }
@@ -206,6 +252,28 @@ function assertRangeMappingsWithinBody(
       boundary.endColumn,
     ))) {
     return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mappings exceed the canonical body.');
+  }
+  return mappings;
+}
+
+function assertJsonOriginsWithinBody(
+  mappings: readonly SourceJsonOriginMappingV1[],
+  body: string,
+): readonly SourceJsonOriginMappingV1[] {
+  const boundary = bodyEnd(body);
+  if (mappings.some((mapping) =>
+    positionAfter(
+      mapping.canonical.startLine,
+      mapping.canonical.startColumn,
+      boundary.endLine,
+      boundary.endColumn,
+    ) || positionAfter(
+      mapping.canonical.endLine,
+      mapping.canonical.endColumn,
+      boundary.endLine,
+      boundary.endColumn,
+    ))) {
+    return invalid('SOURCE_DOCUMENT_INVALID', 'JSON origin mappings exceed the canonical body.');
   }
   return mappings;
 }
@@ -277,9 +345,12 @@ function parseBuildLore(
   const commonKeys = [
     'contentHash', 'producer', 'projectId', 'schemaVersion', 'sourceKind', 'sourceRevision',
   ];
-  requireExactKeys(record, schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION
-    ? [...commonKeys, 'descriptor', 'originMappings']
-    : commonKeys);
+  requireExactKeys(record,
+    schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION
+      ? [...commonKeys, 'descriptor', 'originMappings']
+      : schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION
+        ? [...commonKeys, 'descriptor', 'jsonOrigins']
+        : commonKeys);
   if (record.schemaVersion !== schemaVersion) {
     return invalid('SOURCE_SCHEMA_UNSUPPORTED', 'SourceDocument schema is unsupported.');
   }
@@ -287,23 +358,44 @@ function parseBuildLore(
   if (contentHash !== sha256(body)) {
     return invalid('SOURCE_DOCUMENT_INVALID', 'Source body hash does not match metadata.');
   }
-  let descriptor: SourceDescriptorV1 | undefined;
+  let descriptor: SourceDescriptor | undefined;
   let originMappings: readonly SourceRangeMappingV1[] | undefined;
-  if (schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION) {
+  let jsonOrigins: readonly SourceJsonOriginMappingV1[] | undefined;
+  if (
+    schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION ||
+    schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION
+  ) {
     try {
       descriptor = parseSourceDescriptor(record.descriptor);
     } catch {
       return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor is invalid.');
     }
-    originMappings = assertRangeMappingsWithinBody(
-      parseRangeMappings(record.originMappings),
-      body,
-    );
+    if (schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION) {
+      if (descriptor.schemaVersion !== 'buildlore.source-descriptor.v1') {
+        return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor version is invalid.');
+      }
+      originMappings = assertRangeMappingsWithinBody(
+        parseRangeMappings(record.originMappings),
+        body,
+      );
+    } else {
+      if (descriptor.schemaVersion !== 'buildlore.source-descriptor.v2') {
+        return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor version is invalid.');
+      }
+      jsonOrigins = assertJsonOriginsWithinBody(parseJsonOrigins(record.jsonOrigins), body);
+      const inputs = new Map(descriptor.inputBindings.map((entry) =>
+        [entry.sourceRef, entry.contentHash] as const));
+      if (jsonOrigins.some((mapping) =>
+        inputs.get(mapping.origin.sourceRef) !== mapping.origin.contentHash)) {
+        return invalid('SOURCE_DOCUMENT_INVALID', 'JSON origin input binding is invalid.');
+      }
+    }
   }
   return {
     contentHash,
     ...(descriptor === undefined ? {} : { descriptor }),
     ...(originMappings === undefined ? {} : { originMappings }),
+    ...(jsonOrigins === undefined ? {} : { jsonOrigins }),
     producer: requireString(record.producer, 'producer', { identifier: true, max: 64 }),
     projectId: requireString(record.projectId, 'projectId', { identifier: true, max: 64 }),
     schemaVersion,
@@ -343,7 +435,8 @@ export function validateSourceDocument(value: unknown): SourceDocument {
   const record = requireRecord(value, 'SourceDocument');
   if (
     record.schemaVersion !== SOURCE_DOCUMENT_SCHEMA_VERSION &&
-    record.schemaVersion !== SOURCE_DOCUMENT_V2_SCHEMA_VERSION
+    record.schemaVersion !== SOURCE_DOCUMENT_V2_SCHEMA_VERSION &&
+    record.schemaVersion !== SOURCE_DOCUMENT_V3_SCHEMA_VERSION
   ) {
     return invalid('SOURCE_SCHEMA_UNSUPPORTED', 'SourceDocument schema is unsupported.');
   }
@@ -363,14 +456,20 @@ export function validateSourceDocument(value: unknown): SourceDocument {
   const parsedSourceType = sourceType(record.sourceType);
   const source = requireString(record.source, 'source', { max: 4096 });
   const buildlore = parseBuildLore(record.buildlore, body, schemaVersion);
-  if (schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION) {
+  if (
+    schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION ||
+    schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION
+  ) {
     const descriptor = buildlore.descriptor;
     if (
       descriptor === undefined ||
       descriptor.projectId !== buildlore.projectId ||
       descriptor.sourceUri !== source ||
       descriptor.sourceRevision !== buildlore.sourceRevision ||
-      descriptor.kind !== buildlore.sourceKind
+      descriptor.kind !== buildlore.sourceKind ||
+      (schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION &&
+        descriptor.schemaVersion === 'buildlore.source-descriptor.v2' &&
+        descriptor.projectionRevision !== buildlore.sourceRevision)
     ) return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor binding is invalid.');
   }
   return {
@@ -388,7 +487,7 @@ export function validateSourceDocument(value: unknown): SourceDocument {
 
 export function createSourceDocument(input: CreateSourceDocumentInput): SourceDocument {
   const canonical = canonicalBody(input.body);
-  let descriptor: SourceDescriptorV1 | undefined;
+  let descriptor: SourceDescriptor | undefined;
   if (input.descriptor !== undefined) {
     try {
       descriptor = parseSourceDescriptor(input.descriptor);
@@ -398,17 +497,24 @@ export function createSourceDocument(input: CreateSourceDocumentInput): SourceDo
   }
   const schemaVersion = descriptor === undefined
     ? SOURCE_DOCUMENT_SCHEMA_VERSION
-    : SOURCE_DOCUMENT_V2_SCHEMA_VERSION;
+    : descriptor.schemaVersion === 'buildlore.source-descriptor.v2'
+      ? SOURCE_DOCUMENT_V3_SCHEMA_VERSION
+      : SOURCE_DOCUMENT_V2_SCHEMA_VERSION;
   const originMappings = input.originMappings === undefined
     ? undefined
     : fitRangeMappings(input.originMappings, canonical.body, canonical.truncated);
+  const jsonOrigins = input.jsonOrigins === undefined
+    ? undefined
+    : assertJsonOriginsWithinBody(parseJsonOrigins(input.jsonOrigins), canonical.body);
   if (
     descriptor !== undefined && (
       descriptor.projectId !== input.projectId ||
       descriptor.sourceUri !== input.source ||
       descriptor.sourceRevision !== input.sourceRevision ||
       descriptor.kind !== input.sourceKind ||
-      originMappings === undefined
+      (schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION && originMappings === undefined) ||
+      (schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION &&
+        (jsonOrigins === undefined || canonical.truncated))
     )
   ) return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor binding is invalid.');
   return validateSourceDocument({
@@ -419,6 +525,7 @@ export function createSourceDocument(input: CreateSourceDocumentInput): SourceDo
       projectId: input.projectId,
       ...(descriptor === undefined ? {} : { descriptor }),
       ...(originMappings === undefined ? {} : { originMappings }),
+      ...(jsonOrigins === undefined ? {} : { jsonOrigins }),
       schemaVersion,
       sourceKind: input.sourceKind,
       sourceRevision: input.sourceRevision,
@@ -464,6 +571,11 @@ export function renderSourceDocument(value: SourceDocument): string {
     lines.push(
       `  descriptor: ${JSON.stringify(document.buildlore.descriptor)}`,
       `  originMappings: ${JSON.stringify(document.buildlore.originMappings)}`,
+    );
+  } else if (document.schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION) {
+    lines.push(
+      `  descriptor: ${JSON.stringify(document.buildlore.descriptor)}`,
+      `  jsonOrigins: ${JSON.stringify(document.buildlore.jsonOrigins)}`,
     );
   }
   lines.push('---', '');

@@ -16,19 +16,29 @@ export { createProjectLifecycleProfile } from './manager.js';
 export { materializeLifecycleProfile } from './materializer.js';
 export {
   createBuiltInProfileBinding,
+  createProfileBindingV2,
   parseProfileBinding,
   PROFILE_BINDING_SCHEMA_VERSION,
+  PROFILE_BINDING_V2_SCHEMA_VERSION,
   profileBindingForLegacyResolution,
   registerProfileBinding,
+  type AnyProfileBinding,
   type BuiltInProfileId,
   type ProfileAdapterBindingV1,
+  type ProfileAdapterBindingV2,
   type ProfileBindingV1,
+  type ProfileBindingV2,
+  type RegisteredProfileBinding,
   type RegisteredProfileBindingV1,
+  type RegisteredProfileBindingV2,
+  type RegisterProfileBindingOptions,
 } from './bindings.js';
 export {
   createProfileBindingPreflight,
   resolveRegisteredProfileBinding,
   type ProfileBindingPreflight,
+  type ResolveRegisteredProfileBindingOptions,
+  type ResolvedRegisteredProfileBinding,
   type ResolvedRegisteredProfileBindingV1,
 } from './preflight.js';
 export {

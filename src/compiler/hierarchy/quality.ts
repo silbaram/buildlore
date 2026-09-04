@@ -318,8 +318,12 @@ function assertCanonicalPack(pack: EvidencePackV1, projectId: string): void {
       ], projectId);
       exactKeys(unit.citation, [
         'citationId', 'quoteDigest', 'range', 'sourceId', 'sourceRef', 'sourceRevision',
+        ...(unit.citation.jsonPointer === undefined ? [] : ['jsonPointer']),
       ], projectId);
       const citationBasis = {
+        ...(unit.citation.jsonPointer === undefined
+          ? {}
+          : { jsonPointer: unit.citation.jsonPointer }),
         sourceId: unit.sourceId,
         sourceRevision: unit.citation.sourceRevision,
         sourceRef: unit.citation.sourceRef,

@@ -695,6 +695,25 @@ async function buildLiveHierarchy(
     })));
     const hierarchySources = Object.freeze(planned.map((source) => Object.freeze({
       body: source.sanitizedBody,
+      jsonOrigins: Object.freeze(source.citationAnchors.flatMap((anchor) =>
+        anchor.canonicalLine === undefined || anchor.jsonPointer === undefined ||
+          anchor.originalRange === undefined
+          ? []
+          : [{
+              jsonPointer: anchor.jsonPointer,
+              line: anchor.canonicalLine,
+              range: anchor.originalRange,
+              sourceRef: anchor.originalFile,
+            }]
+      ).map((entry) => Object.freeze(entry))),
+      jsonPointers: Object.freeze(source.citationAnchors.flatMap((anchor) =>
+        anchor.canonicalLine === undefined || anchor.jsonPointer === undefined
+          ? []
+          : [{ canonicalLine: anchor.canonicalLine, jsonPointer: anchor.jsonPointer }]
+      ).map((entry) => Object.freeze({
+        jsonPointer: entry.jsonPointer,
+        line: entry.canonicalLine,
+      }))),
       sourceId: sourceIds.get(source.sourceId) as string,
       sourceKind: source.sourceKind,
       sourceRef: source.sourceRef,

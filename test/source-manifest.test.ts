@@ -276,6 +276,9 @@ describe('project-owned source collection manifest', () => {
       'wiki/generated.md',
       'exports/wiki.md',
       'docs/access-token/value.md',
+      'docs/AKIAA1B2C3D4E5F6G7H8.json',
+      `docs/ghp_${'A'.repeat(20)}.json`,
+      `docs/sk-${'A'.repeat(20)}.json`,
       `docs/${'a'.repeat(MAX_SOURCE_PATH_LENGTH)}.md`,
     ]) {
       expect(() => parseSourceCollectionManifest(manifest([{ ...safeSource, path }])))
@@ -937,9 +940,9 @@ describe('project-owned source collection manifest', () => {
           readonly allOf: readonly [unknown, {
             readonly oneOf: readonly {
               readonly properties: {
-                readonly adapterId: { readonly const: string };
+                readonly adapterId: { readonly const?: string; readonly not?: unknown };
                 readonly kind: { readonly const?: string; readonly enum?: readonly string[] };
-                readonly metadata: unknown;
+                readonly metadata?: unknown;
               };
             }[];
           }];
@@ -986,13 +989,20 @@ describe('project-owned source collection manifest', () => {
 
     expect(schema.$defs.declaration['x-buildlore-requiresProfileAdapter']).toBe(true);
     const variants = schema.$defs.declaration.allOf[1].oneOf;
-    expect(variants.map((variant) => variant.properties.adapterId.const)).toEqual([
+    expect(variants.flatMap((variant) =>
+      variant.properties.adapterId.const === undefined
+        ? []
+        : [variant.properties.adapterId.const])).toEqual([
       'buildlore.generic',
+      'buildlore.json',
       'buildlore.p2a',
     ]);
     expect(variants[0]?.properties.kind.enum).toEqual(['code', 'markdown', 'text']);
-    expect(variants[1]?.properties.kind.const).toBe('planning');
+    expect(variants[1]?.properties.kind.const).toBe('json');
+    expect(variants[2]?.properties.kind.const).toBe('planning');
+    expect(variants[3]?.properties.kind.const).toBe('json');
     expect(JSON.stringify(variants)).toContain('buildlore.generic-metadata.v1');
+    expect(JSON.stringify(variants)).toContain('buildlore.json-metadata.v1');
     expect(JSON.stringify(variants)).toContain('buildlore.p2a-metadata.v1');
   });
 });

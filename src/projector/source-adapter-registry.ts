@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+
+import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
+import type { Sha256Digest } from '../knowledge/local-project-registry.js';
 import { ProjectionError } from './errors.js';
 import {
   MAX_SOURCE_METADATA_BYTES,
@@ -16,6 +20,7 @@ import {
 } from './source-contracts.js';
 
 export const GENERIC_SOURCE_ADAPTER_ID = 'buildlore.generic' as const;
+export const JSON_SOURCE_ADAPTER_ID = 'buildlore.json' as const;
 export const P2A_SOURCE_ADAPTER_ID = 'buildlore.p2a' as const;
 
 export interface SourceAdapterDefinitionV1 {
@@ -66,6 +71,19 @@ const GENERIC_REGISTRATION = parseSourceAdapterRegistration({
   },
   metadataNamespace: GENERIC_SOURCE_ADAPTER_ID,
   metadataSchemaVersion: 'buildlore.generic-metadata.v1',
+});
+
+const JSON_REGISTRATION = parseSourceAdapterRegistration({
+  adapterId: JSON_SOURCE_ADAPTER_ID,
+  adapterVersion: 1,
+  kinds: [{ kind: 'json', mediaTypes: ['application/json'] }],
+  limits: {
+    maxMetadataBytes: MAX_SOURCE_METADATA_BYTES,
+    maxMetadataDepth: MAX_SOURCE_METADATA_DEPTH,
+    maxMetadataKeys: MAX_SOURCE_METADATA_KEYS,
+  },
+  metadataNamespace: JSON_SOURCE_ADAPTER_ID,
+  metadataSchemaVersion: 'buildlore.json-metadata.v1',
 });
 
 const P2A_REGISTRATION = parseSourceAdapterRegistration({
@@ -158,6 +176,17 @@ export function p2aSourceAdapter(): SourceAdapterDefinitionV1 {
   return adapter(P2A_REGISTRATION);
 }
 
+export function jsonSourceAdapter(): SourceAdapterDefinitionV1 {
+  return adapter(JSON_REGISTRATION);
+}
+
+export function sourceAdapterRegistrationDigest(
+  registration: SourceAdapterRegistrationV1,
+): Sha256Digest {
+  const canonical = serializeCanonicalJson(parseSourceAdapterRegistration(registration));
+  return `sha256:${createHash('sha256').update(canonical, 'utf8').digest('hex')}`;
+}
+
 export function mediaTypeForGenericKind(kind: GenericSourceKind): RegisteredMediaType {
   switch (kind) {
     case 'code':
@@ -174,7 +203,7 @@ export function createSourceAdapterRegistry(
 ): SourceAdapterRegistry {
   const byId = new Map<string, SourceAdapterDefinitionV1>();
   const namespaces = new Set<string>();
-  const kinds = new Set<RegisteredSourceKind>();
+  const exclusiveKinds = new Set<RegisteredSourceKind>();
   for (const candidate of adapters) {
     const registration = parseSourceAdapterRegistration(candidate.registration);
     if (byId.has(registration.adapterId)) return fail('Source adapter id is duplicated.');
@@ -182,8 +211,10 @@ export function createSourceAdapterRegistry(
       return fail('Source adapter metadata namespace is duplicated.');
     }
     for (const entry of registration.kinds) {
-      if (kinds.has(entry.kind)) return fail('Source adapter kind is duplicated.');
-      kinds.add(entry.kind);
+      if (entry.kind !== 'json' && exclusiveKinds.has(entry.kind)) {
+        return fail('Source adapter kind is duplicated.');
+      }
+      if (entry.kind !== 'json') exclusiveKinds.add(entry.kind);
     }
     byId.set(registration.adapterId, Object.freeze({
       mapRange: (
@@ -236,6 +267,7 @@ export function createBuiltInSourceAdapterRegistry(
 ): SourceAdapterRegistry {
   const adapters = [
     genericSourceAdapter(),
+    jsonSourceAdapter(),
     ...(options.includeP2a === false ? [] : [p2aSourceAdapter()]),
     ...(options.registrations ?? []),
   ];

@@ -126,7 +126,13 @@ export interface TextUnitV1 {
   readonly sourceRevision: HierarchySha256Digest;
   readonly sourceRef: string;
   readonly kind: TextUnitKind;
+  readonly jsonPointer?: string;
   readonly ordinal: number;
+  /** Exact original JSON location when the canonical unit was synthesized from another input. */
+  readonly origin?: Readonly<{
+    readonly range: TextUnitRangeV1;
+    readonly sourceRef: string;
+  }>;
   readonly range: TextUnitRangeV1;
   readonly contentDigest: HierarchySha256Digest;
   /** Sanitized, digest-verified topic text when the unit can name an outline topic. */
@@ -393,6 +399,7 @@ export interface SanitizedEvidenceSourceV1 {
 
 export interface EvidenceCitationAnchorV1 {
   readonly citationId: string;
+  readonly jsonPointer?: string;
   readonly sourceId: string;
   readonly sourceRevision: HierarchySha256Digest;
   readonly sourceRef: string;

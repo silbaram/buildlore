@@ -157,7 +157,7 @@ function citationMatches(
   snapshot: SessionCompilePlanSnapshot,
 ): boolean {
   const source = snapshot.plan.sources.find((item) => item.sourceId === citation.sourceId);
-  if (source === undefined || source.sourceRef !== citation.file) return false;
+  if (source === undefined) return false;
   return source.citationAnchors.some((anchor) =>
     anchor.sourceId === citation.sourceId &&
     anchor.originalFile === citation.file &&
@@ -190,12 +190,16 @@ function citationBindings(
   return Object.freeze(proposal.citations.map((citation) => {
     const source = snapshot.plan.sources.find((item) => item.sourceId === citation.sourceId);
     if (source === undefined) return fail('SESSION_CITATION_INVALID', projectId);
+    const anchor = source.citationAnchors.find((candidate) =>
+      candidate.originalFile === citation.file && candidate.originalLine === citation.line &&
+      candidate.quote === citation.quote);
     return Object.freeze({
       citationId: citation.id,
       compilerSourceContentDigest: source.compilerSourceContentDigest,
       compilerSourceId: source.compilerSourceId,
       originalFile: citation.file,
       originalLine: citation.line,
+      ...(anchor?.jsonPointer === undefined ? {} : { jsonPointer: anchor.jsonPointer }),
       quoteDigest: sessionSha256(citation.quote),
       sourceId: citation.sourceId,
     });

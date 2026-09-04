@@ -114,6 +114,79 @@ node dist/cli/bin.js knowledge status
 정렬합니다. 내용의 의미가 같아도 필드·선언 순서, 들여쓰기 또는 줄바꿈 바이트가
 다르면 BuildLore가 거부합니다.
 
+#### 범용 JSON과 JSON knowledge adapter
+
+JSON을 생산자와 무관한 일반 source로 수집하려면 `buildlore.sources.v2`를
+사용합니다. 디렉터리를 선언하면 파일을 하나씩 나열할 필요 없이 선언한 경로 아래의
+일반 `.json` 파일을 모두 선택할 수 있습니다.
+
+```json
+{
+  "projectId": "a",
+  "schemaVersion": "buildlore.sources.v2",
+  "sourceRepository": "https://github.com/acme/a.git",
+  "sources": [
+    {
+      "adapterId": "buildlore.json",
+      "adapterVersion": 1,
+      "id": "run-data",
+      "kind": "json",
+      "path": "artifacts/runs",
+      "pathType": "directory",
+      "recursive": true
+    }
+  ]
+}
+```
+
+프로젝트의 `profile-binding.json`은 `buildlore.profile-binding.v2`를 사용하고 정확한
+adapter registration digest를 결속해야 합니다. digest를 임의로 만들지 말고 공개
+API `createProfileBindingV2(...)`로 계약을 생성합니다. 기존 v1 binding도 계속 읽지만
+의도적으로 기존 adapter만 허용합니다. v2 binding을 설치한 뒤에는
+`source add --kind json`으로 내장 JSON 선언을 추가할 수 있습니다.
+
+내장 JSON adapter는 strict UTF-8/JSON parsing을 수행하고 중복 key와 자원 상한
+위반을 거부하며, 객체 key를 canonical 순서로 정렬해 결정적인 Markdown evidence
+source를 만듭니다. `SourceDocument` v3는 생성된 모든 범위를 원본 `sourceRef`, RFC
+6901 JSON Pointer, 입력 hash 및 원본 위치에 연결합니다. 이 pointer는 compile,
+activation, semantic indexing, query와 citation 조회까지 보존됩니다.
+
+코드 없이 형식을 구체화하려면 선언의 `buildlore.json-metadata.v1` metadata values에
+정렬된 `profiles`와 선택적인 `profileRequired`를 둡니다. 공개
+`json-extraction-profile.schema.json` 계약은 exact match, include/exclude, title,
+section, array, display label 및 sort 규칙을 정의합니다. 여러 profile이 동시에
+일치하거나 required profile이 일치하지 않는 경우, pointer나 규칙이 잘못된 경우에는
+fail-closed 처리하며 도메인 의미를 추측하지 않습니다.
+
+신뢰하는 host는 `registerJsonKnowledgeAdapter(...)`로 versioned local adapter를
+등록하고 그 registration을 `createProfileBindingV2(...)`에 추가한 다음 sync, source
+management, compiler, activation 및 Wiki read service의 `jsonKnowledgeAdapters` 생성
+옵션으로 주입할 수 있고 Wiki read에는 같은 definition을
+`sourceAdapterRegistrations`로 전달합니다. Adapter는 BuildLore가 프로젝트 안에서
+읽고 deep freeze한 parsed document와 provenance만 받습니다. writer, filesystem, network,
+environment, clock 또는 process capability는 받지 않으며, 결과 draft도 공통
+sanitizer와 atomic writer 전에 BuildLore가 상한과 결속을 검증합니다.
+
+`p2aRunJsonKnowledgeAdapter()`는 같은 공개 계약 위에 구현한 선택적 reference
+adapter입니다. 신뢰하는 host가 이를 명시적으로 등록·주입하고 `runs/`와
+`iterations/`를 함께 포함하는 P2A artifact root 디렉터리를 adapter ID
+`buildlore.p2a-run`으로 선언해야 합니다. P2A run lineage 밖의 JSON은 제외합니다.
+지원하는 `p2a.run.v2`와 `p2a.run_index.v1`은 index, task graph, source spec, task
+contract 및 참조한 execution envelope가 모두 정확히 일치할 때만 처리하며, 연결된
+구현 run과 final verification을 병합하고 실패 후 성공 이력을 보존하며 중복 검증을
+제거합니다. 알 수 없는 run schema와 lineage 불일치는 해석하지 않고
+quarantine합니다.
+
+먼저 `sync --dry-run`을 실행합니다. JSON parse/profile/adapter 실패와 quarantine은
+값을 포함하지 않는 reason code로 보고되므로 source, binding, profile 또는 index를
+수정한 뒤 다시 preview합니다. Sanitizer는 투영 결과에서 제외한 필드까지 원본 JSON
+전체 byte를 검사하므로 extraction 규칙으로 의심되는 secret을 숨겨도 통과할 수
+없습니다. P2A reference adapter는 검증된 digest 필드만 hash로 취급하며 raw security
+copy의 workspace 경로는 공통 sanitizer가 redaction하도록 허용합니다. 의심되는
+credential이나 그 밖의 안전하지 않은 trace 내용은 계속 fail-closed 처리합니다.
+Preview 또는 sync 실패 시 일부 source를 기록하지 않으며 정상 Wiki와 semantic index
+authority도 교체하지 않습니다.
+
 ### 3. 허브에서 프로젝트 등록 및 바인딩
 
 모든 작업은 프로젝트 ID를 명시적으로 사용합니다. BuildLore는 기본 프로젝트를

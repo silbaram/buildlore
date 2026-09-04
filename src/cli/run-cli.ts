@@ -592,7 +592,7 @@ async function executeCommand(
       });
       return sourceManagement.add({
         id: requiredStringOption(command, '--id'),
-        kind: requiredStringOption(command, '--kind') as GenericSourceKind,
+        kind: requiredStringOption(command, '--kind') as GenericSourceKind | 'json',
         path: requiredStringOption(command, '--path'),
         projectId,
         ...(command.options['--recursive'] === true ? { recursive: true } : {}),

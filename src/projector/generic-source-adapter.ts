@@ -206,7 +206,7 @@ export async function projectSelectedGenericSource(
     repository: input.repository,
     sourceRef: input.selectedFile.sourceRef,
   });
-  const descriptor = parseSourceDescriptor({
+  const parsedDescriptor = parseSourceDescriptor({
     adapterId: GENERIC_SOURCE_ADAPTER_ID,
     adapterVersion: 1,
     contentHash: input.selectedFile.contentDigest,
@@ -222,6 +222,10 @@ export async function projectSelectedGenericSource(
     sourceRevision: input.selectedFile.contentDigest,
     sourceUri,
   });
+  if (parsedDescriptor.schemaVersion !== SOURCE_DESCRIPTOR_SCHEMA_VERSION) {
+    return fail('Generic source descriptor is invalid.');
+  }
+  const descriptor = parsedDescriptor;
   const candidate = {
     adapterId: GENERIC_SOURCE_ADAPTER_ID,
     adapterVersion: 1 as const,
@@ -286,7 +290,7 @@ export function createGenericProjectionSourceAdapter(
       }
       const candidates: GenericCollectionCandidate[] = [];
       for (const file of input.selectedFiles) {
-        if (file.documentKind === 'p2a-planning') {
+        if (file.documentKind === 'p2a-planning' || file.documentKind === 'json') {
           return fail('Generic source binding is invalid.');
         }
         candidates.push(await projectSelectedGenericSource({

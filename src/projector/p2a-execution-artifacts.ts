@@ -283,7 +283,9 @@ function excludeStarted(
 function exactIndexMatch(summary: P2aRunIndexEntry, run: ObservedP2aRun): boolean {
   return summary.runId === run.runId && summary.taskId === run.taskId &&
     summary.iterationId === run.iterationId && summary.status === run.status &&
-    summary.startedAt === run.startedAt && summary.finishedAt === run.finishedAt;
+    summary.startedAt === run.startedAt && summary.finishedAt === run.finishedAt &&
+    summary.agentTool === run.agentTool && summary.taskGraphRef === run.taskGraphRef &&
+    summary.workspaceRef === run.workspaceRef;
 }
 
 function resolveReference(graphRef: string, reference: string): string | null {

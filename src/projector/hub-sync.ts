@@ -37,6 +37,7 @@ import {
   type SourceCollectionAdapter,
 } from './collection-adapters.js';
 import { P2A_SOURCE_ADAPTER_ID } from './source-adapter-registry.js';
+import type { RegisteredJsonKnowledgeAdapterV1 } from './json-knowledge-adapter.js';
 import {
   createP2aExecutionKnowledgeProjector,
 } from './p2a-execution-projector.js';
@@ -84,6 +85,11 @@ import {
   buildProjectSyncSanitizationDiagnostics,
   type SyncSanitizationDiagnosticInput,
 } from './sync-sanitization-diagnostics.js';
+import {
+  boundRawSourceInputsAreSafe,
+  inspectRawSourceInputs,
+  rawSourceInputSanitizationIsSafe,
+} from './raw-source-inputs.js';
 
 const EMPTY_COUNTS: ProjectSyncDecisionCounts = Object.freeze({
   blocked: 0,
@@ -119,6 +125,7 @@ export interface HubSyncOptions {
   readonly executionProjector?: ExecutionKnowledgeProjectorPort;
   readonly failure: HubSyncFailurePort;
   readonly hooks?: HubSyncHooks;
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly sourceRevisionReader?: SourceRevisionReader;
 }
 
@@ -127,9 +134,10 @@ interface PreparedCandidate {
   readonly candidate: CollectionCandidate;
   readonly input: ProjectSourceInput;
   readonly metadataPrepared?: PreparedSource;
+  readonly rawPrepared?: readonly PreparedSource[];
   readonly report: SanitizationReport;
   readonly reports: readonly SanitizationReport[];
-  readonly sourceKind: 'code' | 'markdown' | 'planning' | 'text';
+  readonly sourceKind: 'code' | 'json' | 'markdown' | 'planning' | 'text';
   readonly titlePrepared: PreparedSource;
 }
 
@@ -140,7 +148,7 @@ interface SanitizedCandidate extends PreparedCandidate {
 interface RejectedCandidate {
   readonly candidate: CollectionCandidate;
   readonly reports: readonly SanitizationReport[];
-  readonly sourceKind: 'code' | 'markdown' | 'planning' | 'text';
+  readonly sourceKind: 'code' | 'json' | 'markdown' | 'planning' | 'text';
 }
 
 type CandidatePreparationOutcome =
@@ -441,7 +449,7 @@ function validatedPreparedResult(
     readonly policyDigest: Sha256Digest;
     readonly projectId: string;
     readonly source: string;
-    readonly sourceKind: 'code' | 'markdown' | 'planning' | 'text';
+    readonly sourceKind: 'code' | 'json' | 'markdown' | 'planning' | 'text';
     readonly sourceRevision: Sha256Digest;
   },
 ): PreparedSourceBinding | null {
@@ -474,7 +482,7 @@ function assertPrepared(
     readonly policyDigest: Sha256Digest;
     readonly projectId: string;
     readonly source: string;
-    readonly sourceKind: 'code' | 'markdown' | 'planning' | 'text';
+    readonly sourceKind: 'code' | 'json' | 'markdown' | 'planning' | 'text';
     readonly sourceRevision: Sha256Digest;
   },
   failure: HubSyncFailurePort,
@@ -531,15 +539,29 @@ async function prepareCandidate(
       sourceRevisionOrContentSha256: candidate.sourceRevision,
     }));
   }
+  const rawInputs = inspectRawSourceInputs(candidate);
+  for (const rawInput of rawInputs) {
+    requests.push(security.prepareSource({
+      body: rawInput.body,
+      bodyDigest: sha256(rawInput.body),
+      projectId: candidate.projectId,
+      source: candidate.sourceUri,
+      sourceKind,
+      sourceRevisionOrContentSha256: candidate.sourceRevision,
+    }));
+  }
   const settled = await Promise.allSettled(requests);
   const reports = settled.flatMap((outcome) =>
     outcome.status === 'fulfilled' ? [outcome.value.report] : []);
   const titleResult = settled[0];
   const bodyResult = settled[1];
   const metadataResult = settled[2];
+  const rawResultOffset = metadataBody === null ? 2 : 3;
+  const rawResults = settled.slice(rawResultOffset);
   if (
     titleResult?.status !== 'fulfilled' || bodyResult?.status !== 'fulfilled' ||
-    (metadataBody !== null && metadataResult?.status !== 'fulfilled')
+    (metadataBody !== null && metadataResult?.status !== 'fulfilled') ||
+    rawResults.some((result) => result.status !== 'fulfilled')
   ) {
     return Object.freeze({
       ok: false as const,
@@ -576,9 +598,30 @@ async function prepareCandidate(
     metadata !== null && metadataResult?.status === 'fulfilled' && metadataResult.value.ok &&
     metadata.approvedBody === metadataBody && metadataResult.value.report.summaries.length === 0
   );
+  const rawBindings = rawResults.map((result, index) => {
+    if (result.status !== 'fulfilled') return null;
+    const rawInput = rawInputs[index];
+    if (rawInput === undefined) return null;
+    return validatedPreparedResult(result.value, {
+      bodyDigest: sha256(rawInput.body),
+      policyDigest,
+      projectId: candidate.projectId,
+      source: candidate.sourceUri,
+      sourceKind,
+      sourceRevision: candidate.sourceRevision,
+    });
+  });
+  const rawInputsAreSafe = rawBindings.every((binding, index) =>
+    binding !== null && rawInputs[index] !== undefined &&
+    rawResults[index]?.status === 'fulfilled' && rawResults[index].value.ok &&
+    rawSourceInputSanitizationIsSafe(
+      rawInputs[index],
+      binding.approvedBody,
+      rawResults[index].value.report.summaries,
+    ));
   if (
     title === null || body === null || !titleResult.value.ok || !bodyResult.value.ok ||
-    !metadataIsSafe
+    !metadataIsSafe || !rawInputsAreSafe
   ) {
     return Object.freeze({
       ok: false as const,
@@ -592,6 +635,7 @@ async function prepareCandidate(
     ...(candidate.originMappings === undefined
       ? {}
       : { originMappings: candidate.originMappings }),
+    ...(candidate.jsonOrigins === undefined ? {} : { jsonOrigins: candidate.jsonOrigins }),
     producer: candidate.producer,
     sourceKind: candidate.sourceKind,
     sourceRevision: candidate.sourceRevision,
@@ -608,11 +652,17 @@ async function prepareCandidate(
       ...(metadataBody === null || metadataResult?.status !== 'fulfilled' || !metadataResult.value.ok
         ? {}
         : { metadataPrepared: metadataResult.value.prepared }),
+      ...(rawInputs.length === 0
+        ? {}
+        : { rawPrepared: Object.freeze(rawResults.flatMap((result) =>
+            result.status === 'fulfilled' && result.value.ok ? [result.value.prepared] : [])) }),
       report: bodyResult.value.report,
       reports: Object.freeze([
         titleResult.value.report,
         bodyResult.value.report,
         ...(metadataResult?.status === 'fulfilled' ? [metadataResult.value.report] : []),
+        ...rawResults.flatMap((result) =>
+          result.status === 'fulfilled' ? [result.value.report] : []),
       ]),
       sourceKind,
       titlePrepared: titleResult.value.prepared,
@@ -624,6 +674,7 @@ async function initialState(
   input: HubProjectSyncInput,
   revisionReader: SourceRevisionReader,
   failure: HubSyncFailurePort,
+  jsonKnowledgeAdapters: readonly RegisteredJsonKnowledgeAdapterV1[] = [],
 ): Promise<PlannedState> {
   const knowledgeRoot = join(input.hubRoot, 'knowledge');
   let project;
@@ -639,20 +690,26 @@ async function initialState(
       input.projectId,
       project.entry.sourceRepository,
     );
-    profile = await resolveRegisteredProfileBinding(knowledgeRoot, input.projectId);
+    profile = await resolveRegisteredProfileBinding(knowledgeRoot, input.projectId, {
+      registrations: jsonKnowledgeAdapters,
+    });
     revision = await revisionReader.read(binding.checkout);
   } catch (cause) {
     return failure.fail('SYNC_BINDING_FAILED', 'binding', { cause });
   }
   let loadedManifest;
   try {
-    loadedManifest = await readSourceCollectionManifest(binding.checkout, input.projectId);
+    loadedManifest = await readSourceCollectionManifest(binding.checkout, input.projectId, {
+      sourceAdapterRegistry: profile.sourceAdapters,
+    });
   } catch (cause) {
     return failure.fail('SYNC_MANIFEST_FAILED', 'manifest', { cause });
   }
   let inventory;
   try {
-    inventory = await selectDeclaredSourceFiles(binding.checkout, loadedManifest);
+    inventory = await selectDeclaredSourceFiles(binding.checkout, loadedManifest, {
+      sourceAdapterRegistry: profile.sourceAdapters,
+    });
   } catch (cause) {
     return failure.fail('SYNC_SELECTION_FAILED', 'selection', { cause });
   }
@@ -681,6 +738,7 @@ async function assertInputsUnchanged(
   prepared: readonly SanitizedCandidate[],
   writer: ProjectSourceWriter,
   failure: HubSyncFailurePort,
+  jsonKnowledgeAdapters: readonly RegisteredJsonKnowledgeAdapterV1[] = [],
 ): Promise<void> {
   try {
     const knowledgeRoot = join(input.hubRoot, 'knowledge');
@@ -694,10 +752,16 @@ async function assertInputsUnchanged(
       project.entry.sourceRepository,
     );
     const revision = await revisionReader.read(binding.checkout);
-    const manifest = await readSourceCollectionManifest(binding.checkout, input.projectId);
-    const inventory = await selectDeclaredSourceFiles(binding.checkout, manifest);
+    const profile = await resolveRegisteredProfileBinding(knowledgeRoot, input.projectId, {
+      registrations: jsonKnowledgeAdapters,
+    });
+    const manifest = await readSourceCollectionManifest(binding.checkout, input.projectId, {
+      sourceAdapterRegistry: profile.sourceAdapters,
+    });
+    const inventory = await selectDeclaredSourceFiles(binding.checkout, manifest, {
+      sourceAdapterRegistry: profile.sourceAdapters,
+    });
     const policy = await readSecurityPolicy(knowledgeRoot, input.projectId);
-    const profile = await resolveRegisteredProfileBinding(knowledgeRoot, input.projectId);
     if (
       serializeCanonicalJson(project.entry) !== planned.projectEntryJson ||
       workspace !== planned.workspace || binding.bindingDigest !== planned.binding.bindingDigest ||
@@ -727,6 +791,7 @@ function collectionEntries(
     readonly target?: string;
     readonly writeStatus?: 'create' | 'unchanged' | 'update';
   }>[],
+  inventory: SourceSelectionInventory,
   failure: HubSyncFailurePort,
 ): readonly ProjectSyncPlanEntrySummary[] {
   const entries: ProjectSyncPlanEntrySummary[] = prepared.map((item) => Object.freeze({
@@ -742,15 +807,21 @@ function collectionEntries(
     writeStatus: item.snapshot.writeStatus,
   }));
   for (const entry of adapterEntries) {
-    if (entry.adapterId !== P2A_SOURCE_ADAPTER_ID) {
-      return failure.fail('SYNC_SELECTION_FAILED', 'selection');
-    }
     if (entry.decision === 'include') continue;
     if (!['blocked', 'error', 'exclude', 'quarantine'].includes(entry.decision)) continue;
+    const selected = entry.adapterId === P2A_SOURCE_ADAPTER_ID
+      ? undefined
+      : inventory.files.find((file) =>
+          file.adapterId === entry.adapterId && file.sourceRef === entry.sourceRef);
+    if (entry.adapterId !== P2A_SOURCE_ADAPTER_ID && selected?.kind === undefined) {
+      return failure.fail('SYNC_SELECTION_FAILED', 'selection');
+    }
     entries.push(Object.freeze({
       decision: entry.decision as 'blocked' | 'error' | 'exclude' | 'quarantine',
       reasonCode: entry.reasonCode,
-      sourceKind: 'planning',
+      sourceKind: entry.adapterId === P2A_SOURCE_ADAPTER_ID
+        ? 'planning'
+        : selected?.kind ?? 'json',
       sourceRef: safePlanningRef(entry.sourceRef),
       sourceRevision: entry.sourceRevision ?? null,
       target: entry.target ?? null,
@@ -797,10 +868,19 @@ export async function runHubProjectSync(
 ): Promise<ProjectSyncSummary> {
   const { failure } = options;
   const revisionReader = options.sourceRevisionReader ?? createSourceRevisionReader();
-  const adapter = options.collectionAdapter ?? createSourceCollectionAdapter();
+  const adapter = options.collectionAdapter ?? createSourceCollectionAdapter({
+    ...(options.jsonKnowledgeAdapters === undefined
+      ? {}
+      : { jsonKnowledgeAdapters: options.jsonKnowledgeAdapters }),
+  });
   const executionProjector = options.executionProjector ??
     createP2aExecutionKnowledgeProjector();
-  const planned = await initialState(input, revisionReader, failure);
+  const planned = await initialState(
+    input,
+    revisionReader,
+    failure,
+    options.jsonKnowledgeAdapters,
+  );
   let collection;
   try {
     collection = await adapter.collect({
@@ -816,6 +896,16 @@ export async function runHubProjectSync(
 
   const knowledgeRoot = join(input.hubRoot, 'knowledge');
   const security = createProjectSecurityService({ knowledgeRoot });
+  if (!await boundRawSourceInputsAreSafe(collection, {
+    policyDigest: planned.policyDigest,
+    projectId: input.projectId,
+    security,
+    source: `buildlore://project/${input.projectId}/selected-json-inputs`,
+    sourceKind: 'json',
+    sourceRevision: planned.loadedManifest.manifestDigest,
+  })) {
+    return failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
+  }
   let writer;
   try {
     writer = await createProjectSourceWriter(planned.workspace, input.projectId);
@@ -855,7 +945,7 @@ export async function runHubProjectSync(
     }
     prepared.push(Object.freeze({ ...item, snapshot }));
   }
-  const entries = collectionEntries(prepared, collection.entries, failure);
+  const entries = collectionEntries(prepared, collection.entries, planned.inventory, failure);
   if (entries.some((entry) =>
     entry.decision === 'blocked' || entry.decision === 'error' || entry.decision === 'quarantine')) {
     return failure.fail('SYNC_PLAN_BLOCKED', 'selection');
@@ -936,7 +1026,15 @@ export async function runHubProjectSync(
 
   await options.hooks?.afterPlan?.();
   await options.hooks?.beforeFirstWrite?.();
-  await assertInputsUnchanged(input, planned, revisionReader, prepared, writer, failure);
+  await assertInputsUnchanged(
+    input,
+    planned,
+    revisionReader,
+    prepared,
+    writer,
+    failure,
+    options.jsonKnowledgeAdapters,
+  );
   const writes: ProjectSyncWriteSummary[] = [];
   for (const item of prepared) {
     try {
@@ -976,6 +1074,29 @@ export async function runHubProjectSync(
           failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
         }
       }
+      const rawInputs = inspectRawSourceInputs(item.candidate);
+      if ((item.rawPrepared?.length ?? 0) !== rawInputs.length) {
+        failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
+      }
+      for (const [index, rawInput] of rawInputs.entries()) {
+        const raw = assertPrepared(
+          item.rawPrepared?.[index] === undefined
+            ? null
+            : consumePreparedSource(item.rawPrepared[index]),
+          {
+            bodyDigest: sha256(rawInput.body),
+            policyDigest: planned.policyDigest,
+            projectId: input.projectId,
+            source: item.candidate.sourceUri,
+            sourceKind: item.sourceKind,
+            sourceRevision: item.candidate.sourceRevision,
+          },
+          failure,
+        );
+        if (rawInput.allowedRedactionRuleIds.length === 0 && raw.approvedBody !== rawInput.body) {
+          failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
+        }
+      }
       const approvedInput = Object.freeze({
         ...item.input,
         body: body.approvedBody,
@@ -990,6 +1111,9 @@ export async function runHubProjectSync(
         ...(approvedInput.originMappings === undefined
           ? {}
           : { originMappings: approvedInput.originMappings }),
+        ...(approvedInput.jsonOrigins === undefined
+          ? {}
+          : { jsonOrigins: approvedInput.jsonOrigins }),
         producer: item.candidate.producer,
         projectId: input.projectId,
         source: approvedInput.sourceUri,

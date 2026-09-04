@@ -7,7 +7,7 @@ Usage:
   buildlore project bind --project <project-id> --source-root <absolute-path> [--json]
   buildlore project list [--json]
   buildlore project show --project <project-id> [--json]
-  buildlore source add --project <project-id> --id <declaration-id> --kind markdown|text|code --path <relative-path> [--recursive] [--json]
+  buildlore source add --project <project-id> --id <declaration-id> --kind markdown|text|code|json --path <relative-path> [--recursive] [--json]
   buildlore source list --project <project-id> [--json]
   buildlore source diff --project <project-id> [--json]
   buildlore wiki list --project <project-id> [--cursor <opaque-cursor>] [--limit <1-100>] [--json]

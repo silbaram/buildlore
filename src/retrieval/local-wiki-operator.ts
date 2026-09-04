@@ -151,6 +151,7 @@ export interface LocalActiveWikiPageV1 extends LocalActiveWikiProjectionIdentity
 
 export interface LocalActiveWikiCitationV1 {
   readonly citationId: string;
+  readonly jsonPointer?: string;
   readonly quoteDigest: `sha256:${string}`;
   readonly range: TextUnitRangeV1;
   readonly sourceId: string;
@@ -416,6 +417,7 @@ function pageResult(
       body: section.body,
       citationLocators: Object.freeze(section.citationLocators.map((locator) => Object.freeze({
         citationId: locator.citationId,
+        ...(locator.jsonPointer === undefined ? {} : { jsonPointer: locator.jsonPointer }),
         sourceId: locator.sourceId,
       }))),
       sectionId: section.sectionId,
@@ -699,6 +701,7 @@ export function createLocalWikiOperator(
         .sort((left, right) => compareText(left.citationId, right.citationId))
         .map((anchor): LocalActiveWikiCitationV1 => Object.freeze({
           citationId: anchor.citationId,
+          ...(anchor.jsonPointer === undefined ? {} : { jsonPointer: anchor.jsonPointer }),
           quoteDigest: anchor.quoteDigest,
           range: Object.freeze({
             endColumn: anchor.range.endColumn,

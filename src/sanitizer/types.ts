@@ -13,6 +13,7 @@ export type SecuritySourceKind =
   | 'code'
   | 'compiler-cache'
   | 'execution'
+  | 'json'
   | 'markdown'
   | 'planning'
   | 'profile'

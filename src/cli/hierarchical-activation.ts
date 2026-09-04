@@ -10,7 +10,14 @@ import { resolveLocalProjectBinding } from '../knowledge/local-project-registry.
 import { createRepositoryWriterLease } from '../knowledge/repository-writer-lease.js';
 import { parseJsonStrict } from '../knowledge/strict-json.js';
 import { showProject } from '../knowledge/workspace.js';
+import { resolveRegisteredProfileBinding } from '../profile/preflight.js';
 import { createSourceCollectionAdapter } from '../projector/collection-adapters.js';
+import type { RegisteredJsonKnowledgeAdapterV1 } from '../projector/json-knowledge-adapter.js';
+import {
+  boundRawSourceInputsAreSafe,
+  inspectRawSourceInputs,
+  rawSourceInputSanitizationIsSafe,
+} from '../projector/raw-source-inputs.js';
 import { createSourceDocument } from '../projector/source-document.js';
 import {
   readSourceCollectionManifest,
@@ -173,6 +180,7 @@ async function replayProposalSecurity(
 
 function createLiveSnapshotVerifier(options: Readonly<{
   readonly hubRoot: string;
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly knowledgeRoot: string;
 }>): HierarchicalWikiLiveSnapshotVerifierPort {
   return Object.freeze({
@@ -185,22 +193,43 @@ function createLiveSnapshotVerifier(options: Readonly<{
           projectId,
           project.entry.sourceRepository,
         );
-        const loadedManifest = await readSourceCollectionManifest(binding.checkout, projectId);
-        const inventory = await selectDeclaredSourceFiles(binding.checkout, loadedManifest);
+        const profile = await resolveRegisteredProfileBinding(options.knowledgeRoot, projectId, {
+          registrations: options.jsonKnowledgeAdapters ?? [],
+        });
+        const loadedManifest = await readSourceCollectionManifest(binding.checkout, projectId, {
+          sourceAdapterRegistry: profile.sourceAdapters,
+        });
+        const inventory = await selectDeclaredSourceFiles(binding.checkout, loadedManifest, {
+          sourceAdapterRegistry: profile.sourceAdapters,
+        });
         const [policy, collected] = await Promise.all([
           readSecurityPolicy(options.knowledgeRoot, projectId),
-          createSourceCollectionAdapter().collect({
+          createSourceCollectionAdapter({
+            jsonKnowledgeAdapters: options.jsonKnowledgeAdapters ?? [],
+          }).collect({
             checkout: binding.checkout,
             ingestedAt: FIXED_COLLECTION_TIMESTAMP,
             inventory,
             loadedManifest,
+            sourceAdapterRegistry: profile.sourceAdapters,
           }),
         ]);
         if (loadedManifest.manifestDigest !== snapshot.sourceManifestDigest ||
-            policy.digest !== snapshot.sanitizerPolicyDigest) {
+            policy.digest !== snapshot.sanitizerPolicyDigest ||
+            collected.notices.length > 0 || collected.entries.some((entry) =>
+              entry.decision === 'blocked' || entry.decision === 'error' ||
+              entry.decision === 'quarantine')) {
           invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
         }
         const security = createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot });
+        if (!await boundRawSourceInputsAreSafe(collected, {
+          policyDigest: policy.digest,
+          projectId,
+          security,
+          source: `buildlore://project/${projectId}/selected-json-inputs`,
+          sourceKind: 'json',
+          sourceRevision: loadedManifest.manifestDigest,
+        })) invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
         const liveSources: Array<Readonly<{
           readonly sanitizedContentDigest: `sha256:${string}`;
           readonly sourceRef: string;
@@ -215,7 +244,7 @@ function createLiveSnapshotVerifier(options: Readonly<{
             sourceKind: candidate.sourceKind,
             sourceRevisionOrContentSha256: candidate.sourceRevision,
           });
-          if (!result.ok) continue;
+          if (!result.ok) invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
           const prepared = consumePreparedSource(result.prepared);
           if (result.report.outputDigest === undefined || prepared === null ||
               prepared.approvedBodyDigest !== result.report.outputDigest ||
@@ -229,6 +258,30 @@ function createLiveSnapshotVerifier(options: Readonly<{
               result.report.policyDigest !== snapshot.sanitizerPolicyDigest) {
             invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
           }
+          for (const rawInput of inspectRawSourceInputs(candidate)) {
+            const rawDigest = sha256(rawInput.body);
+            const rawResult = await security.prepareSource({
+              body: rawInput.body,
+              bodyDigest: rawDigest,
+              projectId,
+              source: candidate.sourceUri,
+              sourceKind: candidate.sourceKind,
+              sourceRevisionOrContentSha256: candidate.sourceRevision,
+            });
+            const rawPrepared = rawResult.ok ? consumePreparedSource(rawResult.prepared) : null;
+            if (!rawResult.ok || rawPrepared === null ||
+                rawPrepared.inputBodyDigest !== rawDigest ||
+                rawPrepared.approvedBodyDigest !== rawResult.report.outputDigest ||
+                rawPrepared.policyDigest !== snapshot.sanitizerPolicyDigest ||
+                rawPrepared.projectId !== projectId || rawPrepared.source !== candidate.sourceUri ||
+                rawPrepared.sourceKind !== candidate.sourceKind ||
+                rawPrepared.sourceRevisionOrContentSha256 !== candidate.sourceRevision ||
+                !rawSourceInputSanitizationIsSafe(
+                  rawInput,
+                  rawPrepared.approvedBody,
+                  rawResult.report.summaries,
+                )) invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
+          }
           const canonical = createSourceDocument({
             body: prepared.approvedBody,
             ...(candidate.descriptor === undefined ? {} : { descriptor: candidate.descriptor }),
@@ -236,6 +289,9 @@ function createLiveSnapshotVerifier(options: Readonly<{
             ...(candidate.originMappings === undefined
               ? {}
               : { originMappings: candidate.originMappings }),
+            ...(candidate.jsonOrigins === undefined
+              ? {}
+              : { jsonOrigins: candidate.jsonOrigins }),
             producer: candidate.producer,
             projectId,
             source: candidate.sourceUri,
@@ -271,6 +327,7 @@ function createLiveSnapshotVerifier(options: Readonly<{
 
 export function createHierarchicalWikiActivationService(options: Readonly<{
   readonly hubRoot: string;
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly knowledgeRoot: string;
   readonly liveSnapshotVerifier?: HierarchicalWikiLiveSnapshotVerifierPort;
   readonly markdownPublication?: HierarchicalMarkdownPublicationPort;
