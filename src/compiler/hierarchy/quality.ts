@@ -324,16 +324,15 @@ function assertCanonicalPack(pack: EvidencePackV1, projectId: string): void {
         ...(unit.citation.jsonPointer === undefined
           ? {}
           : { jsonPointer: unit.citation.jsonPointer }),
-        sourceId: unit.sourceId,
+        sourceId: unit.citation.sourceId,
         sourceRevision: unit.citation.sourceRevision,
         sourceRef: unit.citation.sourceRef,
-        range: unit.range,
-        quoteDigest: unit.contentDigest,
+        range: unit.citation.range,
+        quoteDigest: unit.citation.quoteDigest,
       };
       return unit.contentDigest !== hierarchySha256(unit.content) ||
         unit.citation.sourceId !== unit.sourceId ||
         unit.citation.quoteDigest !== unit.contentDigest ||
-        JSON.stringify(unit.citation.range) !== JSON.stringify(unit.range) ||
         unit.citation.citationId !== `citation-${digestHierarchyValue(citationBasis)
           .slice('sha256:'.length)}`;
     }) ||

@@ -80,7 +80,11 @@ const WORDS = [
   ['ember', 'violet', 'hierarchy', 'overview', 'synthesizes', 'citations', 'across', 'sources'],
 ] as const;
 
-function evidencePack(page: PageBlueprintV1, index: number): EvidencePackV1 {
+function evidencePack(
+  page: PageBlueprintV1,
+  index: number,
+  originAware = false,
+): EvidencePackV1 {
   const units = [0, 1].map((sourceIndex) => {
     const id = unitId(`${page.pageId}-${String(sourceIndex)}`);
     const source = sourceId(sourceIndex === 0 ? 'a' : 'b');
@@ -91,11 +95,18 @@ function evidencePack(page: PageBlueprintV1, index: number): EvidencePackV1 {
       endLine: 1,
       endColumn: content.length,
     });
+    const citationRange = originAware && sourceIndex === 0
+      ? Object.freeze({ startLine: 37, startColumn: 5, endLine: 37, endColumn: 39 })
+      : range;
+    const jsonPointer = originAware && sourceIndex === 0 ? '/changedFiles/0' : undefined;
     const citationBasis = Object.freeze({
+      ...(jsonPointer === undefined ? {} : { jsonPointer }),
       sourceId: source,
       sourceRevision: digest(`revision-${source}`),
-      sourceRef: `docs/${String(sourceIndex)}.md`,
-      range,
+      sourceRef: originAware && sourceIndex === 0
+        ? 'runs/maintenance/attempt.json'
+        : `docs/${String(sourceIndex)}.md`,
+      range: citationRange,
       quoteDigest: digest(content),
     });
     return Object.freeze({
@@ -249,13 +260,13 @@ function proposal(
   });
 }
 
-function qualityFixture(betaRole = 'architecture'): QualityFixture {
+function qualityFixture(betaRole = 'architecture', originAware = false): QualityFixture {
   const pages = [
     blueprint(LEAF_ALPHA, 'topic', ROOT, [], [LEAF_BETA], 0),
     blueprint(LEAF_BETA, betaRole, ROOT, [], [LEAF_ALPHA], 1),
     blueprint(ROOT, 'overview', null, [LEAF_ALPHA, LEAF_BETA], [], 2),
   ];
-  const packs = pages.map(evidencePack);
+  const packs = pages.map((page, index) => evidencePack(page, index, originAware));
   const proposals = pages.map((page, index) => proposal(
     page,
     packs[index] as EvidencePackV1,
@@ -322,6 +333,26 @@ describe('deterministic semantic quality gate', () => {
     expect(result.pages.every((page) => page.claimEvidenceSupportBasisPoints === 10_000))
       .toBe(true);
     expect(result.pages.every((page) => page.titleGrounded && page.summaryGrounded)).toBe(true);
+  });
+
+  it('validates JSON evidence against its original citation range', () => {
+    const value = qualityFixture('architecture', true);
+    const firstUnit = value.packs[0]?.units[0];
+    expect(firstUnit?.citation).toMatchObject({
+      jsonPointer: '/changedFiles/0',
+      range: { startLine: 37, startColumn: 5, endLine: 37, endColumn: 39 },
+      sourceRef: 'runs/maintenance/attempt.json',
+    });
+    expect(firstUnit?.range).not.toEqual(firstUnit?.citation.range);
+
+    const result = evaluateSemanticQuality({
+      outline: value.outline,
+      proposals: value.proposals,
+      evidencePacks: value.packs,
+      reconciliation: value.reconciliation,
+    }, PROJECT_ID);
+    expect(result.corpus.hardQualityPassed).toBe(true);
+    expect(result.pages.every((page) => page.hardQualityPassed)).toBe(true);
   });
 
   it('rejects canonically re-digested claims, titles and summaries unsupported by evidence', () => {

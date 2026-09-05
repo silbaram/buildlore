@@ -14,6 +14,7 @@ import {
   decodeP2aRun,
   decodeP2aRunIndex,
   decodeP2aTaskGraph,
+  decodeP2aCurrentDevelopmentContract,
   canonicalExecutionJson,
   p2aExecutionEnvelopeSha256,
   resolveTaskLineage,
@@ -31,8 +32,14 @@ import {
   validatePortableSourceRef,
 } from './source-contracts.js';
 import { unicodeScalarLength } from './text-units.js';
+import { MAX_SOURCE_ORIGIN_MAPPINGS } from './types.js';
+import {
+  P2A_RUN_INDEX_SUFFIX,
+  P2A_RUN_SOURCE_ADAPTER_ID,
+  type P2aRunInputClosure,
+} from './p2a-run-input-closure.js';
 
-export const P2A_RUN_SOURCE_ADAPTER_ID = 'buildlore.p2a-run' as const;
+export { P2A_RUN_SOURCE_ADAPTER_ID } from './p2a-run-input-closure.js';
 
 interface DecodedEntry {
   readonly entry: JsonKnowledgeAdapterEntryV1;
@@ -62,6 +69,10 @@ interface DecodedSpecEntry {
   readonly entry: JsonKnowledgeAdapterEntryV1;
   readonly effectiveSpecRef?: string;
   readonly kind: 'approved' | 'current';
+}
+
+interface DecodedDevelopmentContractEntry {
+  readonly entry: JsonKnowledgeAdapterEntryV1;
 }
 
 interface ResolvedEnvelope {
@@ -153,6 +164,14 @@ function decodeCurrentSpec(
   }
 }
 
+function decodeDevelopmentContract(
+  entry: JsonKnowledgeAdapterEntryV1,
+  projectId: string,
+): DecodedDevelopmentContractEntry | null {
+  const result = decodeP2aCurrentDevelopmentContract(entry.value, projectId);
+  return result.ok ? Object.freeze({ entry }) : null;
+}
+
 function isRunTreeSourceRef(sourceRef: string): boolean {
   return sourceRef.startsWith('runs/') || sourceRef.includes('/runs/');
 }
@@ -166,7 +185,9 @@ function isRecognizedShape(entry: JsonKnowledgeAdapterEntryV1): boolean {
   if (!isRecord(entry.value)) return false;
   return entry.value.schema_version === 'p2a.task_graph.v1' ||
     entry.value.schema_version === 'p2a.spec.v1' ||
-    entry.value.schema_version === 'p2a.current_spec.v1' || isEnvelopeSourceRef(entry.sourceRef);
+    entry.value.schema_version === 'p2a.current_spec.v1' ||
+    entry.value.schema_version === 'p2a.current_development_contract.v1' ||
+    isEnvelopeSourceRef(entry.sourceRef);
 }
 
 function indexedSourceRef(indexSourceRef: string, runRef: string): string | null {
@@ -236,6 +257,7 @@ function referencedEnvelope(
 
 function entryMatchesDigest(entry: JsonKnowledgeAdapterEntryV1, digest: string): boolean {
   return entry.contentHash === `sha256:${digest}` ||
+    sha256(JSON.stringify(entry.value)) === digest ||
     sha256(canonicalExecutionJson(entry.value)) === digest;
 }
 
@@ -279,6 +301,7 @@ function verifyRunLineage(
   indexSourceRef: string,
   graphsBySourceRef: ReadonlyMap<string, DecodedGraphEntry>,
   specsBySourceRef: ReadonlyMap<string, DecodedSpecEntry>,
+  contractsBySourceRef: ReadonlyMap<string, DecodedDevelopmentContractEntry>,
   entriesBySourceRef: ReadonlyMap<string, JsonKnowledgeAdapterEntryV1>,
 ): readonly string[] | null {
   const graphRef = artifactSourceRef(indexSourceRef, item.run.taskGraphRef);
@@ -330,9 +353,9 @@ function verifyRunLineage(
       indexSourceRef,
       item.run.currentDevelopmentContractRef,
     );
-    const contract = contractRef === null ? undefined : entriesBySourceRef.get(contractRef);
+    const contract = contractRef === null ? undefined : contractsBySourceRef.get(contractRef);
     if (contract === undefined ||
-        !entryMatchesDigest(contract, item.run.currentDevelopmentContractSha256)) return null;
+        !entryMatchesDigest(contract.entry, item.run.currentDevelopmentContractSha256)) return null;
     inputRefs.push(contractRef as string);
   }
   return Object.freeze([...new Set(inputRefs)].sort(compareText));
@@ -358,6 +381,39 @@ function sameFinalLineage(normal: DecodedEntry, finalRun: DecodedEntry): boolean
         verification.productRevisionSha256 === finalRun.productRevision) &&
       (verification.gitHeadSha === undefined || finalRun.run.gitHeadSha === undefined ||
         verification.gitHeadSha === finalRun.run.gitHeadSha));
+}
+
+function compactOrigins(
+  origins: JsonKnowledgeAdapterCandidateDraftV1['origins'],
+): JsonKnowledgeAdapterCandidateDraftV1['origins'] {
+  if (origins.length <= MAX_SOURCE_ORIGIN_MAPPINGS) return origins;
+  const compacted: JsonKnowledgeAdapterCandidateDraftV1['origins'][number][] = [];
+  let groupParent: string | null = null;
+  for (const origin of origins) {
+    const parent = origin.jsonPointer.slice(0, origin.jsonPointer.lastIndexOf('/'));
+    const previous = compacted.at(-1);
+    // Merge only adjacent siblings from the same JSON container and input file.
+    // Keep later resolution/verification sections; never silently drop mappings.
+    if (parent !== '' && parent === groupParent && previous !== undefined &&
+        previous.sourceRef === origin.sourceRef &&
+        previous.canonical.endLine + 1 === origin.canonical.startLine) {
+      compacted[compacted.length - 1] = Object.freeze({
+        canonical: Object.freeze({
+          ...previous.canonical,
+          endColumn: origin.canonical.endColumn,
+          endLine: origin.canonical.endLine,
+        }),
+        jsonPointer: parent,
+        sourceRef: origin.sourceRef,
+      });
+    } else {
+      compacted.push(origin);
+    }
+    groupParent = parent;
+  }
+  // The shared adapter validator still fails closed if independent origins
+  // exceed the contract limit even after lossless container-range compaction.
+  return Object.freeze(compacted);
 }
 
 function renderGroup(
@@ -446,7 +502,7 @@ function renderGroup(
       latest.item.run.taskId,
       latest.item.run.taskContractSha256,
     ].join('\u0000'))}`,
-    origins: Object.freeze(origins),
+    origins: compactOrigins(Object.freeze(origins)),
     retrievalMeaning: Object.freeze({
       authority: 'supporting',
       evidenceKind: 'execution',
@@ -462,24 +518,251 @@ function renderGroup(
   });
 }
 
-function rawSecurityValue(value: unknown, key = ''): unknown {
-  if (typeof value === 'string' &&
-      ((/(?:sha256|digest)$/iu.test(key) && /^(?:sha256:)?[a-f0-9]{64}$/u.test(value)) ||
-        (key === 'gitHeadSha' && /^[a-f0-9]{40}$/u.test(value)))) {
-    return '<verified-digest>';
+function pointerSegment(value: string): string {
+  return value.replace(/~/gu, '~0').replace(/\//gu, '~1');
+}
+
+const P2A_TECHNICAL_TOKEN_PATTERN =
+  /(?<![A-Za-z0-9+.-])(?:https?:\/\/[^\s<>"'`]+|[A-Za-z0-9_+./=-]{20,})/giu;
+
+function segmentTechnicalReference(value: string): string {
+  return value.replaceAll('/', ' / ');
+}
+
+function p2aTechnicalTaxonomy(value: string): boolean {
+  if (value.length < 20 || value.length > 256 || value.startsWith('/') ||
+      value.endsWith('/') || value.includes('//')) return false;
+  const segments = value.split('/');
+  if (segments.length < 2 || segments.length > 4) return false;
+  return segments.every((segment) => segment.length >= 2 && segment.length <= 16 && (
+    /^[a-z]{2,16}$/u.test(segment) ||
+    /^[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)+$/u.test(segment) ||
+    /^[a-z]+(?:[A-Z][A-Za-z0-9]*)+$/u.test(segment) ||
+    /^[A-Z][A-Za-z]{1,15}$/u.test(segment)
+  ));
+}
+
+function segmentTechnicalTaxonomies(value: string): string {
+  P2A_TECHNICAL_TOKEN_PATTERN.lastIndex = 0;
+  return value.replace(P2A_TECHNICAL_TOKEN_PATTERN, (token) => {
+    if (token === 'p2aRunJsonKnowledgeAdapter') return '<verified-adapter-symbol>';
+    return p2aTechnicalTaxonomy(token) ? segmentTechnicalReference(token) : token;
+  });
+}
+
+function technicalSecurityKey(
+  schemaVersion: string | undefined,
+  pointer: string,
+  value: string,
+): string {
+  if (schemaVersion !== 'p2a.current_spec.v1') return value;
+  if ((pointer === '/gate_b_approval_audits' || pointer === '/gate_b_promotion_bindings') &&
+      /^[a-z0-9]+(?:-[a-z0-9]+)+$/u.test(value)) {
+    return value.replaceAll('-', ' - ');
   }
-  if (Array.isArray(value)) return value.map((entry) => rawSecurityValue(entry));
-  if (isRecord(value)) {
-    return Object.fromEntries(Object.keys(value).sort(compareText)
-      .map((childKey) => [childKey, rawSecurityValue(value[childKey], childKey)]));
+  if (pointer === '/pending_iteration/resume_authority' &&
+      /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/u.test(value)) {
+    return value.replaceAll('_', ' _ ');
   }
   return value;
 }
 
-function p2aRawSecurityInput(entry: JsonKnowledgeAdapterEntryV1): RawSourceInputV1 {
+interface P2aRawSecurityState {
+  readonly artifactRoot: string;
+  readonly commandTokens: ReadonlyMap<number, ReadonlySet<string>>;
+  readonly workspacePath: string;
+}
+
+function p2aArtifactRoot(sourceRefs: readonly string[]): string {
+  const indexSourceRef = sourceRefs.find((sourceRef) => sourceRef.endsWith(P2A_RUN_INDEX_SUFFIX));
+  if (indexSourceRef === undefined) return '';
+  return indexSourceRef.slice(0, -P2A_RUN_INDEX_SUFFIX.length).replace(/\/$/u, '');
+}
+
+function p2aCommandTokens(value: unknown): ReadonlyMap<number, ReadonlySet<string>> {
+  const result = new Map<number, ReadonlySet<string>>();
+  if (!isRecord(value) || !Array.isArray(value.verification)) return result;
+  value.verification.forEach((verification, index) => {
+    if (!isRecord(verification) || typeof verification.command !== 'string') return;
+    P2A_TECHNICAL_TOKEN_PATTERN.lastIndex = 0;
+    result.set(index, new Set(
+      [...verification.command.matchAll(P2A_TECHNICAL_TOKEN_PATTERN)].map((match) => match[0]),
+    ));
+  });
+  return result;
+}
+
+function segmentVerifiedStdoutPaths(
+  value: string,
+  pointer: string,
+  state: P2aRawSecurityState,
+): string {
+  const match = /^\/verification\/([0-9]+)\/stdoutTail$/u.exec(pointer);
+  if (match === null) return value;
+  const commandTokens = state.commandTokens.get(Number(match[1]));
+  P2A_TECHNICAL_TOKEN_PATTERN.lastIndex = 0;
+  return value.replace(P2A_TECHNICAL_TOKEN_PATTERN, (token) => {
+    const isArtifactRoot = state.artifactRoot.length >= 20 && token === state.artifactRoot;
+    const isCommandOutputPath = state.workspacePath.length > 0 &&
+      token.startsWith(`${state.workspacePath}/`) &&
+      [...commandTokens ?? []].some((commandToken) => token.endsWith(commandToken));
+    return isArtifactRoot || isCommandOutputPath ? segmentTechnicalReference(token) : token;
+  });
+}
+
+function technicalSecurityValue(
+  schemaVersion: string | undefined,
+  pointer: string,
+  value: string,
+  state: P2aRawSecurityState,
+): string | null {
+  const digest = /^(?:sha256:)?[a-f0-9]{64}$/u.test(value);
+  const gitSha = /^[a-f0-9]{40}$/u.test(value);
+  const runId = /^run-[A-Za-z0-9._-]+$/u.test(value);
+  const portableReference = value.length <= 1_024 && !value.includes('\\') &&
+    !/^[A-Za-z]:/u.test(value);
+  if (schemaVersion === 'p2a.run.v2') {
+    if (digest && (
+      /^\/(?:acceptanceReviewEvidenceSha256|currentDevelopmentContractSha256|executionEnvelopeSha256|monitorVerdictEvidenceSha256|productRevisionSha256|startProductRevisionSha256|taskContractSha256|visualReviewEvidenceSha256|workspaceRevisionSha256)$/u.test(pointer) ||
+      /^\/executionEnvelopeRef\/sha256$/u.test(pointer) ||
+      /^\/verification\/[0-9]+\/(?:productRevisionSha256|relatedFilesSha256|workspaceRevisionSha256)$/u.test(pointer)
+    )) return '<verified-digest>';
+    if (gitSha && (
+      pointer === '/git/headSha' || /^\/verification\/[0-9]+\/gitHeadSha$/u.test(pointer)
+    )) return '<verified-git-revision>';
+    if (runId && pointer === '/runId') return '<verified-run-id>';
+    if (portableReference && /^\/(?:currentDevelopmentContractRef|sourceSpecRef|taskGraphRef)$/u.test(pointer)) {
+      return segmentTechnicalReference(value);
+    }
+    if (/^\/verification\/[0-9]+\/stdoutTail$/u.test(pointer)) {
+      return segmentVerifiedStdoutPaths(value, pointer, state);
+    }
+  }
+  if (schemaVersion === 'p2a.run_index.v1') {
+    if (runId && (
+      /^\/runs\/[0-9]+\/runId$/u.test(pointer) ||
+      /^\/tasks\/[0-9]+\/(?:latestRunId|runIds\/[0-9]+)$/u.test(pointer)
+    )) return '<verified-run-id>';
+    if (portableReference && /^\/runs\/[0-9]+\/(?:runRef|taskGraphRef)$/u.test(pointer)) {
+      return segmentTechnicalReference(value);
+    }
+  }
+  if (schemaVersion === 'p2a.task_graph.v1' && portableReference && pointer === '/sourceSpec') {
+    return segmentTechnicalReference(value);
+  }
+  if (schemaVersion === 'p2a.spec.v1' && digest && pointer === '/source_intake_sha256') {
+    return '<verified-digest>';
+  }
+  if (schemaVersion === 'p2a.current_spec.v1') {
+    if (digest && (
+      /^\/closed_iterations\/[0-9]+\/artifact_hashes\/[^/]+\/sha256$/u.test(pointer) ||
+      /^\/gate_b_promotion_bindings\/[^/]+\/source_spec_sha256$/u.test(pointer)
+    )) return '<verified-digest>';
+    if (portableReference && (
+      pointer === '/effective_spec_ref' ||
+      /^\/closed_iterations\/[0-9]+\/(?:effective_spec_ref|spec_ref|task_graph_ref)$/u.test(pointer) ||
+      /^\/gate_b_promotion_bindings\/[^/]+\/source_spec_ref$/u.test(pointer)
+    )) return segmentTechnicalReference(value);
+    if (/^[a-z0-9]+(?:-[a-z0-9]+)+$/u.test(value) &&
+        /^\/closed_iterations\/[0-9]+\/iteration_id$/u.test(pointer)) {
+      return value.replaceAll('-', ' - ');
+    }
+  }
+  if (schemaVersion === 'p2a.current_development_contract.v1') {
+    if (digest && (
+      /^\/bindings\/(?:activeSpec|constitution)\/sha256$/u.test(pointer) ||
+      /^\/bindings\/taskGraph\/tasks\/[0-9]+\/sha256$/u.test(pointer)
+    )) return '<verified-digest>';
+    if (portableReference && /^\/bindings\/(?:activeSpec|constitution|taskGraph)\/ref$/u.test(pointer)) {
+      return segmentTechnicalReference(value);
+    }
+  }
+  if (schemaVersion === undefined) {
+    if (digest && /^\/sourceGateRefs\/[0-9]+\/sha256$/u.test(pointer)) {
+      return '<verified-digest>';
+    }
+    if (portableReference && /^\/sourceGateRefs\/[0-9]+\/path$/u.test(pointer)) {
+      return segmentTechnicalReference(value);
+    }
+  }
+  if (
+    (
+      schemaVersion === 'p2a.current_development_contract.v1' &&
+      /^(?:\/iterationConstraints\/(?:architecture|dependencies)\/[0-9]+|\/mustPreserve\/[0-9]+)$/u
+        .test(pointer)
+    ) || (
+      schemaVersion === 'p2a.spec.v1' &&
+      /^(?:\/implementation\/(?:architecture|dependencies)\/[0-9]+|\/product\/must_preserve\/[0-9]+)$/u
+        .test(pointer)
+    ) || (
+      schemaVersion === undefined &&
+      /^(?:\/(?:architecture|dependencies|mustPreserve)\/[0-9]+|\/iterationConstraints\/(?:architecture|dependencies)\/[0-9]+)$/u
+        .test(pointer)
+    ) || (
+      schemaVersion === 'p2a.run.v2' &&
+      /^\/executionEnvelope\/(?:mustPreserve\/[0-9]+|iterationConstraints\/(?:architecture|dependencies)\/[0-9]+)$/u
+        .test(pointer)
+    )
+  ) {
+    const segmented = segmentTechnicalTaxonomies(value);
+    if (segmented !== value) return segmented;
+  }
+  return null;
+}
+
+function rawSecurityValue(
+  value: unknown,
+  schemaVersion: string | undefined,
+  state: P2aRawSecurityState,
+  pointer = '',
+): unknown {
+  if (typeof value === 'string') {
+    return technicalSecurityValue(schemaVersion, pointer, value, state) ?? value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry, index) =>
+      rawSecurityValue(entry, schemaVersion, state, `${pointer}/${String(index)}`));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.keys(value).sort(compareText).map((childKey) => {
+      const childPointer = `${pointer}/${pointerSegment(childKey)}`;
+      return [
+        technicalSecurityKey(schemaVersion, pointer, childKey),
+        rawSecurityValue(value[childKey], schemaVersion, state, childPointer),
+      ];
+    }));
+  }
+  return value;
+}
+
+function p2aRawSecurityInput(
+  entry: JsonKnowledgeAdapterEntryV1,
+  context: Readonly<{
+    closure: P2aRunInputClosure | null;
+    lineageVerified: boolean;
+    projectId: string;
+  }>,
+): RawSourceInputV1 {
+  const schemaVersion = isRecord(entry.value) && typeof entry.value.schema_version === 'string'
+    ? entry.value.schema_version
+    : undefined;
+  const closureEntry = context.closure?.entries.find((candidate) =>
+    candidate.sourceRef === entry.sourceRef && candidate.contentHash === entry.contentHash);
+  const proofBound = context.lineageVerified && context.closure !== null &&
+    context.closure.projectId === context.projectId && closureEntry !== undefined &&
+    /^sha256:[a-f0-9]{64}$/u.test(context.closure.closureDigest);
+  const state = Object.freeze({
+    artifactRoot: p2aArtifactRoot(context.closure?.entries.map(({ sourceRef }) => sourceRef) ?? []),
+    commandTokens: p2aCommandTokens(entry.value),
+    workspacePath: isRecord(entry.value) && typeof entry.value.workspacePath === 'string'
+      ? entry.value.workspacePath
+      : '',
+  });
   return Object.freeze({
     allowedRedactionRuleIds: RAW_SOURCE_PATH_REDACTION_RULE_IDS,
-    body: serializeCanonicalJson(rawSecurityValue(entry.value)),
+    body: serializeCanonicalJson(proofBound
+      ? rawSecurityValue(entry.value, schemaVersion, state)
+      : entry.value),
   });
 }
 
@@ -517,12 +800,15 @@ export function p2aRunJsonKnowledgeAdapter(): RegisteredJsonKnowledgeAdapterV1 {
         .filter((entry): entry is DecodedSpecEntry => entry !== null);
       const currentSpecs = input.entries.map((entry) => decodeCurrentSpec(entry, input.projectId))
         .filter((entry): entry is DecodedSpecEntry => entry !== null);
+      const contracts = input.entries.map((entry) => decodeDevelopmentContract(entry, input.projectId))
+        .filter((entry): entry is DecodedDevelopmentContractEntry => entry !== null);
       const recognized = new Set([
         ...indices.map((entry) => entry.entry.sourceRef),
         ...runs.map((entry) => entry.entry.sourceRef),
         ...graphs.map((entry) => entry.entry.sourceRef),
         ...specs.map((entry) => entry.entry.sourceRef),
         ...currentSpecs.map((entry) => entry.entry.sourceRef),
+        ...contracts.map((entry) => entry.entry.sourceRef),
         ...input.entries.filter((entry) => isEnvelopeSourceRef(entry.sourceRef) &&
           p2aExecutionEnvelopeSha256(entry.value) !== null).map((entry) => entry.sourceRef),
       ]);
@@ -540,6 +826,8 @@ export function p2aRunJsonKnowledgeAdapter(): RegisteredJsonKnowledgeAdapterV1 {
       const graphsBySourceRef = new Map(graphs.map((entry) => [entry.entry.sourceRef, entry] as const));
       const specsBySourceRef = new Map([...specs, ...currentSpecs]
         .map((entry) => [entry.entry.sourceRef, entry] as const));
+      const contractsBySourceRef = new Map(contracts
+        .map((entry) => [entry.entry.sourceRef, entry] as const));
       const verified: VerifiedRun[] = [];
       let lineageInvalid = false;
       for (const summary of indexEntry.index.runs) {
@@ -550,6 +838,7 @@ export function p2aRunJsonKnowledgeAdapter(): RegisteredJsonKnowledgeAdapterV1 {
           indexEntry.entry.sourceRef,
           graphsBySourceRef,
           specsBySourceRef,
+          contractsBySourceRef,
           entriesBySourceRef,
         );
         if (item === undefined || !exactIndexMatch(summary, item.run) ||

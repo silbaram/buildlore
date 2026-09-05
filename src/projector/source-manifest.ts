@@ -31,6 +31,13 @@ import {
   type RegisteredSourceKind,
   type SourceMetadataV1,
 } from './source-contracts.js';
+import {
+  P2A_RUN_INDEX_SUFFIX,
+  P2A_RUN_SOURCE_ADAPTER_ID,
+  P2aRunInputClosureError,
+  resolveP2aRunInputClosure,
+  type P2aRunInputClosure,
+} from './p2a-run-input-closure.js';
 
 export const SOURCE_COLLECTION_MANIFEST_SCHEMA_VERSION = 'buildlore.sources.v1' as const;
 export const SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION = 'buildlore.sources.v2' as const;
@@ -151,6 +158,11 @@ export interface SourceSelectionInventory {
   readonly projectId: string;
   readonly totalBytes: number;
 }
+
+const P2A_RUN_CLOSURE_PROOFS = new WeakMap<
+  SourceSelectionInventory,
+  ReadonlyMap<string, P2aRunInputClosure>
+>();
 
 export interface SourceSelectionLimitOverrides {
   readonly maxAggregateBytes?: number;
@@ -366,13 +378,26 @@ function parseV2Declaration(
   } catch {
     return fail('SOURCE_KIND_UNSUPPORTED', 'manifest', 'Source adapter binding is unsupported.');
   }
+  const adapterId = requireString(value.adapterId, 'manifest');
+  const adapterVersion = value.adapterVersion as number;
+  const path = validateSourceSelectionPath(value.path);
+  if (adapterId === P2A_RUN_SOURCE_ADAPTER_ID && (
+    adapterVersion !== 1 || kind !== 'json' || pathType !== 'file' ||
+    !path.endsWith(P2A_RUN_INDEX_SUFFIX)
+  )) {
+    return fail(
+      'SOURCE_MANIFEST_INVALID',
+      'path',
+      'P2A run sources require an exact run-index file declaration.',
+    );
+  }
   return Object.freeze({
-    adapterId: requireString(value.adapterId, 'manifest'),
-    adapterVersion: value.adapterVersion as number,
+    adapterId,
+    adapterVersion,
     id: validateDeclarationId(value.id),
     kind,
     ...(metadata === undefined ? {} : { metadata }),
-    path: validateSourceSelectionPath(value.path),
+    path,
     pathType,
     ...(pathType === 'directory' && value.recursive !== undefined
       ? { recursive: value.recursive }
@@ -937,13 +962,18 @@ export async function selectDeclaredSourceFiles(
   const root = await canonicalCheckoutRoot(checkout);
   const limits = selectionLimits(options.limits);
   const files: SelectedSourceFile[] = [];
+  const filesByBinding = new Map<string, SelectedSourceFile>();
   const directories: SelectedSourceDirectory[] = [];
+  const p2aRunClosures = new Map<string, P2aRunInputClosure>();
   let totalBytes = 0;
 
   const selectFile = async (
     declaration: AnySourceDeclaration,
     sourceRef: string,
-  ): Promise<void> => {
+  ): Promise<SelectedSourceFile> => {
+    const bindingKey = `${declaration.id}\u0000${sourceRef}`;
+    const existing = filesByBinding.get(bindingKey);
+    if (existing !== undefined) return existing;
     if (files.length >= limits.maxFileCount) {
       return fail(
         'SOURCE_SELECTION_LIMIT_EXCEEDED',
@@ -960,7 +990,9 @@ export async function selectDeclaredSourceFiles(
       options,
     );
     files.push(selected);
+    filesByBinding.set(bindingKey, selected);
     totalBytes += selected.byteLength;
+    return selected;
   };
 
   const visitDirectory = async (
@@ -1042,6 +1074,79 @@ export async function selectDeclaredSourceFiles(
         'Execution artifacts cannot be selected as P2A planning sources.',
       );
     }
+    if ('adapterId' in declaration &&
+        declaration.adapterId === P2A_RUN_SOURCE_ADAPTER_ID) {
+      if (declaration.pathType !== 'file' ||
+          !declaration.path.endsWith(P2A_RUN_INDEX_SUFFIX)) {
+        return fail(
+          'SOURCE_SELECTION_KIND_MISMATCH',
+          'path',
+          'P2A run sources require an exact run-index file declaration.',
+        );
+      }
+      const readClosureSource = async (
+        sourceRef: string,
+        required: boolean,
+      ): Promise<Readonly<{
+        contentHash: Sha256Digest;
+        sourceRef: string;
+        value: unknown;
+      }> | null> => {
+        let selected: SelectedSourceFile;
+        if (!required) {
+          const candidatePath = join(root, ...sourceRef.split('/'));
+          try {
+            await lstat(candidatePath, { bigint: true });
+          } catch (error) {
+            if (isNodeError(error) && error.code === 'ENOENT') return null;
+            throw error;
+          }
+          selected = await readSelectedFile(
+            root,
+            declaration,
+            sourceRef,
+            limits,
+            limits.maxAggregateBytes - totalBytes,
+            options,
+          );
+        } else {
+          selected = await selectFile(declaration, sourceRef);
+        }
+        try {
+          const bytes = await readSelectedSourceBytes(checkout, selected);
+          return Object.freeze({
+            contentHash: selected.contentDigest,
+            sourceRef,
+            value: parseJsonStrict(decodeUtf8Strict(bytes)),
+          });
+        } catch (error) {
+          if (error instanceof SourceSelectionError) throw error;
+          return fail(
+            'SOURCE_SELECTION_KIND_MISMATCH',
+            'path',
+            'P2A run input is invalid.',
+          );
+        }
+      };
+      try {
+        p2aRunClosures.set(declaration.id, await resolveP2aRunInputClosure({
+          indexSourceRef: declaration.path,
+          projectId: manifest.projectId,
+          read: readClosureSource,
+        }));
+      } catch (error) {
+        if (error instanceof SourceSelectionError) throw error;
+        if (error instanceof P2aRunInputClosureError) {
+          return fail(
+            'SOURCE_SELECTION_KIND_MISMATCH',
+            'path',
+            'P2A run input lineage is invalid.',
+          );
+        }
+        throw error;
+      }
+      continue;
+    }
     if (declaration.pathType === 'file') {
       if (!matchesDocumentKind(sourceDeclarationDocumentKind(declaration), declaration.path)) {
         return fail(
@@ -1092,7 +1197,7 @@ export async function selectDeclaredSourceFiles(
     }
   }
 
-  return Object.freeze({
+  const inventory = Object.freeze({
     directories: Object.freeze(
       [...directories].sort((left, right) =>
         compareText(`${left.declarationId}:${left.sourceRef}`, `${right.declarationId}:${right.sourceRef}`),
@@ -1107,6 +1212,34 @@ export async function selectDeclaredSourceFiles(
     projectId: manifest.projectId,
     totalBytes,
   });
+  if (p2aRunClosures.size > 0) {
+    P2A_RUN_CLOSURE_PROOFS.set(inventory, new Map(p2aRunClosures));
+  }
+  return inventory;
+}
+
+/** @internal Validates one derived official P2A input against its opaque selection proof. */
+export function selectedFileBelongsToP2aRunClosure(
+  inventory: SourceSelectionInventory,
+  declaration: AnySourceDeclaration,
+  file: SelectedSourceFile,
+): boolean {
+  if (!('adapterId' in declaration) ||
+      declaration.adapterId !== P2A_RUN_SOURCE_ADAPTER_ID ||
+      declaration.adapterVersion !== 1 || declaration.kind !== 'json' ||
+      declaration.pathType !== 'file' ||
+      !declaration.path.endsWith(P2A_RUN_INDEX_SUFFIX)) return false;
+  const closure = P2A_RUN_CLOSURE_PROOFS.get(inventory)?.get(declaration.id);
+  const entry = closure?.entries.find((candidate) => candidate.sourceRef === file.sourceRef);
+  return entry !== undefined && entry.contentHash === file.contentDigest;
+}
+
+/** @internal Returns the same-process closure proof bound to one selected declaration. */
+export function p2aRunInputClosureForDeclaration(
+  inventory: SourceSelectionInventory,
+  declarationId: string,
+): P2aRunInputClosure | null {
+  return P2A_RUN_CLOSURE_PROOFS.get(inventory)?.get(declarationId) ?? null;
 }
 
 /**

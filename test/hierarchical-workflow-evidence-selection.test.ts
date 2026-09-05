@@ -176,6 +176,33 @@ describe('hierarchical workflow evidence selection', () => {
     ]);
   });
 
+  it('keeps JSON heading ranges aligned with heading content after pointer binding', () => {
+    const body = [
+      '## Attempts',
+      'Status: finished with verified architecture evidence',
+    ].join('\n');
+    const jsonSource = Object.freeze({
+      ...source('3', 'data/run.json', body, 'json'),
+      jsonPointers: Object.freeze([
+        Object.freeze({ jsonPointer: '', line: 1 }),
+        Object.freeze({ jsonPointer: '/status', line: 2 }),
+      ]),
+    });
+
+    const heading = createSubstantiveHierarchyTextUnits([jsonSource], PROJECT_ID)
+      .find((unit) => unit.kind === 'heading');
+    expect(heading?.range).toEqual({
+      endColumn: 11,
+      endLine: 1,
+      startColumn: 4,
+      startLine: 1,
+    });
+    if (heading === undefined) throw new Error('Missing JSON heading unit.');
+    const extracted = extractHierarchyTextUnitContent(body, heading.range, PROJECT_ID);
+    expect(extracted).toBe('Attempts');
+    expect(heading.contentDigest).toBe(hierarchySha256(extracted));
+  });
+
   it('keeps a custom multi-input JSON line bound to its actual file and raw range', () => {
     const body = 'Changed: src/projector/json-source-adapter.ts';
     const actualRange = Object.freeze({

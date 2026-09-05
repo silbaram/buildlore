@@ -38,7 +38,7 @@ Use the same ready snapshot and read the Gate-derived execution envelope before 
 p2a tasks ready --artifacts <dir>
 ```
 
-The envelope source hash, objective, scope, `mustPreserve`, non-goals, acceptance, verification, authority, and visual contract are canonical. The work item is only an ownership and recovery boundary.
+The envelope source hash, objective, scope, `mustPreserve`, non-goals, `iterationConstraints`, acceptance, verification, authority, and visual contract are canonical. Apply the current iteration's architecture, interface, and dependency constraints even when the project has no constitution. The work item is only an ownership and recovery boundary.
 
 For a retry whose latest run is `failed` or `blocked`, inspect that local run's failure class, localization, and verification evidence before starting. If already-committed BuildLore knowledge is materially relevant, one explicit same-project search may supplement that evidence; apply only a clearly similar mitigation and cite the inspected knowledge source in the run notes. Do not synchronize, compile, commit, or publish BuildLore as an implicit retry step.
 
@@ -69,4 +69,4 @@ Before editing, inventory the source baseline and unrelated user changes. If pre
 
 The current owner implements Direct and ordinary single-owner Planned work. Spawn `p2a-implementer` only when an independently confined owner materially helps Orchestrated/batch work or explicit context isolation. A spawned implementer edits only its scope and may run local checks, but lifecycle verification and finish remain with the owner.
 
-Own the envelope objective, inspect the repository, choose internal structure, implement, run checks, and correct ordinary code/test/UI drift without asking the user to choose implementation details. Return to Gate B only when the objective requires changing product meaning, acceptance, approved scope, constitution, or an external authorization boundary.
+Own the envelope objective, inspect the repository, choose internal structure, implement, run checks, and correct ordinary code/test/UI drift without asking the user to choose implementation details. Before finish, compare the implementation and changed dependencies/interfaces with `iterationConstraints`; a conflict is not a successful implementation even when commands pass. Return to Gate B only when the objective requires changing product meaning, acceptance, approved scope, an approved iteration constraint, constitution, or an external authorization boundary.

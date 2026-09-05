@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { addProject } from '../src/knowledge/index.js';
 import { consumePreparedSource, issuePreparedSource } from '../src/sanitizer/approval.js';
+import { containsCredentialMaterial } from '../src/sanitizer/service.js';
 import {
   createProjectSecurityService,
   SANITIZER_RULES_VERSION,
@@ -75,6 +76,25 @@ afterEach(async () => {
 });
 
 describe('deterministic sanitizer rules', () => {
+  it('reuses credential and private-key rules for raw normalization preflight', () => {
+    const slashToken = ['abcd', 'efgh'].join('/');
+    const unsafe = [
+      ['Bearer', slashToken].join(' '),
+      ['Bearer', slashToken].join('\t'),
+      ['Basic', slashToken].join(' '),
+      `https://${['user', 'pass'].join(':')}@example.test/path`,
+      providerToken(),
+      ['-----BEGIN ', 'PRIVATE KEY-----'].join(''),
+    ];
+    for (const value of unsafe) expect(containsCredentialMaterial(value)).toBe(true);
+    for (const value of [
+      'iterations/v25-json/gate-b-spec/spec.json',
+      'sourceRef/contentHash/run-index',
+      sha256('normal digest'),
+      'Authentication scheme: Bearer.',
+    ]) expect(containsCredentialMaterial(value)).toBe(false);
+  });
+
   it('keeps the versioned rule table ordered and explicit', () => {
     expect(SECURITY_RULES).toEqual([
       { action: 'redact', overridable: false, priority: 10, ruleId: 'path.workspace' },

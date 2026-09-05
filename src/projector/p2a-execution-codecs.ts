@@ -71,6 +71,17 @@ const VERIFICATION_REQUIRED_FIELDS = [
   'stderrTail', 'stdoutTail', 'type',
 ] as const;
 
+const CURRENT_DEVELOPMENT_CONTRACT_FIELDS = new Set([
+  'acceptance', 'architecture', 'authority', 'bindings', 'iterationConstraints',
+  'iterationId', 'mustPreserve', 'nonGoals', 'objective', 'prohibitions', 'projectId',
+  'schema_version', 'scope', 'stack', 'style', 'technologyEvidence', 'verification',
+]);
+const CURRENT_DEVELOPMENT_CONTRACT_REQUIRED_FIELDS = [
+  'acceptance', 'architecture', 'authority', 'bindings', 'iterationConstraints',
+  'iterationId', 'mustPreserve', 'nonGoals', 'objective', 'prohibitions', 'projectId',
+  'schema_version', 'scope', 'stack', 'style', 'technologyEvidence', 'verification',
+] as const;
+
 export type DecodeResult<T> =
   | Readonly<{ ok: false; reasonCode: ExecutionQuarantineReason }>
   | Readonly<{ ok: true; value: T }>;
@@ -325,6 +336,99 @@ function validExecutionEnvelope(value: unknown): value is Record<string, unknown
   return (value.style === undefined || isRecord(value.style) && boundedJsonValue(value.style)) &&
     (value.visualContract === undefined ||
       isRecord(value.visualContract) && boundedJsonValue(value.visualContract));
+}
+
+function exactBoundedStringRecord(
+  value: unknown,
+  fields: readonly string[],
+): value is Record<string, unknown> {
+  return strictObject(value, new Set(fields), fields) &&
+    fields.every((field) => boundedString(value[field], 10_000));
+}
+
+function validContractReference(value: unknown): value is Record<string, unknown> {
+  return strictObject(value, new Set(['ref', 'sha256']), ['ref', 'sha256']) &&
+    validRelativeReference(value.ref) && typeof value.sha256 === 'string' &&
+    SHA256_PATTERN.test(value.sha256);
+}
+
+function validCurrentDevelopmentContract(
+  value: unknown,
+  expectedProjectId: string,
+): value is Record<string, unknown> {
+  if (!strictObject(
+    value,
+    CURRENT_DEVELOPMENT_CONTRACT_FIELDS,
+    CURRENT_DEVELOPMENT_CONTRACT_REQUIRED_FIELDS,
+  ) || value.schema_version !== 'p2a.current_development_contract.v1' ||
+      value.projectId !== expectedProjectId || typeof value.iterationId !== 'string' ||
+      !ITERATION_ID_PATTERN.test(value.iterationId) || !boundedString(value.objective, 100_000)) {
+    return false;
+  }
+  for (const field of [
+    'acceptance', 'mustPreserve', 'nonGoals', 'scope', 'verification',
+  ]) {
+    if (stringArray(value[field], 1_000, 10_000) === null) return false;
+  }
+  if (!strictObject(value.iterationConstraints, new Set([
+    'architecture', 'dependencies', 'interfaces',
+  ]), ['architecture', 'dependencies', 'interfaces'])) return false;
+  for (const field of ['architecture', 'dependencies', 'interfaces']) {
+    if (stringArray(value.iterationConstraints[field], 1_000, 10_000) === null) return false;
+  }
+  if (!Array.isArray(value.architecture) || value.architecture.length > MAX_TEXT_ITEMS ||
+      !value.architecture.every((item) => exactBoundedStringRecord(
+        item, ['id', 'rationale', 'rule', 'scope'],
+      ))) return false;
+  if (!Array.isArray(value.stack) || value.stack.length > MAX_TEXT_ITEMS ||
+      !value.stack.every((item) => strictObject(
+        item,
+        new Set(['choice', 'evidence', 'id', 'rationale']),
+        ['choice', 'evidence', 'id', 'rationale'],
+      ) && boundedString(item.choice, 10_000) && boundedString(item.id, 1_000) &&
+        boundedString(item.rationale, 10_000) &&
+        stringArray(item.evidence, MAX_TEXT_ITEMS, 10_000) !== null)) return false;
+  if (!Array.isArray(value.prohibitions) || value.prohibitions.length > MAX_TEXT_ITEMS ||
+      !value.prohibitions.every((item) => exactBoundedStringRecord(
+        item, ['enforcement', 'id', 'rationale', 'rule'],
+      ))) return false;
+  if (!isRecord(value.style) || !boundedJsonValue(value.style)) return false;
+  if (!Array.isArray(value.technologyEvidence) ||
+      value.technologyEvidence.length > MAX_TEXT_ITEMS ||
+      !value.technologyEvidence.every((item) => exactBoundedStringRecord(
+        item, ['source_id', 'title', 'url', 'used_for'],
+      ))) return false;
+  if (!strictObject(value.authority, new Set([
+    'externalWrites', 'mayChoose', 'mustReturnToGate', 'workspace',
+  ]), ['externalWrites', 'mayChoose', 'mustReturnToGate', 'workspace']) ||
+      typeof value.authority.externalWrites !== 'boolean' ||
+      !boundedSingleLineString(value.authority.workspace, 256) ||
+      stringArray(value.authority.mayChoose, MAX_TEXT_ITEMS, 10_000) === null ||
+      stringArray(value.authority.mustReturnToGate, MAX_TEXT_ITEMS, 10_000) === null) return false;
+  if (!strictObject(value.bindings, new Set([
+    'activeSpec', 'constitution', 'taskGraph',
+  ]), ['activeSpec', 'constitution', 'taskGraph']) ||
+      !validContractReference(value.bindings.activeSpec) ||
+      !validContractReference(value.bindings.constitution) ||
+      !strictObject(value.bindings.taskGraph, new Set(['ref', 'tasks']), ['ref', 'tasks']) ||
+      !validRelativeReference(value.bindings.taskGraph.ref) ||
+      !Array.isArray(value.bindings.taskGraph.tasks) ||
+      value.bindings.taskGraph.tasks.length < 1 ||
+      value.bindings.taskGraph.tasks.length > MAX_TASKS ||
+      !value.bindings.taskGraph.tasks.every((item) => strictObject(
+        item, new Set(['sha256', 'taskId']), ['sha256', 'taskId'],
+      ) && typeof item.sha256 === 'string' && SHA256_PATTERN.test(item.sha256) &&
+        typeof item.taskId === 'string' && TASK_ID_PATTERN.test(item.taskId))) return false;
+  return true;
+}
+
+export function decodeP2aCurrentDevelopmentContract(
+  value: unknown,
+  expectedProjectId: string,
+): DecodeResult<Readonly<Record<string, unknown>>> {
+  return validCurrentDevelopmentContract(value, expectedProjectId)
+    ? { ok: true, value }
+    : invalid('unsupported_schema');
 }
 
 export function p2aExecutionEnvelopeSha256(value: unknown): string | null {

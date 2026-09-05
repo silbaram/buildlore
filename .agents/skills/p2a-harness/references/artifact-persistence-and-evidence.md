@@ -4,14 +4,14 @@ Read when writing or handing off canonical planning state.
 
 ## Explicit state passing
 
-Pass JSON, not hidden conversation state. Include project/iteration ids, approved constitution or legacy fallback, validated decision ledger, artifact root and paths, entry evidence and intake, baseline/spec hashes, approval audits, any inspected BuildLore source references, and the visual contract when applicable.
+Pass JSON, not hidden conversation state. Include project/iteration ids, any approved constitution or advisory repository-convention evidence, validated decision ledger, artifact root and paths, entry evidence and intake, baseline/spec hashes, approval audits, any inspected BuildLore source references, and the visual contract when applicable.
 
 Downstream stages validate every incoming path and hash. Missing, outside-root, stale, or inconsistent references stop that stage.
 
 ## Canonical locations
 
 ```text
-.plan2agent/constitution.json
+.plan2agent/constitution.json       # optional unless a material Gate ② decision exists
 <artifact-root>/
 ├── status.md
 ├── current-spec.json

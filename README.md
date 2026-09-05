@@ -168,24 +168,29 @@ network, environment, clock, or process capability, and BuildLore validates its
 bounded drafts before the common sanitizer and atomic writer.
 
 `p2aRunJsonKnowledgeAdapter()` is an optional reference adapter built on that same
-public contract. A trusted host must register and inject it explicitly, then declare
-the common P2A artifact root (the directory containing both `runs/` and
-`iterations/`) with adapter ID `buildlore.p2a-run`. JSON outside the P2A run lineage
-is excluded. The adapter accepts supported `p2a.run.v2` and `p2a.run_index.v1`
-documents only when the index, task graph, source spec, task contract, and referenced
-execution envelope match exactly. It merges matching implementation/final-verification
-evidence, keeps failure-to-success history, and deduplicates verification. Unknown
-run schemas and lineage mismatches are quarantined rather than interpreted.
+public contract. The official CLI pre-registers it, but a project activates it only
+through an exact profile binding and an explicit source declaration. Other trusted
+hosts must register and inject it themselves. Declare the exact P2A
+`runs/run-index.json` file with adapter ID `buildlore.p2a-run`; recursive directory
+declarations are rejected. BuildLore derives a deterministic, project-confined closure
+containing only indexed runs and their referenced task graphs, current/effective specs,
+execution envelopes, gates, and current development contract. Unindexed historical JSON
+is not read. The adapter accepts supported `p2a.run.v2` and `p2a.run_index.v1`
+documents only when every reference, schema, digest, task contract, and index summary
+matches exactly. It merges matching implementation/final-verification evidence, keeps
+failure-to-success history, and deduplicates verification. Missing, ambiguous,
+unsupported, or mismatched closure inputs fail selection before collection.
 
 Run `sync --dry-run` first. JSON parse/profile/adapter failures and quarantine entries
 return value-free reason codes; correct the source, binding, profile, or index and run
-the preview again. The sanitizer scans the complete raw JSON bytes, including fields
+the preview again. The sanitizer scans every selected JSON field, including fields
 excluded from projected text, so hiding a suspected secret with an extraction rule
-cannot make the source eligible. The P2A reference adapter treats only verified digest
-fields as hashes and permits the common sanitizer to redact workspace paths from its
-raw security copy; suspected credentials or other unsafe trace content still fail
-closed. A failed preview or sync writes no partial source and does not replace healthy
-Wiki or semantic-index authority.
+cannot make the source eligible. After closure verification, the P2A reference adapter
+normalizes only exact schema-bound technical metadata and segments structured
+path/taxonomy values so each component is still scanned. The common sanitizer may redact
+workspace paths; suspected credentials, unknown high-entropy components, and unsafe
+trace content still fail closed. A failed preview or sync writes no partial source and
+does not replace healthy Wiki or semantic-index authority.
 
 ### 3. Register and bind projects from the hub
 

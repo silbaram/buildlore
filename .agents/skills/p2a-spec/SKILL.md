@@ -10,7 +10,7 @@ Create a development-ready product and implementation specification from approve
 ## Preconditions and inputs
 
 - `intake_json` is `ready_for_spec` with a valid Gate A approval audit.
-- A new project has an approved `.plan2agent/constitution.json`; a legacy project may use `.plan2agent/style.md` as compatibility guidance.
+- An approved `.plan2agent/constitution.json` is required only when Gate A introduced a hard prohibition or consequential, difficult-to-reverse architecture/stack choice. Otherwise repository conventions are advisory inputs and the constitution may be absent.
 - High-impact user decisions, explicit constraints, and non-goals are present.
 - Optional inputs include a validated baseline, prior draft spec, Feature Radar evidence, a validated entry reference bundle, and relevant committed BuildLore knowledge.
 
@@ -28,7 +28,7 @@ The canonical conditions live in `.agents/context-routes.json`.
 
 ## Procedure
 
-1. Validate the intake, approval, constitution/style fallback, evidence, and any baseline hashes.
+1. Validate the intake, approval, optional constitution, repository-convention evidence, and any baseline hashes.
 2. Separate product decisions from implementation decisions and preserve every explicit non-goal.
 3. Run conditional reconnaissance only when its trigger applies; do not invent technology selections from model memory.
 4. Author a complete `p2a.spec.v1` object and dispose every intake `CQ-n` through the contract reference.
@@ -54,7 +54,7 @@ When intake is persisted, bind `source_intake` and the SHA-256 of its exact byte
 
 ## Boundaries
 
-- Do not start Gate B without approved Gate A scope and the required constitution state.
+- Do not start Gate B without approved Gate A scope or while a material constitution decision is awaiting approval.
 - Do not turn unknown required fields into silent assumptions; keep material uncertainty in `open_decisions` and `approval: draft`.
 - Do not invent API providers, storage engines, frameworks, or external facts.
 - Do not treat Feature Radar, BuildLore retrieval, provider automatic memory, or prior prose as approval.

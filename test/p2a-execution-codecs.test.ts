@@ -3,12 +3,50 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
+  decodeP2aCurrentDevelopmentContract,
   decodeP2aRun,
   decodeP2aRunIndex,
   decodeP2aTaskGraph,
   resolveTaskLineage,
   taskContractSha256,
 } from '../src/projector/p2a-execution-codecs.js';
+
+function currentDevelopmentContract(
+  overrides: Readonly<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    acceptance: [],
+    architecture: [],
+    authority: {
+      externalWrites: false,
+      mayChoose: [],
+      mustReturnToGate: [],
+      workspace: 'project_root',
+    },
+    bindings: {
+      activeSpec: { ref: 'iterations/v1/gate-b-spec/spec.json', sha256: 'a'.repeat(64) },
+      constitution: { ref: '.plan2agent/constitution.json', sha256: 'b'.repeat(64) },
+      taskGraph: {
+        ref: 'iterations/v1/gate-c-task-graph/task-graph.json',
+        tasks: [{ sha256: 'c'.repeat(64), taskId: 'task-001' }],
+      },
+    },
+    iterationConstraints: { architecture: [], dependencies: [], interfaces: [] },
+    iterationId: 'v1',
+    mustPreserve: [],
+    nonGoals: [],
+    objective: 'Keep the current development contract bounded.',
+    prohibitions: [],
+    projectId: 'buildlore',
+    schema_version: 'p2a.current_development_contract.v1',
+    scope: [],
+    stack: [],
+    style: {},
+    technologyEvidence: [],
+    verification: [],
+    ...overrides,
+  };
+}
 
 const TASK = {
   acceptanceCriteria: ['Projects retries safely.'],
@@ -118,6 +156,28 @@ function runIndex(overrides: Readonly<Record<string, unknown>> = {}): Record<str
 }
 
 describe('P2A execution codecs', () => {
+  it('accepts only an exact project-bound current development contract', () => {
+    expect(decodeP2aCurrentDevelopmentContract(
+      currentDevelopmentContract(),
+      'buildlore',
+    )).toMatchObject({ ok: true });
+    expect(decodeP2aCurrentDevelopmentContract(
+      currentDevelopmentContract({ projectId: 'other' }),
+      'buildlore',
+    )).toMatchObject({ ok: false, reasonCode: 'unsupported_schema' });
+    expect(decodeP2aCurrentDevelopmentContract({
+      ...currentDevelopmentContract(),
+      unexpected: true,
+    }, 'buildlore')).toMatchObject({ ok: false, reasonCode: 'unsupported_schema' });
+    expect(decodeP2aCurrentDevelopmentContract({
+      ...currentDevelopmentContract(),
+      bindings: {
+        ...(currentDevelopmentContract().bindings as Record<string, unknown>),
+        activeSpec: { ref: '../escape.json', sha256: 'a'.repeat(64), unexpected: true },
+      },
+    }, 'buildlore')).toMatchObject({ ok: false, reasonCode: 'unsupported_schema' });
+  });
+
   it('matches the Plan2Agent immutable task-contract algorithm', () => {
     expect(taskContractSha256(TASK)).toBe(TASK_CONTRACT);
     expect(taskContractSha256({ ...TASK, status: 'todo' })).toBe(TASK_CONTRACT);

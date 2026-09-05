@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 const evidenceDocument = new URL(
-  '../docs/acceptance/v11-knowledge-publication.md',
+  './fixtures/acceptance/v11-knowledge-publication.md',
   import.meta.url,
 );
 

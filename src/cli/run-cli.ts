@@ -28,10 +28,12 @@ import type {
 } from '../knowledge/types.js';
 import { addProject, listProjects, showProject, validateProjectRegistry } from '../knowledge/workspace.js';
 import {
+  createBuiltInSourceAdapterRegistry,
   createProjectSyncService,
   createSourceManagement,
   initializeSingleProjectQuickstart,
   inspectLocalSourceStatus,
+  p2aRunJsonKnowledgeAdapter,
   type GenericSourceKind,
   type LocalSourceStatus,
   type ProjectSyncPort,
@@ -99,6 +101,13 @@ import type {
   CliSuccessResult,
   ParsedCliCommand,
 } from './types.js';
+
+const CLI_JSON_KNOWLEDGE_ADAPTERS = Object.freeze([
+  p2aRunJsonKnowledgeAdapter(),
+]);
+const CLI_SOURCE_ADAPTER_REGISTRY = createBuiltInSourceAdapterRegistry({
+  registrations: CLI_JSON_KNOWLEDGE_ADAPTERS,
+});
 
 export type CliPublicationLineage = Readonly<Pick<
   KnowledgePublishPlanInput,
@@ -302,6 +311,11 @@ function createDefaultLocalWiki(runtime: CliRuntime): LocalWikiOperatorPort {
 
 function createDefaultHierarchyWorkflow(runtime: CliRuntime): HierarchicalWorkflowServicePort {
   return createHierarchicalWorkflowService({
+    compiler: createProjectSessionCompiler({
+      hubRoot: runtime.cwd,
+      jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
+      knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    }),
     hubRoot: runtime.cwd,
     knowledgeRoot: join(runtime.cwd, 'knowledge'),
   });
@@ -336,6 +350,7 @@ async function listWikiPages(
     if (!isApprovedWikiUnavailable(error)) throw error;
     return createWikiReadService({
       knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      sourceAdapterRegistrations: CLI_JSON_KNOWLEDGE_ADAPTERS,
     }).list(input);
   }
 }
@@ -354,6 +369,7 @@ async function readWikiPage(
   }
   return (runtime.wikiRead ?? createWikiReadService({
     knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    sourceAdapterRegistrations: CLI_JSON_KNOWLEDGE_ADAPTERS,
   })).read({ pageRef, projectId });
 }
 
@@ -371,6 +387,7 @@ async function readWikiCitations(
   }
   return (runtime.wikiRead ?? createWikiReadService({
     knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    sourceAdapterRegistrations: CLI_JSON_KNOWLEDGE_ADAPTERS,
   })).citations({ pageRef, projectId });
 }
 
@@ -397,6 +414,7 @@ async function searchWithApprovedWiki(
         error.code !== 'LOCAL_WIKI_PROJECTION_UNAVAILABLE' ||
         (mode !== 'lexical' && mode !== 'hybrid')) throw error;
     const legacy = await createProjectRetrieval({
+      jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
       knowledgeRoot: join(runtime.cwd, 'knowledge'),
     }).search({ mode: 'lexical', projectId, query });
     return Object.freeze({
@@ -487,7 +505,10 @@ async function executeCommand(
       return initKnowledge(runtime.cwd);
     case 'knowledge.status': {
       const compiler = runtime.compiler ??
-        createProjectCompiler({ knowledgeRoot: join(runtime.cwd, 'knowledge') });
+        createProjectCompiler({
+          jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
+          knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        });
       return getKnowledgeStatus(runtime.cwd, {
         compiler,
         ...(command.projectId === null ? {} : { projectId: command.projectId }),
@@ -505,7 +526,9 @@ async function executeCommand(
         sourceRepository,
         sourceRoot,
       });
-      await readSourceCollectionManifest(candidate.checkout, projectId);
+      await readSourceCollectionManifest(candidate.checkout, projectId, {
+        sourceAdapterRegistry: CLI_SOURCE_ADAPTER_REGISTRY,
+      });
       let binding: Awaited<ReturnType<typeof bindLocalProject>> | undefined;
       const project = await addProject(join(runtime.cwd, 'knowledge'), {
         displayName: stringOption(command, '--name') ?? projectId,
@@ -513,7 +536,9 @@ async function executeCommand(
         sourceRepository,
       }, {
         afterRegistration: async () => {
-          await readSourceCollectionManifest(candidate.checkout, projectId);
+          await readSourceCollectionManifest(candidate.checkout, projectId, {
+            sourceAdapterRegistry: CLI_SOURCE_ADAPTER_REGISTRY,
+          });
           binding = await bindLocalProject(runtime.cwd, {
             expectedBindingDigest: null,
             projectId,
@@ -546,7 +571,9 @@ async function executeCommand(
         sourceRepository: project.entry.sourceRepository,
         sourceRoot,
       });
-      await readSourceCollectionManifest(candidate.checkout, projectId);
+      await readSourceCollectionManifest(candidate.checkout, projectId, {
+        sourceAdapterRegistry: CLI_SOURCE_ADAPTER_REGISTRY,
+      });
       const binding = await bindLocalProject(runtime.cwd, {
         ...(candidate.currentBindingDigest === null
           ? {}
@@ -589,6 +616,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const sourceManagement = runtime.sourceManagement ?? createSourceManagement({
         hubRoot: runtime.cwd,
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
       });
       return sourceManagement.add({
         id: requiredStringOption(command, '--id'),
@@ -603,6 +631,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const sourceManagement = runtime.sourceManagement ?? createSourceManagement({
         hubRoot: runtime.cwd,
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
       });
       return sourceManagement.list(projectId);
     }
@@ -611,6 +640,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const sourceManagement = runtime.sourceManagement ?? createSourceManagement({
         hubRoot: runtime.cwd,
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
       });
       return sourceManagement.diff(projectId);
     }
@@ -650,7 +680,9 @@ async function executeCommand(
     case 'sync': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
-      const service = runtime.sync ?? createProjectSyncService();
+      const service = runtime.sync ?? createProjectSyncService({
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
+      });
       return service.sync({
         dryRun: command.options['--dry-run'] === true,
         hubRoot: runtime.cwd,
@@ -661,6 +693,7 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.projectCompiler ?? createProjectCompiler({
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
       return compiler.execute({
@@ -674,6 +707,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
         hubRoot: runtime.cwd,
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
       return compiler.plan({ projectId });
@@ -683,6 +717,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
         hubRoot: runtime.cwd,
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
       return compiler.apply({
@@ -695,6 +730,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
         hubRoot: runtime.cwd,
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
       return compiler.candidates({ projectId });
@@ -704,6 +740,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
         hubRoot: runtime.cwd,
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
       return compiler.approve({
@@ -794,6 +831,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const activation = runtime.hierarchyActivation ?? createHierarchicalWikiActivationService({
         hubRoot: runtime.cwd,
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
       if (command.options['--rematerialize'] === true) {
@@ -811,6 +849,7 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.projectCompiler ?? createProjectCompiler({
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
       const check = runtime.check ?? createProjectCheck(compiler);
@@ -840,6 +879,7 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.projectCompiler ?? createProjectCompiler({
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
       return compiler.execute({
@@ -852,6 +892,7 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const retrieval = runtime.retrieval ?? createProjectRetrieval({
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
         knowledgeRoot: join(runtime.cwd, 'knowledge'),
       });
       return retrieval.context({

@@ -2,11 +2,12 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { runCli, type CliIo } from '../src/cli/index.js';
 import { createProjectCompiler, createProjectSessionCompiler } from '../src/compiler/index.js';
 import { addProject } from '../src/knowledge/index.js';
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
@@ -30,6 +31,7 @@ import {
   p2aRunJsonKnowledgeAdapter,
 } from '../src/projector/index.js';
 import {
+  parseSourceCollectionManifestV2,
   readSourceCollectionManifest,
   selectDeclaredSourceFiles,
   SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
@@ -42,6 +44,24 @@ import { writeSecurityPolicy } from './fixtures/security-policy.js';
 const temporaryRoots: string[] = [];
 const servers: FakeOpenAiServer[] = [];
 const execFileAsync = promisify(execFile);
+
+async function captureCli(
+  cwd: string,
+  args: readonly string[],
+): Promise<Readonly<{ exitCode: number; stderr: string; stdout: string }>> {
+  let stderr = '';
+  let stdout = '';
+  const io: CliIo = {
+    stderr: (message) => {
+      stderr += message;
+    },
+    stdout: (message) => {
+      stdout += message;
+    },
+  };
+  const exitCode = await runCli(args, io, { cwd });
+  return Object.freeze({ exitCode, stderr, stdout });
+}
 
 async function git(cwd: string, args: readonly string[]): Promise<void> {
   await execFileAsync('git', [...args], { cwd, env: { ...process.env, LC_ALL: 'C' } });
@@ -188,13 +208,20 @@ describe('P2A execution projector compiler integration', () => {
       clarifying_question_disposition: [],
       evidence: [],
       implementation: {
-        architecture: [], data_flow: [], dependencies: [], edge_cases: [], interfaces: [],
+        architecture: ['Keep sourceRef/contentHash/run-index proof-bound.'],
+        data_flow: [],
+        dependencies: [
+          'p2aRunJsonKnowledgeAdapter',
+        ],
+        edge_cases: [], interfaces: [],
         verification: [],
       },
       open_decisions: [],
       product: {
         constraints: [], core_flows: [], data_model_draft: [], external_integrations: [],
-        goals: [], must_preserve: [], non_goals: [], problem: 'Project verified JSON runs.',
+        goals: [],
+        must_preserve: ['Boundary: adapter/PtwoRunClosure/SourceBinding confinement.'],
+        non_goals: [], problem: 'Project verified JSON runs.',
         screens_or_interfaces: [], success_criteria: [], target_users: [],
       },
       project_id: 'alpha',
@@ -217,19 +244,41 @@ describe('P2A execution projector compiler integration', () => {
         version: 'v25-json',
       }),
     );
+    const nonMatchingGateCandidate =
+      'artifacts/iterations/v25-json/gate-c-task-graph/iterations/v25-json/gate-b-spec/spec.json';
+    await mkdir(join(sourceRoot, dirname(nonMatchingGateCandidate)), { recursive: true });
+    await writeFile(join(sourceRoot, nonMatchingGateCandidate), JSON.stringify({ decoy: true }));
     const executionEnvelope = {
       acceptance: ['Verified.'],
       executionAuthority: { mayChoose: [], mustReturnToGate: [] },
-      mustPreserve: ['Isolation.'],
+      iterationConstraints: {
+        architecture: ['Keep sourceRef/contentHash/run-index proof-bound.'],
+        dependencies: [
+          'p2aRunJsonKnowledgeAdapter',
+        ],
+        interfaces: [],
+      },
+      mustPreserve: ['Isolation.', 'Boundary: adapter/PtwoRunClosure/SourceBinding confinement.'],
       nonGoals: [],
       objective: 'Project JSON runs.',
       scope: ['p2a.run.v2'],
-      sourceGateRefs: [{ path: '../gate-b-spec/spec.json', sha256: digest(specBytes) }],
+      sourceGateRefs: [{
+        path: 'iterations/v25-json/gate-b-spec/spec.json',
+        sha256: digest(specBytes),
+      }],
       verification: ['npm test'],
     };
+    const changedFiles = [
+      'src/projector/json-source-adapter.ts',
+      ...Array.from({ length: 129 }, (_, index) => `src/generated/change-${String(index)}.ts`),
+    ];
     const run = (overrides: Readonly<Record<string, unknown>> = {}) => ({
       agentTool: 'codex',
-      changedFiles: ['src/projector/json-source-adapter.ts'],
+      changedFiles,
+      docsMetadataBaseline: [
+        'plans/entries/v25-json-sanitizer-remediation.md',
+        'plans/entries/v25-json-run-index-closure.md',
+      ],
       executionEnvelope,
       executionEnvelopeSha256: digest(JSON.stringify(executionEnvelope)),
       finishedAt: '2026-09-04T01:01:00.000Z',
@@ -259,6 +308,17 @@ describe('P2A execution projector compiler integration', () => {
         startedAt: '2026-09-04T01:00:39.000Z', status: 'passed',
         stderrTail: 'RAW-STDERR-MUST-NOT-SURVIVE',
         stdoutTail: 'RAW-STDOUT-MUST-NOT-SURVIVE', type: 'test',
+      }, {
+        command: 'p2a validate --entry plans/entries/v25-json-remediation.md',
+        durationMs: 1,
+        exitCode: 0,
+        finishedAt: '2026-09-04T01:00:50.000Z',
+        source: 'command',
+        startedAt: '2026-09-04T01:00:49.000Z',
+        status: 'passed',
+        stderrTail: '',
+        stdoutTail: '/private/workspace/plans/entries/v25-json-remediation.md',
+        type: 'test',
       }],
       workspacePath: '/private/workspace',
       workspaceRef: '/private/workspace',
@@ -367,7 +427,7 @@ describe('P2A execution projector compiler integration', () => {
     await writeFile(join(sourceRoot, 'artifacts/runs/run-index.json'), JSON.stringify(runIndex));
     const registered = p2aRunJsonKnowledgeAdapter();
     const registry = createBuiltInSourceAdapterRegistry({ registrations: [registered] });
-    await writeFile(join(sourceRoot, '.buildlore/sources.json'), serializeCanonicalJson({
+    expect(() => parseSourceCollectionManifestV2({
       projectId: 'alpha',
       schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
       sourceRepository: 'https://example.test/alpha.git',
@@ -379,6 +439,22 @@ describe('P2A execution projector compiler integration', () => {
         path: 'artifacts',
         pathType: 'directory',
         recursive: true,
+      }],
+    }, registry)).toThrowError(expect.objectContaining({
+      code: 'SOURCE_MANIFEST_INVALID',
+      field: 'path',
+    }));
+    await writeFile(join(sourceRoot, '.buildlore/sources.json'), serializeCanonicalJson({
+      projectId: 'alpha',
+      schemaVersion: SOURCE_COLLECTION_MANIFEST_V2_SCHEMA_VERSION,
+      sourceRepository: 'https://example.test/alpha.git',
+      sources: [{
+        adapterId: registered.registration.adapterId,
+        adapterVersion: 1,
+        id: 'artifacts',
+        kind: 'json',
+        path: 'artifacts/runs/run-index.json',
+        pathType: 'file',
       }],
     }));
     const checkout = new SourceCheckoutHandle(
@@ -392,6 +468,15 @@ describe('P2A execution projector compiler integration', () => {
     const inventory = await selectDeclaredSourceFiles(checkout, loadedManifest, {
       sourceAdapterRegistry: registry,
     });
+    const repeatedInventory = await selectDeclaredSourceFiles(checkout, loadedManifest, {
+      sourceAdapterRegistry: registry,
+    });
+    expect(repeatedInventory.files.map(({ contentDigest, declarationId, sourceRef }) => ({
+      contentDigest, declarationId, sourceRef,
+    }))).toEqual(inventory.files.map(({ contentDigest, declarationId, sourceRef }) => ({
+      contentDigest, declarationId, sourceRef,
+    })));
+    expect(inventory.files.some((file) => file.sourceRef === nonMatchingGateCandidate)).toBe(false);
     const result = await createSourceCollectionAdapter({
       jsonKnowledgeAdapters: [registered], sourceAdapterRegistry: registry,
     }).collect({
@@ -404,6 +489,7 @@ describe('P2A execution projector compiler integration', () => {
     expect(result.candidates).toHaveLength(1);
     const body = result.candidates[0]?.body ?? '';
     expect(body).toContain('Changed: src/projector/json-source-adapter.ts');
+    expect(body).toContain('Changed: src/generated/change-128.ts');
     expect(body).toContain('Resolution: Added generic JSON projection.');
     expect(body).toContain('Failure: verification_failed');
     expect(body).toContain('Failure evidence: Run the JSON tests.');
@@ -411,6 +497,26 @@ describe('P2A execution projector compiler integration', () => {
     expect(body).toContain('npm run lint');
     expect(body).not.toContain('RAW-STDOUT-MUST-NOT-SURVIVE');
     expect(body).not.toContain('/private/workspace');
+    const origins = result.candidates[0]?.jsonOrigins ?? [];
+    expect(origins.length).toBeLessThanOrEqual(128);
+    const lines = body.split('\n');
+    expect(lines.length).toBeGreaterThan(128);
+    for (const [index, line] of lines.entries()) {
+      const mappings = origins.filter(({ canonical }) =>
+        canonical.startLine <= index + 1 && canonical.endLine >= index + 1);
+      expect(mappings).toHaveLength(1);
+      if (line.startsWith('Changed:')) {
+        expect(mappings[0]?.origin.sourceRef).toBe(`artifacts/runs/v25-json/${normalRunId}.json`);
+        expect(mappings[0]?.origin.jsonPointer).toBe('/changedFiles');
+      }
+      if (line.startsWith('Resolution:')) {
+        expect(mappings[0]?.origin.jsonPointer).toBe('/fixSummary/summaries/0');
+      }
+      if (line.startsWith('lint:')) {
+        expect(mappings[0]?.origin.sourceRef).toBe(`artifacts/runs/v25-json/${finalRunId}.json`);
+        expect(mappings[0]?.origin.jsonPointer).toBe('/verification/1');
+      }
+    }
 
     await writeFile(join(sourceRoot, 'artifacts/runs/run-index.json'), JSON.stringify({
       ...runIndex,
@@ -418,25 +524,11 @@ describe('P2A execution projector compiler integration', () => {
         ? { ...entry, status: 'failed' }
         : entry),
     }));
-    const driftedInventory = await selectDeclaredSourceFiles(checkout, loadedManifest, {
+    await expect(selectDeclaredSourceFiles(checkout, loadedManifest, {
       sourceAdapterRegistry: registry,
+    })).rejects.toMatchObject({
+      code: 'SOURCE_SELECTION_KIND_MISMATCH',
     });
-    const drifted = await createSourceCollectionAdapter({
-      jsonKnowledgeAdapters: [registered], sourceAdapterRegistry: registry,
-    }).collect({
-      checkout,
-      ingestedAt: '2026-09-04T01:03:00.000Z',
-      inventory: driftedInventory,
-      loadedManifest,
-      sourceAdapterRegistry: registry,
-    });
-    expect(drifted.candidates).toHaveLength(0);
-    expect(drifted.entries).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        decision: 'quarantine',
-        reasonCode: 'p2a_lineage_invalid',
-      }),
-    ]));
     await writeFile(join(sourceRoot, 'artifacts/runs/run-index.json'), JSON.stringify(runIndex));
 
     await writeFile(
@@ -446,22 +538,11 @@ describe('P2A execution projector compiler integration', () => {
         product: { ...spec.product, goals: ['Unapproved changed goal.'] },
       }),
     );
-    const specDriftInventory = await selectDeclaredSourceFiles(checkout, loadedManifest, {
+    await expect(selectDeclaredSourceFiles(checkout, loadedManifest, {
       sourceAdapterRegistry: registry,
+    })).rejects.toMatchObject({
+      code: 'SOURCE_SELECTION_KIND_MISMATCH',
     });
-    const specDrift = await createSourceCollectionAdapter({
-      jsonKnowledgeAdapters: [registered], sourceAdapterRegistry: registry,
-    }).collect({
-      checkout,
-      ingestedAt: '2026-09-04T01:03:00.000Z',
-      inventory: specDriftInventory,
-      loadedManifest,
-      sourceAdapterRegistry: registry,
-    });
-    expect(specDrift.candidates).toHaveLength(0);
-    expect(specDrift.entries).toEqual(expect.arrayContaining([
-      expect.objectContaining({ decision: 'quarantine', reasonCode: 'p2a_lineage_invalid' }),
-    ]));
 
     await writeFile(
       join(sourceRoot, 'artifacts/iterations/v25-json/gate-b-spec/spec.json'),
@@ -471,24 +552,11 @@ describe('P2A execution projector compiler integration', () => {
         schema_version: 'p2a.spec.v1',
       }),
     );
-    const malformedSpecInventory = await selectDeclaredSourceFiles(checkout, loadedManifest, {
+    await expect(selectDeclaredSourceFiles(checkout, loadedManifest, {
       sourceAdapterRegistry: registry,
+    })).rejects.toMatchObject({
+      code: 'SOURCE_SELECTION_KIND_MISMATCH',
     });
-    const malformedSpec = await createSourceCollectionAdapter({
-      jsonKnowledgeAdapters: [registered], sourceAdapterRegistry: registry,
-    }).collect({
-      checkout,
-      ingestedAt: '2026-09-04T01:03:00.000Z',
-      inventory: malformedSpecInventory,
-      loadedManifest,
-      sourceAdapterRegistry: registry,
-    });
-    expect(malformedSpec.candidates).toHaveLength(0);
-    expect(malformedSpec.entries).toContainEqual(expect.objectContaining({
-      decision: 'quarantine',
-      reasonCode: 'adapter_schema_unsupported',
-      sourceRef: 'artifacts/iterations/v25-json/gate-b-spec/spec.json',
-    }));
     await writeFile(
       join(sourceRoot, 'artifacts/iterations/v25-json/gate-b-spec/spec.json'),
       specBytes,
@@ -496,10 +564,13 @@ describe('P2A execution projector compiler integration', () => {
 
     await writeFile(join(sourceRoot, 'artifacts/runs/unknown.json'), JSON.stringify({
       schema_version: 'p2a.run.v99',
+      unindexedCredential: `AKIA${'Z9Y8X7W6V5U4T3S2'}`,
     }));
     const unsupportedInventory = await selectDeclaredSourceFiles(checkout, loadedManifest, {
       sourceAdapterRegistry: registry,
     });
+    expect(unsupportedInventory.files.some((file) =>
+      file.sourceRef === 'artifacts/runs/unknown.json')).toBe(false);
     const unsupported = await createSourceCollectionAdapter({
       jsonKnowledgeAdapters: [registered], sourceAdapterRegistry: registry,
     }).collect({
@@ -509,11 +580,9 @@ describe('P2A execution projector compiler integration', () => {
       loadedManifest,
       sourceAdapterRegistry: registry,
     });
-    expect(unsupported.entries).toContainEqual(expect.objectContaining({
-      decision: 'quarantine',
-      reasonCode: 'adapter_schema_unsupported',
-      sourceRef: 'artifacts/runs/unknown.json',
-    }));
+    expect(unsupported.candidates).toHaveLength(1);
+    expect(unsupported.entries.some((entry) =>
+      entry.sourceRef === 'artifacts/runs/unknown.json')).toBe(false);
 
     await rm(join(sourceRoot, 'artifacts/runs/unknown.json'));
     const customManifest = await readFile(join(sourceRoot, '.buildlore/sources.json'), 'utf8');
@@ -556,6 +625,25 @@ describe('P2A execution projector compiler integration', () => {
     );
     await writeSecurityPolicy(join(hubRoot, 'knowledge'), 'alpha');
 
+    const listed = await captureCli(hubRoot, [
+      'source', 'list', '--project', 'alpha', '--json',
+    ]);
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listed.stdout)).toMatchObject({
+      data: {
+        declarations: [expect.objectContaining({ adapterId: 'buildlore.p2a-run' })],
+      },
+      ok: true,
+    });
+    const previewed = await captureCli(hubRoot, [
+      'sync', '--project', 'alpha', '--dry-run', '--json',
+    ]);
+    expect(previewed.exitCode, previewed.stderr).toBe(0);
+    expect(JSON.parse(previewed.stdout)).toMatchObject({
+      data: { dryRun: true, projectId: 'alpha' },
+      ok: true,
+    });
+
     const synchronized = await createProjectSyncService({
       jsonKnowledgeAdapters: [registered],
     }).sync({ dryRun: false, hubRoot, projectId: 'alpha' });
@@ -573,6 +661,7 @@ describe('P2A execution projector compiler integration', () => {
     expect(generated.body).toContain('Changed: src/projector/json-source-adapter.ts');
     expect(JSON.stringify(generated)).not.toContain('RAW-STD');
     expect(JSON.stringify(generated)).not.toContain('/private/workspace');
+    expect(generated.buildlore.jsonOrigins).toEqual(origins);
 
     const management = createSourceManagement({
       hubRoot,
@@ -598,9 +687,9 @@ describe('P2A execution projector compiler integration', () => {
     }));
     await git(sourceRoot, ['add', '.']);
     await git(sourceRoot, ['commit', '-m', 'add quarantined P2A lineage fixture']);
-    const quarantinedDiff = await management.diff('alpha');
-    expect(quarantinedDiff.records.some((record) =>
-      record.reasonCode === 'SOURCE_ADAPTER_BLOCKED' && record.status === 'blocked')).toBe(true);
+    await expect(management.diff('alpha')).rejects.toMatchObject({
+      code: 'SOURCE_SELECTION_KIND_MISMATCH',
+    });
     await expect(createProjectSessionCompiler({
       hubRoot,
       jsonKnowledgeAdapters: [registered],
@@ -645,7 +734,93 @@ describe('P2A execution projector compiler integration', () => {
     });
     await expect(readFile(join(sourceDirectory, generatedFilename!), 'utf8'))
       .resolves.toBe(generatedBeforeSecret);
-  });
+
+    const developmentContract = {
+      acceptance: [], architecture: [],
+      authority: {
+        externalWrites: false, mayChoose: [], mustReturnToGate: [], workspace: 'project_root',
+      },
+      bindings: {
+        activeSpec: { ref: 'iterations/v25-json/gate-b-spec/spec.json', sha256: digest(specBytes) },
+        constitution: { ref: '.plan2agent/constitution.json', sha256: 'a'.repeat(64) },
+        taskGraph: {
+          ref: 'iterations/v25-json/gate-c-task-graph/task-graph.json',
+          tasks: [{ sha256: taskContract, taskId: 'task-001' }],
+        },
+      },
+      iterationConstraints: { architecture: [], dependencies: [], interfaces: [] },
+      iterationId: 'v25-json', mustPreserve: [], nonGoals: [], objective: 'Project JSON runs.',
+      prohibitions: [], projectId: 'alpha', schema_version: 'p2a.current_development_contract.v1',
+      scope: [], stack: [], style: {}, technologyEvidence: [], verification: [],
+    };
+    async function replaceContract(value: Readonly<Record<string, unknown>>): Promise<void> {
+      const bytes = JSON.stringify(value).replaceAll('Bearer', '\\u0042earer');
+      await writeFile(join(sourceRoot, 'artifacts/contract.json'), bytes);
+      await writeFile(join(sourceRoot, `artifacts/runs/v25-json/${normalRunId}.json`), JSON.stringify(run({
+        currentDevelopmentContractRef: 'contract.json',
+        currentDevelopmentContractSha256: digest(bytes),
+      })));
+      await git(sourceRoot, ['add', '.']);
+      await git(sourceRoot, ['commit', '-m', 'update synthetic contract fixture']);
+    }
+    await replaceContract(developmentContract);
+    await expect(createProjectSyncService({ jsonKnowledgeAdapters: [registered] }).sync({
+      dryRun: true, hubRoot, projectId: 'alpha',
+    })).resolves.toMatchObject({ dryRun: true });
+    const knowledgeBeforeCredential = await treeDigest(join(hubRoot, 'knowledge'));
+    const fragments = ['abcd', 'efgh'];
+    const bearer = ['Bearer', fragments.join('/')].join(' ');
+    const basic = ['Basic', fragments.join('/')].join(' ');
+    const escapedBearer = ['Bearer', fragments.join('/')].join('\t');
+    for (const [value, credential] of [
+      ...[bearer, basic].map((credential) => [{
+        ...developmentContract,
+        bindings: {
+          ...developmentContract.bindings,
+          activeSpec: { ...developmentContract.bindings.activeSpec, ref: credential },
+        },
+      }, credential] as const),
+      [{ ...developmentContract, style: { nested: [{ example: escapedBearer }] } }, escapedBearer],
+      [{ ...developmentContract, style: { [bearer]: 'example' } }, bearer],
+    ] as const) {
+      await replaceContract(value);
+      for (const dryRun of [true, false]) {
+        const error: unknown = await createProjectSyncService({
+          jsonKnowledgeAdapters: [registered],
+        }).sync({ dryRun, hubRoot, projectId: 'alpha' }).catch((caught: unknown) => caught);
+        expect(error).toMatchObject({
+          code: 'SYNC_SANITIZATION_FAILED', completedTargets: [], partial: false,
+        });
+        expect(JSON.stringify(error).includes(credential)).toBe(false);
+      }
+      const difference = await management.diff('alpha');
+      expect(difference.records.length).toBeGreaterThan(0);
+      expect(difference.records.every((record) =>
+        record.status === 'blocked' && record.reasonCode === 'SOURCE_SECURITY_BLOCKED')).toBe(true);
+      await expect(createProjectSessionCompiler({
+        hubRoot, jsonKnowledgeAdapters: [registered], knowledgeRoot: join(hubRoot, 'knowledge'),
+      }).plan({ projectId: 'alpha' })).rejects.toMatchObject({ code: 'SESSION_PLAN_DENIED' });
+      expect(await treeDigest(join(hubRoot, 'knowledge'))).toBe(knowledgeBeforeCredential);
+    }
+
+    await writeFile(
+      join(sourceRoot, `artifacts/runs/v25-json/${normalRunId}.json`),
+      JSON.stringify(run({ workspacePath: secret })),
+    );
+    await git(sourceRoot, ['add', '.']);
+    await git(sourceRoot, ['commit', '-m', 'place unsafe credential in normalized pointer']);
+    await expect(createProjectSyncService({
+      jsonKnowledgeAdapters: [registered],
+    }).sync({ dryRun: false, hubRoot, projectId: 'alpha' })).rejects.toMatchObject({
+      code: 'SYNC_SANITIZATION_FAILED',
+      completedTargets: [],
+      partial: false,
+    });
+    await expect(readFile(join(sourceDirectory, generatedFilename!), 'utf8'))
+      .resolves.toBe(generatedBeforeSecret);
+  // This exercises local Git setup plus sync/diff/compile rejection for several
+  // credentials. Allow full-suite contention without relaxing any assertion.
+  }, 30_000);
 
   it('resolves a completed maintenance run through current-spec to its approved spec', async () => {
     const sourceRoot = await mkdtemp(join(process.cwd(), '.test-tmp-p2a-maintenance-json-'));
@@ -770,9 +945,8 @@ describe('P2A execution projector compiler integration', () => {
         adapterVersion: 1,
         id: 'artifacts',
         kind: 'json',
-        path: 'artifacts',
-        pathType: 'directory',
-        recursive: true,
+        path: 'artifacts/runs/run-index.json',
+        pathType: 'file',
       }],
     }));
     const checkout = new SourceCheckoutHandle(

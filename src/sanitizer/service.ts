@@ -548,6 +548,14 @@ function collectPrivateKeyFindings(state: ScanState, body: string): void {
   }
 }
 
+/** Internal preflight, not an approval: inspect originals before adapter normalization. */
+export function containsCredentialMaterial(body: string): boolean {
+  const state = initialState();
+  collectCredentialFindings(state, body);
+  collectPrivateKeyFindings(state, body);
+  return state.findingsOverflow || state.findings.length > 0;
+}
+
 function containsUnsafeCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);

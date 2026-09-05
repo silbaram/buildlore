@@ -1,5 +1,6 @@
 import type { ContextSummary } from '../compiler/index.js';
 import type { EmbeddingIdentity } from '../compiler/embedding-identity.js';
+import type { RegisteredJsonKnowledgeAdapterV1 } from '../projector/json-knowledge-adapter.js';
 import type {
   LexicalScoreComponents,
   MatchedRetrievalEvidence,
@@ -133,6 +134,7 @@ export interface ProjectRetrievalPort {
 }
 
 export interface CreateProjectRetrievalOptions {
+  readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly knowledgeRoot: string;
 }
 

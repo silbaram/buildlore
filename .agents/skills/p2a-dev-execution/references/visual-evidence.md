@@ -10,4 +10,4 @@ Capture the actual application for every declared case at the exact viewport, sa
 
 Immediately before capture, run `p2a runs revision --run-id <runId> --artifacts <artifact-root>`. Save the `p2a.visual_review.v2` sidecar as `<runId>.visual-review.json` with the iteration id, source refs, workspace identity/revision, screenshot hashes/media/dimensions/URLs/timestamps, and the hash-bound `p2a.visual_accessibility_report.v1`. Finish requires an unchanged workspace, complete passing cases, passing accessibility, and `confirm_ui`, then seals `visualReviewEvidenceSha256`. A failed/blocked review reopens its remediation owner; a stale workspace requires a new review.
 
-If a visual issue is discovered only after an implementation run finishes, reopen its owner with `p2a tasks todo <id> --reopen --note <reason>` before editing.
+If a visual issue is discovered after an implementation run finishes but before iteration close, start its linked correction with `p2a execute remediate --artifacts <root> --task <id> --finding <reason>` before editing. After iteration close, use maintenance or a new iteration instead.

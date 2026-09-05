@@ -273,7 +273,7 @@ function blocksWithJsonPointers(
     if (last === undefined) invalid(projectId);
     result.push(Object.freeze({
       content: contentLines.join('\n'),
-      endColumn: scalarLength(last),
+      endColumn: end === lines.length - 1 ? block.endColumn : scalarLength(last),
       endLine: block.startLine + end,
       jsonPointer,
       kind: block.kind,
@@ -572,6 +572,16 @@ export function selectRelevantHierarchyEvidenceUnitIds(
   const preferredUnitIds = blueprint.evidenceScope.preferredUnitIds ?? Object.freeze([]);
   const preferredOrder = new Map(preferredUnitIds.map((unitId, index) => [unitId, index]));
   if (preferredOrder.size !== preferredUnitIds.length) invalid(projectId);
+  const headingsBySource = new Map<string, TextUnitV1[]>();
+  for (const unit of snapshot.textUnits) {
+    if (unit.kind !== 'heading') continue;
+    const headings = headingsBySource.get(unit.sourceId) ?? [];
+    headings.push(unit);
+    headingsBySource.set(unit.sourceId, headings);
+  }
+  for (const headings of headingsBySource.values()) {
+    headings.sort((left, right) => right.range.startLine - left.range.startLine);
+  }
   const bySource = new Map<string, RankedUnit[]>();
   for (const unit of snapshot.textUnits) {
     if (!blueprint.evidenceScope.sourceIds.includes(unit.sourceId) ||
@@ -586,10 +596,8 @@ export function selectRelevantHierarchyEvidenceUnitIds(
     const tokens = new Set(contentTokens(content));
     const heading = unit.kind === 'heading'
       ? unit
-      : snapshot.textUnits.filter((candidate) =>
-        candidate.sourceId === unit.sourceId && candidate.kind === 'heading' &&
-        candidate.range.startLine < unit.range.startLine)
-        .sort((left, right) => right.range.startLine - left.range.startLine)[0];
+      : headingsBySource.get(unit.sourceId)?.find((candidate) =>
+        candidate.range.startLine < unit.range.startLine);
     const contextTokens = heading === undefined
       ? new Set<string>()
       : new Set(contentTokens(extractHierarchyTextUnitContent(source.body, heading.range, projectId)));

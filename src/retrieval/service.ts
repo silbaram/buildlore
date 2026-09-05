@@ -735,6 +735,9 @@ export function createProjectRetrievalWithPorts(
 
 export function createProjectRetrieval(options: CreateProjectRetrievalOptions): ProjectRetrievalPort {
   const compiler = createProjectCompiler({
+    ...(options.jsonKnowledgeAdapters === undefined
+      ? {}
+      : { jsonKnowledgeAdapters: options.jsonKnowledgeAdapters }),
     knowledgeRoot: options.knowledgeRoot,
   });
   const corpus = createProjectCorpus({ knowledgeRoot: options.knowledgeRoot });

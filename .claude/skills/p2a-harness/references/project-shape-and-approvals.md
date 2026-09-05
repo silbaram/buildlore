@@ -1,6 +1,6 @@
 # Project Shape and Approval Recording
 
-Read when Gate A is ready to record, a project constitution must be established/amended, or Gate B is ready for explicit approval.
+Read when Gate A is ready to record, a material project constitution may need approval or amendment, or Gate B is ready for explicit approval.
 
 ## Gate A scope approval
 
@@ -12,9 +12,9 @@ p2a decide --quote "<exact user utterance>" --entry <entry-path> --artifacts <ar
 
 This revalidates the original entry, requires a matching snapshot when its sibling reference bundle exists, appends `gate.what.approved`, and updates intake to `ready_for_spec` with an audit copy. Baseline-backed iteration intake and legacy approval-copy rebinding retain their entry-less compatibility path. Without explicit confirmation, keep it blocked and stop.
 
-## Gate ② project constitution
+## Conditional Gate ② project constitution
 
-Before the first Gate B spec, establish `.plan2agent/constitution.json`. Reuse an approved constitution across iterations unless scope materially changes architecture, foundational stack, a project-wide prohibition, or coding style.
+Reuse an approved `.plan2agent/constitution.json` across iterations unless scope materially changes it. When none exists, inspect repository evidence and carry ordinary architecture, stack, and style conventions into Gate B as advisory inputs. Create a separately approved constitution only for a hard project prohibition or a consequential architecture/stack choice that is difficult to reverse.
 
 Present a compact, reviewable proposal:
 
@@ -23,13 +23,13 @@ Present a compact, reviewable proposal:
 - up to 10 `NO-n` prohibitions with rationale and enforcement;
 - one coding-style contract, importing substantive legacy style when present.
 
-Use `advisory` by default, `review` for judgment, and `validator` only with concrete spec/task-graph targets and forbidden terms. Validate the draft, then after explicit approval record the exact quote through `p2a shape approve`. Validate the approved constitution and decision ledger before Gate B.
+When a constitution is material, use `advisory` by default, `review` for judgment, and `validator` only with concrete spec/task-graph targets and forbidden terms. Validate the draft, then after explicit approval record the exact quote through `p2a shape approve`. Validate any present constitution and decision ledger before Gate B; absence alone is not a blocker.
 
 Legacy style-only projects remain compatible. `p2a shape migrate-style` creates an unapproved draft and never implies approval. Constitution amendments use a focused diff, remove the old audit from the draft, and require a new quoted approval.
 
 ## Technology boundary
 
-Gate A owns product scope. Gate ② owns durable architecture, stack, prohibitions, and style. Gate B owns iteration-specific implementation inside those constraints. For a material current technology choice, inspect repository evidence and official sources, compare viable options, record the selected trade-off, and leave consequential uncertainty in `open_decisions`.
+Gate A owns product scope. Conditional Gate ② owns only durable, consequential project-shape decisions that warrant separate approval. Gate B owns iteration-specific implementation and records ordinary repository conventions as advisory defaults. For a material current technology choice, inspect repository evidence and official sources, compare viable options, record the selected trade-off, and leave consequential uncertainty in `open_decisions`.
 
 ## Gate B approval
 

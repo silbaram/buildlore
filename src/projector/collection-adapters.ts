@@ -32,6 +32,7 @@ import {
 import {
   sourceDeclarationDocumentKind,
   sourceDeclarationMediaType,
+  selectedFileBelongsToP2aRunClosure,
   type AnySourceDeclaration,
   type LoadedSourceCollectionManifest,
   type SelectedSourceFile,
@@ -137,6 +138,7 @@ function compareText(left: string, right: string): number {
 function belongsToDeclaration(
   file: SelectedSourceFile,
   declaration: AnySourceDeclaration,
+  inventory: SourceSelectionInventory,
 ): boolean {
   const documentKind = sourceDeclarationDocumentKind(declaration);
   const expectedAdapterId = 'adapterId' in declaration
@@ -160,7 +162,10 @@ function belongsToDeclaration(
     serializeCanonicalJson(file.metadata ?? null) !==
       serializeCanonicalJson(expectedMetadata ?? null)
   ) return false;
-  if (declaration.pathType === 'file') return file.sourceRef === declaration.path;
+  if (declaration.pathType === 'file') {
+    return file.sourceRef === declaration.path ||
+      selectedFileBelongsToP2aRunClosure(inventory, declaration, file);
+  }
   if (!file.sourceRef.startsWith(`${declaration.path}/`)) return false;
   return declaration.recursive === true ||
     !file.sourceRef.slice(declaration.path.length + 1).includes('/');
@@ -183,7 +188,7 @@ function selectedFilesByIdentity(
   const selected = new Map<string, SelectedSourceFile>();
   for (const file of inventory.files) {
     const declaration = declarations.get(file.declarationId);
-    if (declaration === undefined || !belongsToDeclaration(file, declaration)) {
+    if (declaration === undefined || !belongsToDeclaration(file, declaration, inventory)) {
       return fail('PROJECTION_ARTIFACT_INVALID', 'Selected source binding is invalid.');
     }
     if (selected.has(file.sourceRef)) {

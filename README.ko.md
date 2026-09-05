@@ -168,22 +168,28 @@ environment, clock 또는 process capability는 받지 않으며, 결과 draft�
 sanitizer와 atomic writer 전에 BuildLore가 상한과 결속을 검증합니다.
 
 `p2aRunJsonKnowledgeAdapter()`는 같은 공개 계약 위에 구현한 선택적 reference
-adapter입니다. 신뢰하는 host가 이를 명시적으로 등록·주입하고 `runs/`와
-`iterations/`를 함께 포함하는 P2A artifact root 디렉터리를 adapter ID
-`buildlore.p2a-run`으로 선언해야 합니다. P2A run lineage 밖의 JSON은 제외합니다.
-지원하는 `p2a.run.v2`와 `p2a.run_index.v1`은 index, task graph, source spec, task
-contract 및 참조한 execution envelope가 모두 정확히 일치할 때만 처리하며, 연결된
-구현 run과 final verification을 병합하고 실패 후 성공 이력을 보존하며 중복 검증을
-제거합니다. 알 수 없는 run schema와 lineage 불일치는 해석하지 않고
-quarantine합니다.
+adapter입니다. 공식 CLI에는 미리 등록되어 있지만, 프로젝트가 exact profile binding과
+명시적인 source 선언을 모두 갖춘 경우에만 활성화됩니다. 다른 신뢰하는 host는 이를
+직접 등록·주입해야 합니다. P2A의 정확한 `runs/run-index.json` 파일을 adapter ID
+`buildlore.p2a-run`으로 선언해야 하며 재귀 디렉터리 선언은 거부됩니다. BuildLore는
+index에 등록된 run과 그 run이 참조하는 task graph, current/effective spec, execution
+envelope, gate, current development contract만 프로젝트 경계 안에서 결정적인 폐쇄
+집합으로 구성합니다. Index에 없는 과거 JSON은 읽지 않습니다. 지원하는
+`p2a.run.v2`와 `p2a.run_index.v1`은 모든 reference, schema, digest, task contract 및
+index summary가 정확히 일치할 때만 처리하며, 연결된 구현 run과 final verification을
+병합하고 실패 후 성공 이력을 보존하며 중복 검증을 제거합니다. 폐쇄 집합 입력이
+누락되거나 모호하거나 지원되지 않거나 불일치하면 collection 전에 selection이
+fail-closed 됩니다.
 
 먼저 `sync --dry-run`을 실행합니다. JSON parse/profile/adapter 실패와 quarantine은
 값을 포함하지 않는 reason code로 보고되므로 source, binding, profile 또는 index를
-수정한 뒤 다시 preview합니다. Sanitizer는 투영 결과에서 제외한 필드까지 원본 JSON
-전체 byte를 검사하므로 extraction 규칙으로 의심되는 secret을 숨겨도 통과할 수
-없습니다. P2A reference adapter는 검증된 digest 필드만 hash로 취급하며 raw security
-copy의 workspace 경로는 공통 sanitizer가 redaction하도록 허용합니다. 의심되는
-credential이나 그 밖의 안전하지 않은 trace 내용은 계속 fail-closed 처리합니다.
+수정한 뒤 다시 preview합니다. Sanitizer는 투영 결과에서 제외한 필드까지 선택된
+JSON의 모든 필드를 검사하므로 extraction 규칙으로 의심되는 secret을 숨겨도 통과할
+수 없습니다. P2A reference adapter는 폐쇄 집합 검증 후 schema의 정확한 기술
+metadata만 정규화하고 구조화된 path/taxonomy는 각 구성 요소가 계속 검사되도록
+분리합니다. Workspace 경로는 공통 sanitizer가 redaction할 수 있지만 의심되는
+credential, 알 수 없는 고엔트로피 구성 요소 및 안전하지 않은 trace 내용은 계속
+fail-closed 처리합니다.
 Preview 또는 sync 실패 시 일부 source를 기록하지 않으며 정상 Wiki와 semantic index
 authority도 교체하지 않습니다.
 

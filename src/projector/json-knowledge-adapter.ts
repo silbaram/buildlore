@@ -8,6 +8,7 @@ import {
   type StrictJsonLocation,
 } from '../knowledge/strict-json.js';
 import type { Sha256Digest } from '../knowledge/local-project-registry.js';
+import { containsCredentialMaterial } from '../sanitizer/service.js';
 import type {
   CollectionCandidate,
   SourceAdapterProjectionInputV1,
@@ -31,7 +32,12 @@ import {
 } from './source-contracts.js';
 import type { SourceAdapterDefinitionV1 } from './source-adapter-registry.js';
 import { createCollectionSourceIdentity } from './source-identity.js';
-import { readSelectedSourceBytes, type SelectedSourceFile } from './source-manifest.js';
+import type { P2aRunInputClosure } from './p2a-run-input-closure.js';
+import {
+  p2aRunInputClosureForDeclaration,
+  readSelectedSourceBytes,
+  type SelectedSourceFile,
+} from './source-manifest.js';
 import { projectSourceProducer } from './project-source-writer.js';
 import { bindRawSourceInputs, type RawSourceInputV1 } from './raw-source-inputs.js';
 import { createSourceDocument } from './source-document.js';
@@ -111,20 +117,56 @@ interface LoadedEntry extends JsonKnowledgeAdapterEntryV1 {
 }
 
 interface JsonKnowledgeReferenceAdapterOptions {
-  readonly rawSecurityInput: (entry: JsonKnowledgeAdapterEntryV1) => RawSourceInputV1;
+  readonly rawSecurityInput: (
+    entry: JsonKnowledgeAdapterEntryV1,
+    context: JsonKnowledgeReferenceSecurityContext,
+  ) => RawSourceInputV1;
+}
+
+interface JsonKnowledgeReferenceSecurityContext {
+  readonly closure: P2aRunInputClosure | null;
+  readonly lineageVerified: boolean;
+  readonly projectId: string;
+}
+
+function credentialBearingText(value: unknown): string | null {
+  if (typeof value === 'string') return containsCredentialMaterial(value) ? value : null;
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const unsafe = credentialBearingText(child);
+      if (unsafe !== null) return unsafe;
+    }
+  } else if (isRecord(value)) {
+    for (const [key, child] of Object.entries(value)) {
+      if (containsCredentialMaterial(key)) return key;
+      const unsafe = credentialBearingText(child);
+      if (unsafe !== null) return unsafe;
+    }
+  }
+  return null;
 }
 
 function rawInputForLoaded(
   entry: LoadedEntry,
   referenceOptions?: JsonKnowledgeReferenceAdapterOptions,
+  referenceContext?: JsonKnowledgeReferenceSecurityContext,
 ): string | RawSourceInputV1 {
-  return referenceOptions?.rawSecurityInput(Object.freeze({
+  if (referenceOptions === undefined || referenceContext === undefined) return entry.decoded;
+  // A reference adapter may normalize technical strings, but must never erase a
+  // credential match. Check both original bytes and decoded keys/scalars (JSON
+  // escapes can hide whitespace or token characters in the serialized input).
+  // Bind the offending original text with NO redaction allowance: the ordinary
+  // sanitizer then rejects it, with its usual reports, before any write/egress.
+  if (containsCredentialMaterial(entry.decoded)) return entry.decoded;
+  const unsafe = credentialBearingText(entry.value);
+  if (unsafe !== null) return unsafe;
+  return referenceOptions.rawSecurityInput(Object.freeze({
     contentHash: entry.contentHash,
     declarationId: entry.declarationId,
     locations: entry.locations,
     sourceRef: entry.sourceRef,
     value: entry.value,
-  })) ?? entry.decoded;
+  }), referenceContext);
 }
 
 function fail(message: string): never {
@@ -349,6 +391,27 @@ async function projectCustom(
       sourceRef,
     });
   });
+  const referenceDeclarationIds = new Set(loaded.map((entry) => entry.declarationId));
+  const referenceDeclarationId = referenceDeclarationIds.size === 1
+    ? [...referenceDeclarationIds][0]
+    : undefined;
+  const referenceClosure = referenceDeclarationId === undefined
+    ? null
+    : p2aRunInputClosureForDeclaration(input.inventory, referenceDeclarationId);
+  const closureMatchesLoaded = referenceClosure !== null &&
+    referenceClosure.projectId === input.inventory.projectId &&
+    referenceClosure.entries.length === loaded.length &&
+    referenceClosure.entries.every((closureEntry) => loaded.some((entry) =>
+      entry.sourceRef === closureEntry.sourceRef && entry.contentHash === closureEntry.contentHash));
+  const referenceContext: JsonKnowledgeReferenceSecurityContext | undefined =
+    referenceOptions === undefined
+      ? undefined
+      : Object.freeze({
+        closure: referenceClosure,
+        lineageVerified: closureMatchesLoaded && matched.length === loaded.length &&
+          adapterEntries.every((entry) => entry.decision !== 'quarantine'),
+        projectId: input.inventory.projectId,
+      });
   const candidates: CollectionCandidate[] = [];
   const referencedSourceRefs = new Set<string>();
   let previousLogicalId = '';
@@ -472,7 +535,11 @@ async function projectCustom(
     projectSourceProducer(candidate);
     candidates.push(bindRawSourceInputs(
       Object.freeze(candidate),
-      inputEntries.map((entry) => rawInputForLoaded(entry, referenceOptions)),
+      inputEntries.map((entry) => rawInputForLoaded(
+        entry,
+        referenceOptions,
+        referenceContext,
+      )),
     ));
   }
   if (matched.some((entry) =>
@@ -493,7 +560,11 @@ async function projectCustom(
       })),
     ]),
     notices: Object.freeze([]),
-  }), loaded.map((entry) => rawInputForLoaded(entry, referenceOptions)));
+  }), loaded.map((entry) => rawInputForLoaded(
+    entry,
+    referenceOptions,
+    referenceContext,
+  )));
 }
 
 function registerAdapter(
