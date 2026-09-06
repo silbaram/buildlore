@@ -1,0 +1,61 @@
+{
+  "schema_version": "p2a.run.v2",
+  "projectId": "lantern",
+  "runId": "run-2026-08-01T00-00-00-000Z-task-001",
+  "taskId": "task-001",
+  "taskTitle": "Document local link checks",
+  "iterationId": "v1-links",
+  "sourceLayout": "iteration",
+  "executionEnvelope": {
+    "acceptance": ["A local link report is available for review."],
+    "executionAuthority": {
+      "mayChoose": ["internal structure"],
+      "mustReturnToGate": ["scope change"]
+    },
+    "mustPreserve": ["No remote fetch."],
+    "nonGoals": ["Automatic repair."],
+    "objective": "Document local link checks.",
+    "scope": ["links"],
+    "sourceGateRefs": [{
+      "path": "../gate-b-spec/spec.json",
+      "sha256": "436eb87f604f70920c734b2e57489eb9a93c543ac2b9d828b73c97b2178ce6a9"
+    }],
+    "verification": []
+  },
+  "executionEnvelopeSha256": "df30c8a3e02c59e97c10d8c0c4fa00b1acec55b5098ec99d80a789dce4e55702",
+  "sourceSpecRef": "../gate-b-spec/spec.json",
+  "taskGraphRef": "iterations/v1-links/gate-c-task-graph/task-graph.json",
+  "taskContractSha256": "464d52d3bd30650413f56d15bdc5467828cc3b40ae59fc18c1b1b2e492b8a748",
+  "agentTool": "codex",
+  "workspaceRef": "/workspace/fixture",
+  "workspacePath": "/workspace/fixture",
+  "status": "finished",
+  "startedAt": "2026-08-01T00:00:00.000Z",
+  "updatedAt": "2026-08-01T00:02:00.000Z",
+  "finishedAt": "2026-08-01T00:02:00.000Z",
+  "changedFiles": [
+    "src/links/resolver.ts"
+  ],
+  "fixSummary": {
+    "files": [
+      "src/links/resolver.ts"
+    ],
+    "summaries": [
+      "Recorded the local resolver workflow in synthetic R1 history."
+    ]
+  },
+  "notes": [
+    "Synthetic fixture history, not a production verification."
+  ],
+  "verification": [],
+  "isolation": {
+    "baseRef": null,
+    "branch": null,
+    "createCommand": null,
+    "createExitCode": null,
+    "createOutputTail": null,
+    "created": false,
+    "mode": "none",
+    "worktree": null
+  }
+}

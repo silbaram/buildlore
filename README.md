@@ -373,7 +373,81 @@ The isolated project workspace contains flat sanitized sources under `sources/`,
 generated pages under `wiki/`, compiler state under `.llmwiki/`, and the applied
 language-neutral lifecycle profile.
 
-#### Recommended hierarchical CLI workflow
+#### Project knowledge mode (opt-in, phase 1)
+
+This mode organizes generic Markdown/JSON into project facts and exactly three pages:
+overview, architecture and decisions. P2A is an optional source adapter, not the
+knowledge model. It is an opt-in development feature; protocol tests are not evidence
+that an independent AI can answer project questions correctly.
+
+Use this purpose file with the existing `compile hierarchy start` command:
+
+```json
+{
+  "schemaVersion": "buildlore.hierarchical-workflow-purpose-input.v2",
+  "projectId": "example",
+  "generationModel": "project-knowledge-v1",
+  "outputLanguage": "en"
+}
+```
+
+The returned versioned `exchange` contains sanitized evidence and previous knowledge.
+The already-running agent authors a complete proposal, using
+`compiler.createProposedKnowledgeRecord` for fact IDs and
+`compiler.createKnowledgeProposal` for canonical submission JSON. It must bind every
+sentence, title and section to supporting facts. Refer to
+[knowledge contracts](schemas/project-knowledge.schema.json) and
+[workflow contracts](schemas/project-knowledge-workflow.schema.json).
+
+For this mode the sequence is `sync` → `start` → `submit` → `review` → `finalize` →
+`approve` → the returned `activationArgs`. `submit` uses `exchange.exchangeDigest`;
+`finalize` imports an independent `buildlore.knowledge-semantic-review.v1` and uses
+the returned `reviewViewDigest`. The reviewer must use a different session or be an
+explicit human reviewer, judging support, scope, classification and currentness for
+every `reviewTargets` entry. A checksum binds that judgment; it does not prove truth.
+Claim IDs must not use the reserved `sha256:`, `title:`, `section:`, `supersession:`
+or `conflict:` prefixes. Review targets and judgments must be unique.
+Correct the whole proposal with `submit` before finalization; the legacy per-page
+`resubmit` and `child-review` commands do not apply. BuildLore does not spawn AI.
+
+After explicit activation, files are in
+`knowledge/projects/example/wiki/buildlore-hierarchy/`:
+`overview.md`, `architecture.md`, `decisions.md`, `knowledge.json`, `evidence.json`,
+and `manifest.json`. JSON and Markdown are regenerable projections of the single
+`.llmwiki/buildlore-hierarchy/approved-authority.json`, not independent authorities.
+The first legacy migration preserves an immutable authority backup in that store's
+`archives/<authority-digest>.json`; archives are never active search inputs.
+
+```sh
+node dist/cli/bin.js wiki read --project example --page overview --json
+node dist/cli/bin.js wiki citations --project example --page decisions --json
+node dist/cli/bin.js search --project example --query "storage decision" --mode lexical
+```
+
+Facts distinguish `observed` source literals, `declared` statements and `inferred`
+interpretations. Only reviewed `accepted` + `current` claims are current explanations;
+historical, superseded, stale and disputed knowledge remains explicitly marked.
+A JSON `passed`/`done` value is not proof of current code verification. Repository HEAD
+metadata and tracking status are separate from proven source/code revisions, which
+remain `null` when unavailable. Missing evidence does not prove a feature was removed;
+changed selection is not deletion, and unreadable input blocks generation.
+Re-proposing a superseded fact cannot restore it to current or erase its replacement
+link; historical re-review retains that link. Further changes extend the replacement chain.
+
+Reads and citations return generation-bound facts and evidence. Unsupported semantic
+indexes explicitly fall back to existing lexical ranking, without mixing old caches;
+search honors the existing intent option. Overview search hits identify inherited
+child claims separately. Ranking uses reviewed fact states for each cited section,
+including inherited summaries, without rewriting the stored corpus or changing the
+legacy ranking policy. Shared evidence does not transfer currentness between sections.
+On first activation, an absent or empty namespace is required; pre-existing files
+without a bound authority are not overwritten, even if their filenames match generated files.
+Direct edits to managed Markdown cause drift and block
+overwriting. Restore reviewed bytes from Git/backup before retrying activation; do not
+edit or rehash authority records to repair them. Rebinding fresh-clone source inputs
+is needed for new authoring, not for reading portable approved knowledge.
+
+#### Recommended legacy hierarchical CLI workflow
 
 The CLI is the recommended product workflow when the current Codex or Claude session
 authors a hierarchical Wiki. Every handoff path is relative to the BuildLore hub, and

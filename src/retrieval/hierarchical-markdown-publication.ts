@@ -43,6 +43,8 @@ import {
   HIERARCHICAL_MARKDOWN_MAXIMUM_MANIFEST_BYTES,
   HIERARCHICAL_MARKDOWN_NAMESPACE,
   HIERARCHICAL_MARKDOWN_RENDERER_DIGEST,
+  KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION,
+  KNOWLEDGE_MARKDOWN_RENDERER_DIGEST,
   HIERARCHICAL_MARKDOWN_STATUS_SCHEMA_VERSION,
   HierarchicalMarkdownMaterializationError,
   parseHierarchicalMarkdownManifest,
@@ -512,6 +514,7 @@ async function readJournal(paths: HierarchyPaths, projectId: string): Promise<Jo
 
 function allowedGeneratedName(name: string): boolean {
   return name === HIERARCHICAL_MARKDOWN_MANIFEST_FILENAME || name === 'index.md' ||
+    ['overview.md', 'architecture.md', 'decisions.md', 'knowledge.json', 'evidence.json'].includes(name) ||
     PAGE_FILENAME_PATTERN.test(name);
 }
 
@@ -570,7 +573,7 @@ async function inspectNamespace(
       const status = await pathStatus(path);
       if (status === null) return Object.freeze({ manifest, state: 'missing' as const });
       if (!status.isFile() || status.isSymbolicLink() || status.nlink !== 1 ||
-          status.size > 4 * 1024 * 1024 || await realpath(path) !== resolve(path)) {
+          status.size > (manifest.schemaVersion === KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION ? 16 : 4) * 1024 * 1024 || await realpath(path) !== resolve(path)) {
         return Object.freeze({ manifest, state: 'invalid' as const });
       }
       if (status.size !== record.byteLength) {
@@ -590,10 +593,16 @@ async function inspectNamespace(
       manifest.sanitizerPolicyDigest !== expected.projection.sanitizerPolicyDigest ||
       manifest.pageCount !== expected.projection.corpus.pages.length
     )) return Object.freeze({ manifest, state: 'drifted' as const });
-    if (expected !== null && (
-      manifest.schemaVersion !== HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION ||
-      manifest.rendererDigest !== HIERARCHICAL_MARKDOWN_RENDERER_DIGEST
-    )) return Object.freeze({ manifest, state: 'renderer-outdated' as const });
+    if (expected !== null) {
+      const knowledgeMode = expected.authority.knowledgeGeneration !== undefined;
+      if (manifest.schemaVersion !== (knowledgeMode ? KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION : HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION) ||
+          manifest.rendererDigest !== (knowledgeMode ? KNOWLEDGE_MARKDOWN_RENDERER_DIGEST : HIERARCHICAL_MARKDOWN_RENDERER_DIGEST)) {
+        return Object.freeze({ manifest, state: 'renderer-outdated' as const });
+      }
+      if (knowledgeMode && manifest.materializationDigest !== renderVerifiedHierarchicalMarkdown({ publication: expected }).manifest.materializationDigest) {
+        return Object.freeze({ manifest, state: 'drifted' as const });
+      }
+    }
     return Object.freeze({ manifest, state: 'ready' as const });
   } catch {
     return Object.freeze({ manifest: null, state: 'invalid' as const });
@@ -622,6 +631,17 @@ async function assertReplaceableGeneratedDirectory(directory: string): Promise<v
 async function assertReplaceableNamespace(paths: HierarchyPaths): Promise<void> {
   await assertWikiParentIdentities(paths);
   await assertReplaceableGeneratedDirectory(paths.finalRoot);
+}
+
+async function assertKnowledgeNamespaceOwnership(paths: HierarchyPaths, projectId: string,
+  previous: ApprovedWikiPublicationSnapshotV1 | null): Promise<void> {
+  if (await pathStatus(paths.finalRoot) === null) return;
+  // Recognized filenames alone do not establish ownership on first activation.
+  if (previous === null) {
+    if ((await readdir(paths.finalRoot)).length !== 0) fail('HIERARCHICAL_MARKDOWN_DRIFT');
+  } else if ((await inspectNamespace(paths.finalRoot, projectId, previous)).state !== 'ready') {
+    fail('HIERARCHICAL_MARKDOWN_DRIFT');
+  }
 }
 
 async function scanFinalBytes(
@@ -663,6 +683,39 @@ async function scanFinalBytes(
       fail('HIERARCHICAL_MARKDOWN_SECURITY_DENIED');
     }
   }
+}
+
+/** Called under the same repository lease and hierarchy lock before a legacy swap. */
+async function preserveLegacyAuthority(paths: HierarchyPaths, previous: ApprovedWikiPublicationSnapshotV1,
+  projectId: string, policyDigest: `sha256:${string}`, security: ProjectSecurityService): Promise<void> {
+  const basis = { schemaVersion: 'buildlore.legacy-authority-archive.v1', projectId,
+    authorityDigest: previous.authorityDigest, authority: previous.authority };
+  const archive = { ...basis, archiveDigest: digestValue(basis) };
+  const body = serializeCanonicalJson(archive);
+  const bodyDigest = digestText(body);
+  const result = await security.prepareSource({ body, bodyDigest, projectId, sourceKind: 'wiki',
+    source: `buildlore-hierarchy/archives/${previous.authorityDigest.slice(7)}.json`,
+    sourceRevisionOrContentSha256: bodyDigest });
+  const prepared = result.ok ? consumePreparedSource(result.prepared) : null;
+  if (!prepared || prepared.approvedBody !== body || prepared.policyDigest !== policyDigest || prepared.untrustedData) {
+    fail('HIERARCHICAL_MARKDOWN_SECURITY_DENIED');
+  }
+  await assertStoreParentIdentities(paths);
+  const directory = join(paths.storeRoot, 'archives');
+  try { await mkdir(directory, { mode: 0o700 }); }
+  catch (error) { if (!isNodeError(error) || error.code !== 'EEXIST') throw error; }
+  const identity = await assertSafeDirectory(directory);
+  const path = join(directory, `${previous.authorityDigest.slice(7)}.json`);
+  const status = await pathStatus(path);
+  if (status !== null) {
+    if (!status.isFile() || status.isSymbolicLink() || status.nlink !== 1 || status.size !== Buffer.byteLength(body) ||
+        await realpath(path) !== path || decodeUtf8Strict(await readFile(path)) !== body) fail('HIERARCHICAL_MARKDOWN_DRIFT');
+  } else {
+    await assertDirectoryIdentity(identity);
+    await writeJsonAtomic(path, archive, { confinementRoot: paths.workspace });
+  }
+  await assertDirectoryIdentity(identity);
+  await assertStoreParentIdentities(paths);
 }
 
 async function writeStagedGeneration(
@@ -904,7 +957,8 @@ async function inspectStatus(
       : recoveryStatus(projectId, 'invalid');
   }
   if (inspection.state === 'ready' && inspection.manifest !== null &&
-      inspection.manifest.schemaVersion === HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION) {
+      (inspection.manifest.schemaVersion === HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION ||
+        inspection.manifest.schemaVersion === KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION)) {
     return readyStatus(projectId, inspection.manifest);
   }
   if (inspection.state === 'ready') return recoveryStatus(projectId, 'invalid');
@@ -963,6 +1017,15 @@ export function createHierarchicalMarkdownPublication(
                 previous?.recordDigest !== publication.recordDigest) {
               fail('HIERARCHICAL_MARKDOWN_DRIFT');
             }
+            // The new mode never treats manual changes as replaceable generated
+            // output. Legacy rematerialization semantics remain unchanged.
+            if (publication.authority.knowledgeGeneration !== undefined) {
+              await assertKnowledgeNamespaceOwnership(paths, input.projectId, previous);
+            }
+            if (publication.authority.knowledgeGeneration !== undefined && previous !== null &&
+                previous.authority.knowledgeGeneration === undefined && input.preserveAuthority !== true) {
+              await preserveLegacyAuthority(paths, previous, input.projectId, policy.digest, security);
+            }
             const previousNamespace = await inspectNamespace(paths.finalRoot, input.projectId, null);
             const journal: JournalV1 = Object.freeze({
               backupName,
@@ -986,6 +1049,9 @@ export function createHierarchicalMarkdownPublication(
             }
             if (await pathStatus(paths.finalRoot) !== null) {
               await assertHierarchyParentIdentities(paths);
+              if (publication.authority.knowledgeGeneration !== undefined) {
+                await assertKnowledgeNamespaceOwnership(paths, input.projectId, previous);
+              }
               await rename(paths.finalRoot, join(paths.storeRoot, backupName));
               await assertHierarchyParentIdentities(paths);
               await Promise.all([syncDirectory(paths.wikiRoot), syncDirectory(paths.storeRoot)]);

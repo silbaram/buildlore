@@ -7,6 +7,58 @@
     { "$ref": "#/$defs/activationResult" }
   ],
   "$defs": {
+    "knowledgeAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "currentState",
+        "finalization",
+        "ledger",
+        "liveSnapshot",
+        "ownershipGraph",
+        "humanActivationApproval",
+        "state",
+        "authorityCheck",
+        "knowledgeGeneration"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.approved-wiki-authority.v2"
+        },
+        "projectId": {
+          "$ref": "#/$defs/authority/properties/projectId"
+        },
+        "currentState": {
+          "$ref": "#/$defs/authority/properties/currentState"
+        },
+        "finalization": {
+          "$ref": "#/$defs/authority/properties/finalization"
+        },
+        "ledger": {
+          "$ref": "#/$defs/authority/properties/ledger"
+        },
+        "liveSnapshot": {
+          "$ref": "#/$defs/authority/properties/liveSnapshot"
+        },
+        "ownershipGraph": {
+          "$ref": "#/$defs/authority/properties/ownershipGraph"
+        },
+        "humanActivationApproval": {
+          "$ref": "#/$defs/authority/properties/humanActivationApproval"
+        },
+        "state": {
+          "$ref": "#/$defs/authority/properties/state"
+        },
+        "authorityCheck": {
+          "$ref": "#/$defs/authority/properties/authorityCheck"
+        },
+        "knowledgeGeneration": {
+          "$ref": "project-knowledge.schema.json#/$defs/authorityExtension"
+        }
+      }
+    },
     "activationInput": {
       "type": "object",
       "additionalProperties": false,
@@ -19,7 +71,7 @@
           "$ref": "hierarchical-corpus.schema.json#/$defs/projectId"
         },
         "authority": {
-          "$ref": "#/$defs/authority"
+          "oneOf": [{ "$ref": "#/$defs/authority" }, { "$ref": "#/$defs/knowledgeAuthority" }]
         }
       }
     },

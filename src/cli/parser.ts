@@ -620,7 +620,7 @@ function validateWikiOptions(
   if (commandId === 'wiki.read' || commandId === 'wiki.citations') {
     const page = values['--page'];
     if (typeof page !== 'string' || page.length > 320 ||
-        !/^(?:(?:concepts|decisions|failures|queries|verifications)\/[a-z0-9]+(?:-[a-z0-9]+)*|page-[a-f0-9]{64})$/u
+        !/^(?:(?:concepts|decisions|failures|queries|verifications)\/[a-z0-9]+(?:-[a-z0-9]+)*|page-[a-f0-9]{64}|(?:(?:wiki\/)?buildlore-hierarchy\/)?(?:overview|architecture|decisions)(?:\.md)?)$/u
           .test(page)) {
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }

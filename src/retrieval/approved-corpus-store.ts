@@ -27,6 +27,7 @@ import { isNodeError } from '../knowledge/errors.js';
 import { resolveProjectWorkspace } from '../knowledge/paths.js';
 import { decodeUtf8Strict, parseJsonStrict } from '../knowledge/strict-json.js';
 import { neutralSourceRetrievalMeaning } from '../projector/source-contracts.js';
+import { parseKnowledgeAuthorityExtension, type KnowledgeAuthorityExtensionV1 } from './project-knowledge-authority.js';
 import {
   createApprovedWikiRetrieval,
   projectApprovedWikiForRetrieval,
@@ -38,6 +39,8 @@ export const APPROVED_WIKI_RETRIEVAL_PROJECTION_SCHEMA_VERSION =
   'buildlore.approved-wiki-retrieval-projection.v1' as const;
 export const APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION =
   'buildlore.approved-wiki-authority.v1' as const;
+export const PROJECT_KNOWLEDGE_WIKI_AUTHORITY_SCHEMA_VERSION =
+  'buildlore.approved-wiki-authority.v2' as const;
 export const APPROVED_WIKI_AUTHORITY_RECORD_SCHEMA_VERSION =
   'buildlore.approved-wiki-authority-record.v1' as const;
 
@@ -90,7 +93,8 @@ export class ApprovedWikiProjectionError extends Error {
 
 /** Complete tracked authority; retrieval is always re-derived from this value. */
 export interface ApprovedWikiAuthorityV1 {
-  readonly schemaVersion: typeof APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION;
+  readonly schemaVersion: typeof APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION | typeof PROJECT_KNOWLEDGE_WIKI_AUTHORITY_SCHEMA_VERSION;
+  readonly knowledgeGeneration?: KnowledgeAuthorityExtensionV1;
   readonly projectId: string;
   readonly currentState: AuthoritativeWikiStateV1 | null;
   readonly finalization: FinalizeCompileRunInputV1;
@@ -606,15 +610,18 @@ function verifyAuthority(
   value: ApprovedWikiAuthorityV1,
   expectedProjectId: string,
 ): ProjectApprovedWikiInputV1 {
+  const knowledgeMode = value.schemaVersion === PROJECT_KNOWLEDGE_WIKI_AUTHORITY_SCHEMA_VERSION;
+  const properties: readonly string[] = knowledgeMode ? [...AUTHORITY_PROPERTIES, 'knowledgeGeneration'] : AUTHORITY_PROPERTIES;
   if (!isRecord(value) ||
-      Object.keys(value).sort().join('\0') !== [...AUTHORITY_PROPERTIES].sort().join('\0') ||
-      value.schemaVersion !== APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION ||
+      Object.keys(value).sort().join('\0') !== [...properties].sort().join('\0') ||
+      (!knowledgeMode && value.schemaVersion !== APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION) ||
       value.projectId !== expectedProjectId) {
     fail(value.projectId === expectedProjectId
       ? 'APPROVED_WIKI_PROJECTION_INVALID'
       : 'APPROVED_WIKI_PROJECTION_PROJECT_MISMATCH');
   }
   try {
+    if (knowledgeMode) parseKnowledgeAuthorityExtension(value.knowledgeGeneration, value);
     const expectedState = verifyCompileRunApproval({
       currentState: value.currentState,
       finalization: value.finalization,

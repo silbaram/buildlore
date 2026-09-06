@@ -1,0 +1,27 @@
+{
+  "schema_version": "p2a.run_index.v1",
+  "projectId": "lantern",
+  "runs": [
+    {
+      "runId": "run-2026-08-01T00-00-00-000Z-task-001",
+      "runRef": "v1-links/run-2026-08-01T00-00-00-000Z-task-001.json",
+      "taskId": "task-001",
+      "iterationId": "v1-links",
+      "agentTool": "codex",
+      "taskGraphRef": "iterations/v1-links/gate-c-task-graph/task-graph.json",
+      "workspaceRef": "/workspace/fixture",
+      "status": "finished",
+      "startedAt": "2026-08-01T00:00:00.000Z",
+      "finishedAt": "2026-08-01T00:02:00.000Z"
+    }
+  ],
+  "tasks": [
+    {
+      "taskId": "task-001",
+      "latestRunId": "run-2026-08-01T00-00-00-000Z-task-001",
+      "runIds": [
+        "run-2026-08-01T00-00-00-000Z-task-001"
+      ]
+    }
+  ]
+}

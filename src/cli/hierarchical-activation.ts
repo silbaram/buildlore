@@ -5,6 +5,7 @@ import {
   digestCurrentSessionProposalSecurityBody,
   type CorpusSnapshotV1,
 } from '../compiler/index.js';
+import { preparePlannedKnowledgeSession } from '../compiler/project-knowledge/planned-sources.js';
 import { readConfinedSessionUtf8 } from '../compiler/session/safe-io.js';
 import { resolveLocalProjectBinding } from '../knowledge/local-project-registry.js';
 import { createRepositoryWriterLease } from '../knowledge/repository-writer-lease.js';
@@ -126,7 +127,8 @@ function parseActivation(value: unknown, projectId: string): ApprovedWikiAuthori
   if (!isRecord(value) || Object.keys(value).sort().join('\0') !== expectedKeys.join('\0') ||
       value.schemaVersion !== HIERARCHICAL_WIKI_ACTIVATION_INPUT_SCHEMA_VERSION ||
       typeof value.projectId !== 'string' || !isRecord(value.authority) ||
-      value.authority.schemaVersion !== APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION ||
+      (value.authority.schemaVersion !== APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION &&
+        value.authority.schemaVersion !== 'buildlore.approved-wiki-authority.v2') ||
       !isRecord(value.authority.liveSnapshot) ||
       !isRecord(value.authority.humanActivationApproval) ||
       typeof value.authority.humanActivationApproval.approvalDigest !== 'string' ||
@@ -186,6 +188,22 @@ function createLiveSnapshotVerifier(options: Readonly<{
   return Object.freeze({
     async verify(authority: ApprovedWikiAuthorityV1, projectId: string) {
       try {
+        if (authority.knowledgeGeneration !== undefined) {
+          const generation = authority.knowledgeGeneration.generations.at(-1);
+          if (!generation) invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
+          const { session } = await preparePlannedKnowledgeSession({ ...options, projectId,
+            previousGenerations: authority.knowledgeGeneration.generations.slice(0, -1) });
+          if (session.exchange.snapshot.snapshotDigest !== generation.snapshot.snapshotDigest) {
+            invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
+          }
+          // Re-import under the current policy; no new semantic judgment or authority is manufactured.
+          await session.submit(generation.proposal, session.exchange.exchangeDigest);
+          const replay = await session.finalize(generation.review, generation.proposal.proposalDigest);
+          if (replay.generationDigest !== generation.generationDigest) invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
+          await replayProposalSecurity(authority, projectId,
+            createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot }));
+          return;
+        }
         const snapshot: CorpusSnapshotV1 = authority.liveSnapshot;
         const project = await showProject(options.knowledgeRoot, projectId);
         const binding = await resolveLocalProjectBinding(

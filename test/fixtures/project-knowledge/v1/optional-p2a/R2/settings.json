@@ -1,0 +1,10 @@
+{
+  "project": "lantern",
+  "commands": {
+    "check": "lantern check docs",
+    "report": "lantern report"
+  },
+  "caseSensitive": true,
+  "maxDepth": 8,
+  "automaticRepair": "done"
+}

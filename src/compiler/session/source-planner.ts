@@ -84,6 +84,8 @@ export interface CreateSessionCompilePlannerOptions {
   readonly hubRoot: string;
   readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   readonly knowledgeRoot: string;
+  /** Opt-in knowledge mode does not promote inputs with credential redactions. */
+  readonly rejectCredentialFindings?: boolean;
   /** @internal Verification seam for phase ordering. */
   readonly onPhase?: (phase: SessionCompilePlannerPhase) => void;
 }
@@ -115,6 +117,7 @@ async function sanitizeCandidateText(
   security: ReturnType<typeof createProjectSecurityService>,
   policy: LoadedSecurityPolicy,
   projectId: string,
+  rejectCredentialFindings = false,
 ): Promise<string> {
   const bodyDigest = sessionSha256(body);
   const result = await security.prepareSource({
@@ -133,6 +136,8 @@ async function sanitizeCandidateText(
     result.report.policyDigest !== policy.digest ||
     result.report.projectId !== projectId ||
     result.report.rulesVersion !== SANITIZER_RULES_VERSION ||
+    (rejectCredentialFindings && result.report.summaries.some((summary) =>
+      summary.count > 0 && /^(?:credential\.|private-key\.|entropy\.)/u.test(summary.ruleId))) ||
     result.report.summaries.some((summary) =>
       summary.action !== 'redact' && summary.count !== summary.overriddenCount)
   ) return denied(projectId);
@@ -261,6 +266,7 @@ async function buildPlannedSources(input: {
   readonly projectId: string;
   readonly security: ReturnType<typeof createProjectSecurityService>;
   readonly workspace: string;
+  readonly rejectCredentialFindings?: boolean;
 }): Promise<readonly SessionPlannedSource[]> {
   if (input.candidates.length === 0 || input.candidates.length > SESSION_COMPILE_LIMITS.maxSources) {
     return denied(input.projectId);
@@ -284,6 +290,7 @@ async function buildPlannedSources(input: {
       input.security,
       input.policy,
       input.projectId,
+      input.rejectCredentialFindings,
     );
     const approvedBody = await sanitizeCandidateText(
       candidate,
@@ -292,6 +299,7 @@ async function buildPlannedSources(input: {
       input.security,
       input.policy,
       input.projectId,
+      input.rejectCredentialFindings,
     );
     for (const rawInput of inspectRawSourceInputs(candidate)) {
       const rawBodyDigest = sessionSha256(rawInput.body);
@@ -305,6 +313,8 @@ async function buildPlannedSources(input: {
       });
       const rawPrepared = rawResult.ok ? consumePreparedSource(rawResult.prepared) : null;
       if (!rawResult.ok || rawPrepared === null ||
+          (input.rejectCredentialFindings === true && rawResult.report.summaries.some((summary) =>
+            summary.count > 0 && /^(?:credential\.|private-key\.|entropy\.)/u.test(summary.ruleId))) ||
           rawPrepared.inputBodyDigest !== rawBodyDigest ||
           rawPrepared.approvedBodyDigest !== rawResult.report.outputDigest ||
           rawPrepared.policyDigest !== input.policy.digest ||
@@ -328,6 +338,9 @@ async function buildPlannedSources(input: {
     );
     input.onPhase?.('source-stored-verified');
     const originalBody = decodeUtf8Strict(await readSelectedSourceBytes(input.checkout, file));
+    if (input.rejectCredentialFindings === true) {
+      await sanitizeCandidateText(candidate, originalBody, candidate.sourceKind, input.security, input.policy, input.projectId, true);
+    }
     input.onPhase?.('source-original-read');
     const id = plannedSourceId(candidate, storedSource.body);
     result.push(Object.freeze({
@@ -448,6 +461,7 @@ export function createSessionCompilePlanner(
           sourceRevision: loadedManifest.manifestDigest,
         })) return denied(projectId);
         const sources = await buildPlannedSources({
+          ...(options.rejectCredentialFindings === undefined ? {} : { rejectCredentialFindings: options.rejectCredentialFindings }),
           candidates: collection.candidates,
           checkout: binding.checkout,
           files: new Map(inventory.files.map((file) => [file.sourceRef, file] as const)),

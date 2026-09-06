@@ -40,6 +40,7 @@ export {
   APPROVED_WIKI_RETRIEVAL_PROJECTION_SCHEMA_VERSION,
   APPROVED_WIKI_AUTHORITY_RECORD_SCHEMA_VERSION,
   APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION,
+  PROJECT_KNOWLEDGE_WIKI_AUTHORITY_SCHEMA_VERSION,
   ApprovedWikiProjectionError,
   createApprovedWikiProjectionStore,
   prepareApprovedWikiPublication,
@@ -52,6 +53,9 @@ export {
   type ApprovedWikiProjectionStorePort,
   type ApprovedWikiRetrievalProjectionV1,
 } from './approved-corpus-store.js';
+export { createKnowledgeWikiReader, type KnowledgeWikiReader, type KnowledgeWikiPageView } from './project-knowledge-reader.js';
+export { parseKnowledgeAuthorityExtension, createKnowledgeAuthorityExtension,
+  approveKnowledgeWikiAuthority, type KnowledgeAuthorityExtensionV1 } from './project-knowledge-authority.js';
 export {
   HIERARCHICAL_MARKDOWN_INDEX_FILENAME,
   HIERARCHICAL_MARKDOWN_INDEX_SCHEMA_VERSION,

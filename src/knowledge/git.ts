@@ -20,6 +20,37 @@ export interface GitRevisionSnapshot {
   readonly head: string;
 }
 
+/** Checkout metadata only: a HEAD reference is not proof that working files or tests match it. */
+export async function readGitSelectedSourceMetadata(repositoryRoot: string, paths: readonly string[]): Promise<Readonly<{
+  repositoryRevision: string | null; trackedPaths: ReadonlySet<string>;
+}>> {
+  if (paths.length > 8192 || paths.some((path) => path.length < 1 || path.length > 1024 ||
+      /[\\:]/u.test(path) || [...path].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) || path.startsWith('/') ||
+      path.split('/').some((part) => part === '' || part === '.' || part === '..'))) {
+    throw new KnowledgeError('GIT_ACCESS_DENIED', 'Source tracking metadata is invalid.');
+  }
+  const head = async () => {
+    const result = await runGit(repositoryRoot, ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true });
+    if (result.exitCode !== 0) return null;
+    const revision = result.stdout.trim();
+    if (!OBJECT_ID_PATTERN.test(revision)) throw new KnowledgeError('GIT_ACCESS_DENIED', 'Source revision metadata is invalid.');
+    return revision;
+  };
+  const before = await head();
+  const selected = [...new Set(paths)].sort();
+  const tracked = new Set<string>();
+  for (let index = 0; index < selected.length; index += 128) {
+    const batch = selected.slice(index, index + 128);
+    const result = await runGit(repositoryRoot, ['--literal-pathspecs', 'ls-files', '--cached', '-z', '--', ...batch]);
+    for (const path of result.stdout.split('\0').filter(Boolean)) {
+      if (!batch.includes(path)) throw new KnowledgeError('GIT_ACCESS_DENIED', 'Source tracking metadata is invalid.');
+      tracked.add(path);
+    }
+  }
+  if (await head() !== before) throw new KnowledgeError('GIT_ACCESS_DENIED', 'Source revision changed during inspection.');
+  return Object.freeze({ repositoryRevision: before, trackedPaths: tracked });
+}
+
 function runGit(
   cwd: string,
   args: readonly string[],

@@ -764,8 +764,13 @@ function baselineResult(
   topK: number,
   baselineHits: readonly HierarchicalRetrievalHitV1[],
   intent: NormalizedIntent,
+  meaningForHit?: (locator: HierarchicalRetrievalLocatorV1) => readonly ApprovedWikiMeaningSignalV1[],
 ): RetrievalResultV3 {
   const fused = mode === 'graph';
+  const candidates = baselineCandidates(baselineHits, corpus);
+  if (meaningForHit !== undefined) {
+    for (const candidate of candidates.values()) candidate.meaningSignals = meaningForHit(candidate.locator);
+  }
   return Object.freeze({
     schemaVersion: RETRIEVAL_RESULT_V3_SCHEMA_VERSION,
     projectId: corpus.projectId,
@@ -778,7 +783,7 @@ function baselineResult(
     fallback: null,
     fusionPolicy: fused ? RETRIEVAL_FUSION_POLICY_V1 : null,
     intentReasonCodes: intent.reasons,
-    hits: rankCandidates(baselineCandidates(baselineHits, corpus), topK, fused, intent.effective),
+    hits: rankCandidates(candidates, topK, fused, intent.effective),
     identity: Object.freeze({
       embeddingIdentityDigest: null,
       indexGenerationId: null,
@@ -827,6 +832,24 @@ function semanticResult(
     requestedIntent: intent.requested,
     egress: 'none',
   });
+}
+
+/** The existing intent/ranking policy without creating a provider or opening a vector cache. */
+export function searchApprovedWikiLexicalV3(
+  corpus: ApprovedWikiRetrievalCorpusV1,
+  input: LocalWikiRetrievalRequestV3,
+  /** @internal Knowledge mode supplies verified, section-scoped fact state before ranking. */
+  meaningForHit?: (locator: HierarchicalRetrievalLocatorV1) => readonly ApprovedWikiMeaningSignalV1[],
+): RetrievalResultV3 {
+  const request = validateRequest(input, corpus.projectId);
+  if (request.mode !== 'lexical' && request.mode !== 'graph') {
+    throw new LocalWikiRetrievalError('LOCAL_WIKI_RETRIEVAL_CONTRACT_INVALID');
+  }
+  const intent = normalizeIntent(request.intent, request.query);
+  const result = createApprovedWikiRetrieval(corpus, corpus.projectId).search({
+    projectId: request.projectId, query: request.query, mode: request.mode,
+  });
+  return baselineResult(corpus, request.mode, request.topK, result.hits, intent, meaningForHit);
 }
 
 export function createApprovedWikiHybridRetrievalV3(

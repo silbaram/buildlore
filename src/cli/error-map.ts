@@ -31,6 +31,8 @@ import { WikiOperationError } from '../wiki/errors.js';
 import { HierarchicalWikiActivationError } from './hierarchical-activation.js';
 import { HierarchicalWorkflowRunStoreError } from './hierarchical-run-store.js';
 import { HierarchicalWorkflowError } from './hierarchical-workflow.js';
+import { ProjectKnowledgeError } from '../knowledge/project-knowledge/guards.js';
+import { KnowledgeHierarchyQualityError } from '../compiler/project-knowledge/hierarchy-bridge.js';
 import { CliUsageError } from './parser.js';
 import type {
   CliEnvelopeCommand,
@@ -221,6 +223,9 @@ export function mapCliError(
       : failure;
   }
   if (error instanceof HierarchicalWorkflowError) {
+    return baseFailure(context, 3, error.code, error.message);
+  }
+  if (error instanceof ProjectKnowledgeError || error instanceof KnowledgeHierarchyQualityError) {
     return baseFailure(context, 3, error.code, error.message);
   }
   if (error instanceof ApprovedWikiProjectionError) {

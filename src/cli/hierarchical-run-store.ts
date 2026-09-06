@@ -232,6 +232,103 @@ export interface HierarchicalWorkflowRunStorePort {
   activationBundlePath(projectId: string, runId: string): string;
 }
 
+interface HierarchyPayloadIdentity {
+  readonly projectId: string;
+  readonly runId: string;
+  readonly revision: number;
+  readonly recordDigest: HierarchySha256Digest;
+}
+
+/** @internal Versioned workflows share the same confined paths, file checks and writer lock. */
+export function createHierarchyPayloadStore<T extends HierarchyPayloadIdentity>(hubRootValue: string,
+  parse: (value: unknown, projectId: string, runId: string) => T,
+): Readonly<{
+  create(value: T): Promise<void>;
+  read(projectId: string, runId: string): Promise<T>;
+  schema(projectId: string, runId: string): Promise<string>;
+  replace(previous: T, next: T, activation?: ApprovedWikiAuthorityV1): Promise<void>;
+  activationPath(projectId: string, runId: string): string;
+}> {
+  const hubRoot = resolve(hubRootValue);
+  const location = (projectId: string, runId: string): string =>
+    join(hubRoot, '.buildlore', RUNS_DIRECTORY, parseProjectId(projectId), parseRunId(runId));
+  const snapshot = (value: T): T => parse(parseJsonStrict(serializeCanonicalJson(value)), value.projectId, value.runId);
+  const load = async (projectId: string, runId: string): Promise<Readonly<{ identity: RunIdentity; value: unknown }>> => {
+    location(projectId, runId);
+    const identity = await captureIdentity(hubRoot, projectId, runId);
+    const path = join(identity.run.path, RUN_FILENAME);
+    if ((await lstat(path)).nlink !== 1) fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
+    const file = await readRegularFileSnapshot(path, MAXIMUM_RECORD_BYTES);
+    if (!file) fail('HIERARCHICAL_WORKFLOW_RUN_NOT_FOUND');
+    const after = await lstat(path);
+    if (after.nlink !== 1 || after.dev !== file.device || after.ino !== file.inode) fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
+    if (!await identitiesMatch(identity)) fail('HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED');
+    return { identity, value: parseJsonStrict(decodeUtf8Strict(file.bytes)) };
+  };
+  return Object.freeze({
+    async create(value: T): Promise<void> {
+      const parsed = snapshot(value);
+      if (parsed.revision !== 0) fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
+      const run = location(parsed.projectId, parsed.runId);
+      await directoryIdentity(hubRoot, false);
+      const buildlore = join(hubRoot, '.buildlore');
+      const runs = join(buildlore, RUNS_DIRECTORY);
+      const project = join(runs, parsed.projectId);
+      await ensureDirectory(buildlore, hubRoot);
+      await ensureDirectory(runs, buildlore);
+      await ensureDirectory(project, runs);
+      try { await mkdir(run, { mode: 0o700 }); }
+      catch (error) {
+        if (isNodeError(error) && error.code === 'EEXIST') fail('HIERARCHICAL_WORKFLOW_RUN_CONFLICT');
+        fail('HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED');
+      }
+      await syncDirectory(project);
+      const identity = await captureIdentity(hubRoot, parsed.projectId, parsed.runId);
+      await withLock(identity, {}, async (assertOwned) => {
+        await assertOwned();
+        await writeJsonAtomic(join(run, RUN_FILENAME), parsed, { confinementRoot: hubRoot });
+        await assertOwned();
+      });
+    },
+    async read(projectId: string, runId: string): Promise<T> {
+      return parse((await load(projectId, runId)).value, projectId, runId);
+    },
+    async schema(projectId: string, runId: string): Promise<string> {
+      const { value } = await load(projectId, runId);
+      if (!isRecord(value) || typeof value.schemaVersion !== 'string' || value.schemaVersion.length > 128) fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
+      return value.schemaVersion;
+    },
+    async replace(previous: T, next: T, activation?: ApprovedWikiAuthorityV1): Promise<void> {
+      const prior = snapshot(previous);
+      const parsed = snapshot(next);
+      if (parsed.projectId !== prior.projectId || parsed.runId !== prior.runId ||
+          (parsed.revision !== prior.revision + 1 && !(activation !== undefined && sameValue(parsed, prior)))) fail('HIERARCHICAL_WORKFLOW_RUN_CONFLICT');
+      if (activation !== undefined) verifyApprovedWikiAuthority(activation, prior.projectId);
+      const { identity } = await load(prior.projectId, prior.runId);
+      await withLock(identity, {}, async (assertOwned) => {
+        await assertOwned();
+        const current = parse((await load(prior.projectId, prior.runId)).value, prior.projectId, prior.runId);
+        if (current.recordDigest !== prior.recordDigest || current.revision !== prior.revision) fail('HIERARCHICAL_WORKFLOW_RUN_CONFLICT');
+        await assertOwned();
+        // The approved run is committed before its regenerable activation envelope.
+        await writeJsonAtomic(join(identity.run.path, RUN_FILENAME), parsed, { confinementRoot: hubRoot });
+        await assertOwned();
+        if (activation !== undefined) {
+          await writeJsonAtomic(join(identity.run.path, ACTIVATION_FILENAME), {
+            authority: activation, projectId: prior.projectId,
+            schemaVersion: 'buildlore.hierarchical-wiki-activation-input.v1',
+          }, { confinementRoot: hubRoot });
+          await assertOwned();
+        }
+      });
+    },
+    activationPath(projectId: string, runId: string): string {
+      location(projectId, runId);
+      return `.buildlore/${RUNS_DIRECTORY}/${projectId}/${runId}/${ACTIVATION_FILENAME}`;
+    },
+  });
+}
+
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
 function fail(code: HierarchicalWorkflowRunStoreErrorCode): never {

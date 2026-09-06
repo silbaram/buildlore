@@ -1,0 +1,18 @@
+{
+  "project": "parcel",
+  "commands": {
+    "plan": "parcel plan --input deliveries.json",
+    "check": "parcel check"
+  },
+  "storage": "json-files",
+  "retryLimit": 5,
+  "featureStatus": {
+    "carrierBooking": "done"
+  },
+  "verification": {
+    "revision": "R1",
+    "status": "passed",
+    "scope": "manifest parser fixture",
+    "evidenceKind": "synthetic report; not an authenticated execution receipt"
+  }
+}

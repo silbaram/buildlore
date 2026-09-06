@@ -1,0 +1,329 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/project-knowledge-workflow.schema.json",
+  "title": "Opt-in project knowledge current-session workflow",
+  "description": "No AI process is launched. Independent review artifacts are imported. Runtime additionally enforces phase consistency, expected digests, sanitizer capability and current source/authority bindings.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/purpose"
+    },
+    {
+      "$ref": "#/$defs/exchange"
+    },
+    {
+      "$ref": "#/$defs/status"
+    },
+    {
+      "$ref": "#/$defs/run"
+    }
+  ],
+  "$defs": {
+    "purpose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationModel",
+        "outputLanguage"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.hierarchical-workflow-purpose-input.v2"
+        },
+        "projectId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "maxLength": 64
+        },
+        "generationModel": {
+          "const": "project-knowledge-v1"
+        },
+        "outputLanguage": {
+          "type": "string",
+          "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$"
+        }
+      }
+    },
+    "exchange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshot",
+        "baselineGenerationDigest",
+        "previousRecords",
+        "previousEvidence",
+        "instructions",
+        "boundary",
+        "exchangeDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-exchange.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "maxLength": 64
+        },
+        "snapshot": {
+          "$ref": "project-knowledge.schema.json#/$defs/snapshot"
+        },
+        "baselineGenerationDigest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            }
+          ]
+        },
+        "previousRecords": {
+          "type": "array",
+          "items": {
+            "$ref": "project-knowledge.schema.json#/$defs/record"
+          },
+          "minItems": 0,
+          "maxItems": 2048
+        },
+        "previousEvidence": {
+          "type": "array",
+          "items": {
+            "$ref": "project-knowledge.schema.json#/$defs/evidence"
+          },
+          "minItems": 0,
+          "maxItems": 8192
+        },
+        "instructions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "generationActor",
+            "egress",
+            "processSpawned"
+          ],
+          "properties": {
+            "generationActor": {
+              "const": "current-agent-session"
+            },
+            "egress": {
+              "const": "none"
+            },
+            "processSpawned": {
+              "const": false
+            }
+          }
+        },
+        "exchangeDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "runId",
+        "phase",
+        "active",
+        "generationModel",
+        "egress",
+        "processSpawned"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.project-knowledge-workflow-status.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "maxLength": 64
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "^run-[0-9a-f]{64}$"
+        },
+        "phase": {
+          "enum": [
+            "awaiting-proposal",
+            "review-ready",
+            "finalized",
+            "approved"
+          ]
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "generationModel": {
+          "const": "project-knowledge-v1"
+        },
+        "exchange": {
+          "$ref": "#/$defs/exchange"
+        },
+        "proposal": {
+          "$ref": "project-knowledge.schema.json#/$defs/proposal"
+        },
+        "reviewTargets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0,
+          "maxItems": 16384
+        },
+        "reviewViewDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "ledgerDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "generationDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "activationArgs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "minItems": 0,
+          "maxItems": 16
+        },
+        "egress": {
+          "const": "none"
+        },
+        "processSpawned": {
+          "const": false
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "runId",
+        "revision",
+        "phase",
+        "outputLanguage",
+        "snapshotDigest",
+        "exchangeDigest",
+        "baselineAuthorityDigest",
+        "proposal",
+        "semanticReview",
+        "ledgerDigest",
+        "approvedAuthorityDigest",
+        "recordDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.project-knowledge-workflow-run.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "maxLength": 64
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "^run-[0-9a-f]{64}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "phase": {
+          "enum": [
+            "awaiting-proposal",
+            "review-ready",
+            "finalized",
+            "approved"
+          ]
+        },
+        "outputLanguage": {
+          "type": "string",
+          "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$"
+        },
+        "snapshotDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "exchangeDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "baselineAuthorityDigest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            }
+          ]
+        },
+        "proposal": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/proposal"
+            }
+          ]
+        },
+        "semanticReview": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/review"
+            }
+          ]
+        },
+        "ledgerDigest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            }
+          ]
+        },
+        "approvedAuthorityDigest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            }
+          ]
+        },
+        "recordDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        }
+      }
+    }
+  }
+}

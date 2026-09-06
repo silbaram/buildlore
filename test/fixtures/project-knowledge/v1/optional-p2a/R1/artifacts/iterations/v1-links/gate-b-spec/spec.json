@@ -1,0 +1,45 @@
+{
+  "schema_version": "p2a.spec.v1",
+  "project_id": "lantern",
+  "source_intake": "../gate-a-intake/intake.json",
+  "source_intake_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "approval": "approved",
+  "open_decisions": [],
+  "clarifying_question_disposition": [],
+  "evidence": [],
+  "product": {
+    "problem": "Check local documentation links without network access.",
+    "target_users": [
+      "offline maintainers"
+    ],
+    "goals": [
+      "Create a local review report."
+    ],
+    "must_preserve": [
+      "No publishing or remote fetch."
+    ],
+    "non_goals": [
+      "Automatic repair without verification."
+    ],
+    "core_flows": [
+      "CLI -> link resolver -> report writer"
+    ],
+    "screens_or_interfaces": [],
+    "data_model_draft": [],
+    "external_integrations": [],
+    "success_criteria": [
+      "A reviewable local report."
+    ],
+    "constraints": []
+  },
+  "implementation": {
+    "architecture": [
+      "src/links resolves local references; src/report writes review output."
+    ],
+    "interfaces": [],
+    "data_flow": [],
+    "dependencies": [],
+    "edge_cases": [],
+    "verification": []
+  }
+}

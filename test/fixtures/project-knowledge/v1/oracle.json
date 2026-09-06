@@ -1,0 +1,157 @@
+{
+  "schemaVersion": "buildlore.knowledge-answer-oracle.v1",
+  "budget": {
+    "initialContextUtf8Bytes": 32768,
+    "evidenceLookupUtf8Bytes": 16384,
+    "maximumLookups": 10,
+    "answerUtf8Bytes": 8192
+  },
+  "questions": [
+    {
+      "id": "purpose",
+      "question": "What is the project's purpose, supported scope and unverified scope?"
+    },
+    {
+      "id": "structure",
+      "question": "What are the components and flow, and where should a developer investigate a change?"
+    },
+    {
+      "id": "commands",
+      "question": "Which commands and settings apply, and what code revision and scope are actually verified?"
+    },
+    {
+      "id": "decisions",
+      "question": "Why was the key decision made, and what alternatives and constraints mattered?"
+    },
+    {
+      "id": "changes",
+      "question": "What changed from R1 to R2, what was superseded, and what remains unknown?"
+    }
+  ],
+  "samples": {
+    "generic-md-json": {
+      "projectId": "parcel",
+      "required": {
+        "purpose": [
+          "offline delivery planning",
+          "prepares manifests, does not send or contact carriers",
+          "carrier booking unverified despite done declaration"
+        ],
+        "structure": [
+          "CLI -> planner -> store",
+          "src/planner grouping and src/store persistence are documented responsibilities, not inspected implementation",
+          "store failure preserves previous manifest"
+        ],
+        "commands": [
+          "parcel plan --input deliveries.json",
+          "parcel check",
+          "JSON files replaced SQLite design",
+          "retryLimit 5 conflicts with operations note 3; do not invent precedence",
+          "R1 synthetic passed report is not actual current R2 code verification"
+        ],
+        "decisions": [
+          "SQLite originally chosen for transactions",
+          "JSON files selected for readable Git diffs and no database setup",
+          "staging/recovery trade-off"
+        ],
+        "changes": [
+          "SQLite design superseded by JSON files",
+          "retryLimit conflict 3 vs 5",
+          "CSV export evidence removed; capability itself not proven removed",
+          "carrier booking implementation and current verification require code and revision-bound execution evidence"
+        ]
+      },
+      "forbidden": [
+        "carrier booking implemented or tested",
+        "R2 tests passed",
+        "CSV export feature removed",
+        "unqualified retryLimit precedence"
+      ],
+      "evidence": {
+        "purpose": [
+          "README.md",
+          "settings.json"
+        ],
+        "structure": [
+          "architecture.md",
+          "README.md"
+        ],
+        "commands": [
+          "settings.json",
+          "README.md",
+          "decision.md"
+        ],
+        "decisions": [
+          "decision.md"
+        ],
+        "changes": [
+          "R1/support.md",
+          "R2/settings.json",
+          "R2/decision.md",
+          "R2/README.md"
+        ]
+      }
+    },
+    "optional-p2a": {
+      "projectId": "lantern",
+      "required": {
+        "purpose": [
+          "offline local documentation link checking",
+          "reports broken links without publishing or fetching remote sites",
+          "automatic repair remains unverified"
+        ],
+        "structure": [
+          "CLI -> link resolver -> report writer",
+          "src/links and src/report are documented responsibilities, not inspected code"
+        ],
+        "commands": [
+          "lantern check docs",
+          "lantern report",
+          "case-sensitive matching selected in R2",
+          "maxDepth 8 conflicts with operations note 4",
+          "synthetic P2A history and task done do not prove current R2 tests or implementation"
+        ],
+        "decisions": [
+          "case-insensitive policy originally reduced migration disruption",
+          "strict matching selected for portable Linux builds",
+          "old mixed-case references need fixes, automatic repair unverified"
+        ],
+        "changes": [
+          "strict matching supersedes case-insensitive policy",
+          "depth conflict 4 vs 8",
+          "incremental-check evidence removed, capability removal unproven",
+          "P2A approval/finished/done are workflow history not current feature verification"
+        ]
+      },
+      "forbidden": [
+        "automatic repair implemented or tested",
+        "R2 tests passed because P2A finished",
+        "incremental checks feature removed",
+        "unqualified maxDepth precedence"
+      ],
+      "evidence": {
+        "purpose": [
+          "README.md",
+          "settings.json"
+        ],
+        "structure": [
+          "README.md"
+        ],
+        "commands": [
+          "settings.json",
+          "README.md",
+          "artifacts/runs"
+        ],
+        "decisions": [
+          "decision.md"
+        ],
+        "changes": [
+          "R1/support.md",
+          "R2/decision.md",
+          "R2/settings.json",
+          "artifacts/runs"
+        ]
+      }
+    }
+  }
+}

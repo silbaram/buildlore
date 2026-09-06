@@ -90,6 +90,8 @@ import {
   createHierarchicalWorkflowService,
   type HierarchicalWorkflowServicePort,
 } from './hierarchical-workflow.js';
+import { createProjectKnowledgeWorkflow } from './project-knowledge-workflow.js';
+import { createKnowledgeWikiReader } from '../retrieval/project-knowledge-reader.js';
 import { HELP_TEXT } from './help.js';
 import { CliUsageError, inferCliCommand, parseCliArguments } from './parser.js';
 import { renderCliResult, writeRenderedCliResult } from './presentation.js';
@@ -309,8 +311,12 @@ function createDefaultLocalWiki(runtime: CliRuntime): LocalWikiOperatorPort {
   });
 }
 
-function createDefaultHierarchyWorkflow(runtime: CliRuntime): HierarchicalWorkflowServicePort {
-  return createHierarchicalWorkflowService({
+type RoutedHierarchyWorkflow = {
+  [K in keyof HierarchicalWorkflowServicePort]: (...args: Parameters<HierarchicalWorkflowServicePort[K]>) => Promise<unknown>;
+};
+
+function createDefaultHierarchyWorkflow(runtime: CliRuntime): RoutedHierarchyWorkflow {
+  const legacy = createHierarchicalWorkflowService({
     compiler: createProjectSessionCompiler({
       hubRoot: runtime.cwd,
       jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
@@ -319,6 +325,30 @@ function createDefaultHierarchyWorkflow(runtime: CliRuntime): HierarchicalWorkfl
     hubRoot: runtime.cwd,
     knowledgeRoot: join(runtime.cwd, 'knowledge'),
   });
+  const knowledge = createProjectKnowledgeWorkflow({ hubRoot: runtime.cwd,
+    knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+  return {
+    async start(projectId, purposeFile) {
+      return (await knowledge.handlesPurpose(projectId, purposeFile) ? knowledge : legacy).start(projectId, purposeFile);
+    },
+    async status(projectId, runId) {
+      return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).status(projectId, runId);
+    },
+    async submit(projectId, runId, inputFile, expected) {
+      return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).submit(projectId, runId, inputFile, expected);
+    },
+    async review(projectId, runId) {
+      return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).review(projectId, runId);
+    },
+    async finalize(projectId, runId, inputFile, expected) {
+      return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).finalize(projectId, runId, inputFile, expected);
+    },
+    async approve(projectId, runId, expected, confirmed) {
+      return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).approve(projectId, runId, expected, confirmed);
+    },
+    resubmit: (...args) => legacy.resubmit(...args),
+    childReview: (...args) => legacy.childReview(...args),
+  };
 }
 
 function isRawHierarchyPageId(value: string): boolean {
@@ -344,6 +374,8 @@ async function listWikiPages(
   };
   if (runtime.localWiki !== undefined) return runtime.localWiki.listPages(input);
   if (runtime.wikiRead !== undefined) return runtime.wikiRead.list(input);
+  const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).list(projectId, input);
+  if (knowledge !== null) return knowledge;
   try {
     return await createDefaultLocalWiki(runtime).listPages(input);
   } catch (error) {
@@ -361,6 +393,10 @@ async function readWikiPage(
   projectId: string,
 ): Promise<unknown> {
   const pageRef = requiredStringOption(command, '--page');
+  if (runtime.localWiki === undefined && runtime.wikiRead === undefined) {
+    const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).read(projectId, pageRef);
+    if (knowledge !== null) return knowledge;
+  }
   if (isRawHierarchyPageId(pageRef)) {
     return (runtime.localWiki ?? createDefaultLocalWiki(runtime)).readPage({
       pageId: pageRef,
@@ -379,6 +415,10 @@ async function readWikiCitations(
   projectId: string,
 ): Promise<unknown> {
   const pageRef = requiredStringOption(command, '--page');
+  if (runtime.localWiki === undefined && runtime.wikiRead === undefined) {
+    const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).citations(projectId, pageRef);
+    if (knowledge !== null) return knowledge;
+  }
   if (isRawHierarchyPageId(pageRef)) {
     return (runtime.localWiki ?? createDefaultLocalWiki(runtime)).pageCitations({
       pageId: pageRef,
@@ -401,6 +441,10 @@ async function searchWithApprovedWiki(
   const query = requiredStringOption(command, '--query');
   if (runtime.retrieval !== undefined && mode !== 'graph' && intent === 'auto') {
     return runtime.retrieval.search({ mode, projectId, query });
+  }
+  if (runtime.retrieval === undefined && runtime.localWiki === undefined) {
+    const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).search(projectId, query, mode, intent);
+    if (knowledge !== null) return knowledge;
   }
   try {
     return await (runtime.localWiki ?? createDefaultLocalWiki(runtime)).search({

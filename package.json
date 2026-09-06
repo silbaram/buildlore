@@ -14,6 +14,8 @@
     "buildlore": "./dist/cli/bin.js"
   },
   "exports": {
+    "./schemas/project-knowledge.schema.json": "./schemas/project-knowledge.schema.json",
+    "./schemas/project-knowledge-workflow.schema.json": "./schemas/project-knowledge-workflow.schema.json",
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"

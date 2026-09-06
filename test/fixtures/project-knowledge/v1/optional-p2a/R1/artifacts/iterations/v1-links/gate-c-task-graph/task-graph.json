@@ -1,0 +1,24 @@
+{
+  "schema_version": "p2a.task_graph.v1",
+  "projectId": "lantern",
+  "version": "v1-links",
+  "sourceSpec": "../gate-b-spec/spec.json",
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Document local link checks",
+      "intent": "Make local link checks reviewable.",
+      "description": "Prepare the documented link-checking workflow.",
+      "targetArea": "links",
+      "acceptanceCriteria": [
+        "A local link report is available for review."
+      ],
+      "sourceSpecRefs": [
+        "product.goals"
+      ],
+      "dependencies": [],
+      "status": "done",
+      "suggestedAgentPrompt": "Implement the declared link workflow."
+    }
+  ]
+}

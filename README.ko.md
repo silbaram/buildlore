@@ -378,7 +378,79 @@ Kind별 조건과 필드 상한의 정본은 `compile-proposal.schema.json`이�
 `wiki/` 아래의 생성 페이지, `.llmwiki/` 아래의 컴파일러 상태와 적용된 언어
 중립적 생명주기 프로필이 저장됩니다.
 
-#### 권장 계층형 CLI 흐름
+#### 프로젝트 지식 모드 (명시적 선택, 1단계)
+
+범용 Markdown/JSON에서 프로젝트 사실을 정리하고 개요·구조·결정 문서 세 개를
+만드는 모드입니다. P2A는 선택 가능한 소스 어댑터이며 지식 모델의 필수 조건이
+아닙니다. 현재 개발 중인 opt-in 기능으로, 저장·갱신 테스트 통과가 독립 AI의
+프로젝트 이해도 검증 통과를 뜻하지는 않습니다.
+
+기존 `compile hierarchy start` 명령에 다음 purpose 파일을 전달합니다.
+
+```json
+{
+  "schemaVersion": "buildlore.hierarchical-workflow-purpose-input.v2",
+  "projectId": "example",
+  "generationModel": "project-knowledge-v1",
+  "outputLanguage": "ko"
+}
+```
+
+반환된 `exchange`에는 정제된 근거와 이전 지식이 있습니다. 현재 대화 중인 AI가
+전체 후보를 작성합니다. `compiler.createProposedKnowledgeRecord`로 사실 ID를,
+`compiler.createKnowledgeProposal`로 제출용 정본 JSON을 만들 수 있습니다.
+문장·제목·섹션마다 실제 근거에 연결해야 합니다.
+[지식 계약](schemas/project-knowledge.schema.json)과
+[워크플로 계약](schemas/project-knowledge-workflow.schema.json)을 참고하세요.
+
+이 모드의 순서는 `sync` → `start` → `submit` → `review` → `finalize` → `approve`
+→ 반환된 `activationArgs`입니다. `submit`에는 `exchange.exchangeDigest`를,
+`finalize`에는 `reviewViewDigest`와 독립적으로 작성한
+`buildlore.knowledge-semantic-review.v1`을 전달합니다. 작성자와 다른 검토 세션이나
+명시적인 사람 검토자가 모든 `reviewTargets`의 의미·범위·현재성·근거를 판단해야
+합니다. 해시는 그 판단을 고정할 뿐 참임을 증명하지 않습니다.
+주장 ID에는 `sha256:`, `title:`, `section:`, `supersession:`, `conflict:` 예약 접두사를
+사용할 수 없고, 검토 대상과 판정 ID는 중복될 수 없습니다. 최종화 전 수정은
+전체 `submit`으로 합니다. 기존 페이지별 `resubmit`/`child-review`는 이 모드에
+적용되지 않으며 BuildLore가 AI를 자동 실행하지도 않습니다.
+
+명시적으로 활성화한 결과는
+`knowledge/projects/example/wiki/buildlore-hierarchy/`에 있습니다.
+`overview.md`, `architecture.md`, `decisions.md`, `knowledge.json`, `evidence.json`,
+`manifest.json` 여섯 파일입니다. Markdown과 JSON은 한 정본
+`.llmwiki/buildlore-hierarchy/approved-authority.json`에서 재생성하는 투영입니다.
+기존 Wiki를 처음 전환하기 전에는 같은 정본 저장소의
+`archives/<authority-digest>.json`에 이전 authority를 보존합니다. 백업은 현재
+검색 대상에 섞이지 않습니다.
+
+```sh
+node dist/cli/bin.js wiki read --project example --page overview --json
+node dist/cli/bin.js wiki citations --project example --page decisions --json
+node dist/cli/bin.js search --project example --query "저장 방식 결정" --mode lexical
+```
+
+원문 값의 관찰(`observed`), 문서의 선언(`declared`), 추론(`inferred`)을 구분합니다.
+검토된 `accepted` + `current`만 현재 설명으로 쓰고, 과거·대체·근거 소실·분쟁
+상태는 따로 표시합니다. JSON의 `passed`/`done`은 현재 코드의 검증 증거가 아닙니다.
+저장소 HEAD·Git 추적 여부와 실제 증명된 소스/코드 revision도 구분하며, 모르는
+revision은 `null`입니다. 근거 소실을 기능 제거로, 수집 범위 축소를 파일 삭제로
+추측하지 않습니다. 필수 입력을 읽지 못하면 새 생성은 차단됩니다.
+이미 대체된 사실을 다시 제안해 현재로 되살리거나 대체 관계를 지울 수 없습니다.
+과거 사실을 재검토해도 기존 대체 관계는 보존하며, 후속 변경은 대체 이력을 이어갑니다.
+
+읽기·근거 응답은 같은 generation의 사실과 근거를 반환합니다. 새 모드를 지원하지
+않는 의미검색 인덱스는 명시적으로 기존 일반 검색으로 대체하며 옛 캐시를 혼합하지
+않습니다. 기존 검색 intent도 적용하고 상위 검색 결과의 하위 문서 인용을 별도로
+표시합니다. 검색 순위에는 인용된 섹션별 검토된 사실 상태와 하위 요약 상태를 전달하되
+저장된 검색 자료나 기존 순위 계산 규칙은 바꾸지 않습니다. 같은 근거를 인용해도 다른
+섹션의 현재성이 섞이지 않습니다. 최초 활성화는 대상 디렉터리가 없거나 비어 있어야 하며,
+기존 정본에 연결되지 않은 파일은 생성 파일과 이름이 같더라도 덮어쓰지 않습니다.
+관리 Markdown을 직접 수정하면 drift로 덮어쓰기를 차단합니다.
+Git/백업에서 검토된 원래 파일을 복구한 뒤 재시도하세요. 정본을 임의로 수정하거나
+해시를 다시 계산하여 복구하지 마세요. 새 clone의 기존 지식 읽기에는 작성 당시의
+로컬 run/key가 필요 없지만 새 작성에는 소스 바인딩이 필요합니다.
+
+#### 기존 계층형 모드의 권장 CLI 흐름
 
 현재 Codex 또는 Claude 세션이 계층형 위키를 작성할 때는 CLI가 권장 제품
 흐름입니다. 모든 handoff 경로는 BuildLore 허브 기준 상대 경로이며, digest 인자는

@@ -68,3 +68,5 @@ export type {
   StatusSummary,
   WorkspaceEffect,
 } from './types.js';
+export * from './project-knowledge/index.js';
+export * from '../knowledge/project-knowledge/index.js';

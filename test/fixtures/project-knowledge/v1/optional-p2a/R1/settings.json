@@ -1,0 +1,9 @@
+{
+  "project": "lantern",
+  "commands": {
+    "check": "lantern check docs",
+    "report": "lantern report"
+  },
+  "caseSensitive": false,
+  "maxDepth": 4
+}

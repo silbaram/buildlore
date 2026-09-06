@@ -12,9 +12,13 @@ import {
   type ApprovedWikiPublicationSnapshotV1,
 } from './approved-corpus-store.js';
 import type { ApprovedWikiRetrievalPageV1 } from './hierarchical.js';
+import { renderKnowledgeFiles } from '../compiler/project-knowledge/markdown.js';
+import type { KnowledgePageRole } from '../knowledge/project-knowledge/types.js';
 
 export const HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION =
   'buildlore.hierarchical-markdown-materialization-manifest.v2' as const;
+export const KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION =
+  'buildlore.hierarchical-markdown-materialization-manifest.v3' as const;
 export const HIERARCHICAL_MARKDOWN_STATUS_SCHEMA_VERSION =
   'buildlore.hierarchical-markdown-materialization-status.v2' as const;
 export const HIERARCHICAL_MARKDOWN_PAGE_SCHEMA_VERSION =
@@ -75,6 +79,9 @@ const RENDERER_CONTRACT = Object.freeze({
 });
 
 export const HIERARCHICAL_MARKDOWN_RENDERER_DIGEST = digestValue(RENDERER_CONTRACT);
+export const KNOWLEDGE_MARKDOWN_RENDERER_DIGEST = digestValue({ schemaVersion: 'buildlore.knowledge-markdown-renderer.v1',
+  encoding: 'utf-8', timestamp: 'none', pageRoles: ['overview', 'architecture', 'decisions'],
+  claims: 'reviewed-text-with-fact-footnotes', authority: 'single-approved-wiki-authority' });
 
 export type HierarchicalMarkdownMaterializationErrorCode =
   | 'HIERARCHICAL_MARKDOWN_BUSY'
@@ -111,7 +118,9 @@ export class HierarchicalMarkdownMaterializationError extends Error {
 export interface HierarchicalMarkdownFileRecordV1 {
   readonly byteLength: number;
   readonly citationMap?: readonly HierarchicalMarkdownCitationMapEntryV2[];
-  readonly kind: 'index' | 'page';
+  readonly kind: 'index' | 'page' | 'knowledge' | 'evidence';
+  readonly role?: KnowledgePageRole;
+  readonly claimIds?: readonly string[];
   readonly pageId?: string;
   readonly path: string;
   readonly proposalDigest?: `sha256:${string}`;
@@ -128,6 +137,7 @@ export interface HierarchicalMarkdownMaterializationManifestV1 {
   readonly corpusDigest: `sha256:${string}`;
   readonly files: readonly HierarchicalMarkdownFileRecordV1[];
   readonly generationDigest: `sha256:${string}`;
+  readonly knowledgeGenerationDigest?: `sha256:${string}`;
   readonly materializationDigest: `sha256:${string}`;
   readonly pageCount: number;
   readonly projectId: string;
@@ -135,7 +145,7 @@ export interface HierarchicalMarkdownMaterializationManifestV1 {
   readonly recordDigest: `sha256:${string}`;
   readonly rendererDigest: `sha256:${string}`;
   readonly sanitizerPolicyDigest: `sha256:${string}`;
-  readonly schemaVersion: typeof HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION;
+  readonly schemaVersion: typeof HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION | typeof KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION;
 }
 
 export interface HierarchicalMarkdownRenderedFileV1 extends
@@ -654,6 +664,7 @@ export function renderHierarchicalMarkdown(
 export function renderVerifiedHierarchicalMarkdown(
   input: Readonly<{ readonly publication: ApprovedWikiPublicationSnapshotV1 }>,
 ): HierarchicalMarkdownRenderPlanV1 {
+  if (input.publication.authority.knowledgeGeneration !== undefined) return renderKnowledgeMaterialization(input.publication);
   const orderedPages = [...input.publication.projection.corpus.pages]
     .sort((left, right) => compareText(left.pageId, right.pageId));
   if (orderedPages.length > MAXIMUM_PAGE_COUNT || orderedPages.some((page) =>
@@ -753,6 +764,75 @@ export function renderVerifiedHierarchicalMarkdown(
   });
 }
 
+function renderKnowledgeMaterialization(publication: ApprovedWikiPublicationSnapshotV1): HierarchicalMarkdownRenderPlanV1 {
+  const extension = publication.authority.knowledgeGeneration;
+  const generation = extension?.generations.at(-1);
+  if (!extension || !generation) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  const files: HierarchicalMarkdownRenderedFileV1[] = renderKnowledgeFiles(generation).filter((f) => f.path !== 'manifest.json').map((file) => {
+    const mapping = extension.pageMappings.find((m) => `${m.role}.md` === file.path);
+    if (!isDigest(file.sha256)) return fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    if (mapping === undefined) {
+      if (!['knowledge.json', 'evidence.json'].includes(file.path)) return fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+      return { ...file, sha256: file.sha256, kind: file.path === 'knowledge.json' ? 'knowledge' as const : 'evidence' as const };
+    }
+    const proposal = publication.authority.finalization.proposals.find((p) => p.pageId === mapping.pageId);
+    if (!proposal) return fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    return { ...file, sha256: file.sha256, kind: 'page' as const, role: mapping.role,
+      pageId: mapping.pageId, proposalDigest: proposal.proposalDigest, claimIds: mapping.claims.map((c) => c.claimId) };
+  }).sort((a, b) => compareText(a.path, b.path));
+  const basis = { authorityDigest: publication.authorityDigest, corpusDigest: publication.projection.corpus.corpusDigest,
+    files: files.map(({ body, ...metadata }) => { void body; return metadata; }),
+    generationDigest: publication.projection.corpus.generationDigest, knowledgeGenerationDigest: generation.generationDigest,
+    pageCount: 3, projectId: generation.projectId, projectionDigest: publication.projection.projectionDigest,
+    recordDigest: publication.recordDigest, rendererDigest: KNOWLEDGE_MARKDOWN_RENDERER_DIGEST,
+    sanitizerPolicyDigest: publication.projection.sanitizerPolicyDigest, schemaVersion: KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION };
+  const manifest = { ...basis, materializationDigest: digestValue(basis) };
+  const manifestBody = serializeCanonicalJson(manifest);
+  if (Buffer.byteLength(manifestBody) > HIERARCHICAL_MARKDOWN_MAXIMUM_MANIFEST_BYTES ||
+      files.reduce((sum, f) => sum + f.byteLength, Buffer.byteLength(manifestBody)) > MAXIMUM_TOTAL_BYTES) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  return Object.freeze({ files, manifest, manifestBody, publication });
+}
+
+function parseKnowledgeManifest(value: Readonly<Record<string, unknown>>, projectId: string): HierarchicalMarkdownMaterializationManifestV1 {
+  if (!exactKeys(value, [...MANIFEST_PROPERTIES, 'knowledgeGenerationDigest']) || value.projectId !== projectId ||
+      value.schemaVersion !== KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION || value.pageCount !== 3 ||
+      !Array.isArray(value.files) || value.files.length !== 5) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  const files: HierarchicalMarkdownFileRecordV1[] = value.files.map((file: unknown) => {
+    if (!isRecord(file) || typeof file.path !== 'string' || !isDigest(file.sha256) ||
+        typeof file.byteLength !== 'number' || !Number.isSafeInteger(file.byteLength) || file.byteLength < 1) return fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    if (file.kind === 'knowledge' || file.kind === 'evidence') {
+      if (!exactKeys(file, ['path', 'byteLength', 'sha256', 'kind']) || file.path !== `${file.kind}.json` ||
+          file.byteLength > 16 * 1024 * 1024) return fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+      return { path: file.path, byteLength: file.byteLength, sha256: file.sha256, kind: file.kind };
+    }
+    if (!exactKeys(file, ['path', 'byteLength', 'sha256', 'kind', 'role', 'pageId', 'proposalDigest', 'claimIds']) ||
+        file.kind !== 'page' || !['overview', 'architecture', 'decisions'].includes(String(file.role)) ||
+        file.path !== `${String(file.role)}.md` || file.byteLength > 262_144 ||
+        typeof file.pageId !== 'string' || !PAGE_ID_PATTERN.test(file.pageId) || !isDigest(file.proposalDigest) ||
+        !Array.isArray(file.claimIds) || file.claimIds.length === 0 || file.claimIds.length > 8192 ||
+        file.claimIds.some((id: unknown) => typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u.test(id)) ||
+        new Set(file.claimIds).size !== file.claimIds.length) return fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    return { path: file.path, byteLength: file.byteLength, sha256: file.sha256, kind: 'page',
+      role: file.role as KnowledgePageRole, pageId: file.pageId, proposalDigest: file.proposalDigest,
+      claimIds: file.claimIds as readonly string[] };
+  });
+  if (files.map((f) => f.path).join('\0') !== ['architecture.md', 'decisions.md', 'evidence.json', 'knowledge.json', 'overview.md'].join('\0') ||
+      new Set(files.filter((f) => f.kind === 'page').map((f) => f.pageId)).size !== 3 ||
+      ['authorityDigest', 'corpusDigest', 'generationDigest', 'knowledgeGenerationDigest', 'materializationDigest',
+        'projectionDigest', 'recordDigest', 'rendererDigest', 'sanitizerPolicyDigest'].some((key) => !isDigest(value[key]))) {
+    fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  }
+  // Preserve the new renderer's fixed field order for its materialization checksum.
+  const basis = { authorityDigest: value.authorityDigest, corpusDigest: value.corpusDigest,
+    files: value.files, generationDigest: value.generationDigest, knowledgeGenerationDigest: value.knowledgeGenerationDigest,
+    pageCount: value.pageCount, projectId: value.projectId, projectionDigest: value.projectionDigest,
+    recordDigest: value.recordDigest, rendererDigest: value.rendererDigest,
+    sanitizerPolicyDigest: value.sanitizerPolicyDigest, schemaVersion: value.schemaVersion };
+  if (value.materializationDigest !== digestValue(basis)) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  // All fields and nested records are checked above; avoid admitting unknown schema keys.
+  return { ...basis, files, materializationDigest: value.materializationDigest } as HierarchicalMarkdownMaterializationManifestV1;
+}
+
 function parseFileRecord(value: unknown): HierarchicalMarkdownFileRecordV1 {
   if (!isRecord(value) || (value.kind !== 'index' && value.kind !== 'page') ||
       typeof value.path !== 'string' || typeof value.byteLength !== 'number' ||
@@ -808,6 +888,7 @@ export function parseHierarchicalMarkdownManifest(
   value: unknown,
   projectId: string,
 ): HierarchicalMarkdownMaterializationManifestV1 {
+  if (isRecord(value) && value.schemaVersion === KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION) return parseKnowledgeManifest(value, projectId);
   if (!isRecord(value) || !exactKeys(value, MANIFEST_PROPERTIES) ||
       value.schemaVersion !== HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION ||
       value.projectId !== projectId || typeof value.pageCount !== 'number' ||
