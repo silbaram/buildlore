@@ -38,7 +38,7 @@ import {
   type SelectedSourceFile,
 } from './source-manifest.js';
 import { projectSourceProducer, type ProjectSourceInput } from './project-source-writer.js';
-import { bindRawSourceInputs, inspectRawSourceInputs } from './raw-source-inputs.js';
+import { bindRawSourceInputs, decodedJsonSecurityText, inspectRawSourceInputs } from './raw-source-inputs.js';
 import { createSourceDocument } from './source-document.js';
 import { unicodeScalarLength } from './text-units.js';
 import { MAX_SOURCE_BODY_CHARS, MAX_SOURCE_ORIGIN_MAPPINGS, type SourceDocument } from './types.js';
@@ -340,7 +340,8 @@ export async function projectSelectedJsonSource(
     }),
     jsonOrigins: canonicalDocument.buildlore.jsonOrigins ?? candidate.jsonOrigins,
   });
-  return bindRawSourceInputs(result, [decoded]);
+  return bindRawSourceInputs(result, [{ body: decoded, allowedRedactionRuleIds: [],
+    maskingPreflightBody: decodedJsonSecurityText(parsed.value) }]);
 }
 
 export function createJsonProjectionSourceAdapter(

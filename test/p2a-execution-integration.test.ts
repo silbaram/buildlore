@@ -770,7 +770,9 @@ describe('P2A execution projector compiler integration', () => {
     const knowledgeBeforeCredential = await treeDigest(join(hubRoot, 'knowledge'));
     const fragments = ['abcd', 'efgh'];
     const bearer = ['Bearer', fragments.join('/')].join(' ');
-    const basic = ['Basic', fragments.join('/')].join(' ');
+    const basicValue = Buffer.from(['fixture', '\u00ff\u00ff'].join(':')).toString('base64');
+    expect(basicValue.includes('/')).toBe(true);
+    const basic = ['Basic', basicValue].join(' ');
     const escapedBearer = ['Bearer', fragments.join('/')].join('\t');
     for (const [value, credential] of [
       ...[bearer, basic].map((credential) => [{

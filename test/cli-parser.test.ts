@@ -14,6 +14,19 @@ function expectUsageError(args: readonly string[], code: string): void {
 }
 
 describe('CLI argument parser', () => {
+  it('requires explicit reading modes and generation-bound typed lookups', () => {
+    expect(parseCliArguments(['wiki', 'packet', '--project', 'alpha', '--json'])).toMatchObject({ command: 'wiki.packet' });
+    expectUsageError(['wiki', 'packet'], 'CLI_OPTION_MISSING');
+    const read = ['wiki', 'read', '--project', 'alpha', '--page', 'overview'];
+    expect(parseCliArguments([...read, '--view', 'reader'])).toMatchObject({ command: 'wiki.read' });
+    expectUsageError([...read, '--view', 'summary'], 'CLI_ARGUMENT_INVALID');
+    const lookup = ['wiki', 'lookup', '--project', 'alpha', '--kind', 'evidence', '--id', `sha256:${'a'.repeat(64)}`];
+    expect(parseCliArguments([...lookup, '--expect-generation', `sha256:${'b'.repeat(64)}`])).toMatchObject({ command: 'wiki.lookup' });
+    expectUsageError(lookup, 'CLI_OPTION_MISSING');
+    expectUsageError([...lookup, '--expect-generation', 'latest'], 'CLI_ARGUMENT_INVALID');
+    expectUsageError(['wiki', 'lookup', '--project', 'alpha', '--kind', 'raw', '--id', `sha256:${'a'.repeat(64)}`,
+      '--expect-generation', `sha256:${'b'.repeat(64)}`], 'CLI_ARGUMENT_INVALID');
+  });
   it.each([
     { args: ['init', '--knowledge-repo', '../knowledge.git'], command: 'init' },
     {
@@ -84,6 +97,11 @@ describe('CLI argument parser', () => {
     {
       args: ['compile', 'hierarchy', 'status', '--project', 'alpha', '--run', `run-${'a'.repeat(64)}`],
       command: 'compile.hierarchy.status',
+    },
+    {
+      args: ['compile', 'hierarchy', 'inspect', '--project', 'alpha', '--run', `run-${'a'.repeat(64)}`,
+        '--input', 'inspection.json', '--expect-exchange', `sha256:${'b'.repeat(64)}`],
+      command: 'compile.hierarchy.inspect',
     },
     {
       args: [

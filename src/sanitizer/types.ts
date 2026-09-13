@@ -1,4 +1,4 @@
-export const SANITIZER_RULES_VERSION = 'buildlore.sanitizer-rules.v5' as const;
+export const SANITIZER_RULES_VERSION = 'buildlore.sanitizer-rules.v8' as const;
 export const SANITIZATION_REPORT_SCHEMA_VERSION = 'buildlore.sanitization-report.v1' as const;
 export const SECURITY_POLICY_SCHEMA_VERSION = 'buildlore.security-policy.v1' as const;
 
@@ -53,6 +53,8 @@ export interface SecurityPolicy {
   readonly classificationRules: readonly SecurityClassificationRule[];
   readonly egressRules: readonly SecurityEgressRule[];
   readonly overrides: readonly SecurityOverride[];
+  /** Opt-in for source derivatives only; omitted preserves strict intake. */
+  readonly sourceSecretHandling?: 'reject' | 'mask';
 }
 
 export interface SecurityRuleSummary {
@@ -108,4 +110,6 @@ export interface ProjectSecurityService {
 export interface CreateProjectSecurityServiceOptions {
   readonly homePath?: string;
   readonly knowledgeRoot: string;
+  /** Never enable for AI-authored proposals, reviews, evaluation or egress. */
+  readonly sourceIngestion?: boolean;
 }

@@ -1,3 +1,5 @@
+import { createKnowledgeHistoryAppend } from '../retrieval/project-knowledge-authority.js';
+import { verifyResolvedApprovedWikiAuthority } from '../retrieval/approved-corpus-store.js';
 import { constants } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -28,6 +30,7 @@ import { decodeUtf8Strict, parseJsonStrict } from '../knowledge/strict-json.js';
 import { validateProjectId } from '../knowledge/validation.js';
 import {
   verifyApprovedWikiAuthority,
+  type CurrentApprovedWikiAuthority,
 } from '../retrieval/approved-corpus-store.js';
 import type { ApprovedWikiAuthorityV1 } from '../retrieval/index.js';
 
@@ -246,7 +249,7 @@ export function createHierarchyPayloadStore<T extends HierarchyPayloadIdentity>(
   create(value: T): Promise<void>;
   read(projectId: string, runId: string): Promise<T>;
   schema(projectId: string, runId: string): Promise<string>;
-  replace(previous: T, next: T, activation?: ApprovedWikiAuthorityV1): Promise<void>;
+  replace(previous: T, next: T, activation?: CurrentApprovedWikiAuthority): Promise<void>;
   activationPath(projectId: string, runId: string): string;
 }> {
   const hubRoot = resolve(hubRootValue);
@@ -298,12 +301,17 @@ export function createHierarchyPayloadStore<T extends HierarchyPayloadIdentity>(
       if (!isRecord(value) || typeof value.schemaVersion !== 'string' || value.schemaVersion.length > 128) fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
       return value.schemaVersion;
     },
-    async replace(previous: T, next: T, activation?: ApprovedWikiAuthorityV1): Promise<void> {
+    async replace(previous: T, next: T, activation?: CurrentApprovedWikiAuthority): Promise<void> {
       const prior = snapshot(previous);
       const parsed = snapshot(next);
       if (parsed.projectId !== prior.projectId || parsed.runId !== prior.runId ||
           (parsed.revision !== prior.revision + 1 && !(activation !== undefined && sameValue(parsed, prior)))) fail('HIERARCHICAL_WORKFLOW_RUN_CONFLICT');
-      if (activation !== undefined) verifyApprovedWikiAuthority(activation, prior.projectId);
+      if (activation !== undefined) {
+        if (activation.schemaVersion === 'buildlore.approved-wiki-authority.v3') {
+          // The workflow supplies a resolved capability; no alternate knowledge-root inference.
+          verifyResolvedApprovedWikiAuthority(activation, prior.projectId);
+        } else verifyApprovedWikiAuthority(activation, prior.projectId);
+      }
       const { identity } = await load(prior.projectId, prior.runId);
       await withLock(identity, {}, async (assertOwned) => {
         await assertOwned();
@@ -316,7 +324,9 @@ export function createHierarchyPayloadStore<T extends HierarchyPayloadIdentity>(
         if (activation !== undefined) {
           await writeJsonAtomic(join(identity.run.path, ACTIVATION_FILENAME), {
             authority: activation, projectId: prior.projectId,
-            schemaVersion: 'buildlore.hierarchical-wiki-activation-input.v1',
+            ...(activation.schemaVersion === 'buildlore.approved-wiki-authority.v3' ? { historyAppend: createKnowledgeHistoryAppend(activation) } : {}),
+            schemaVersion: activation.schemaVersion === 'buildlore.approved-wiki-authority.v3'
+              ? 'buildlore.hierarchical-wiki-activation-input.v2' : 'buildlore.hierarchical-wiki-activation-input.v1',
           }, { confinementRoot: hubRoot });
           await assertOwned();
         }

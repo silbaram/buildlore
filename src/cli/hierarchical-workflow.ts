@@ -993,7 +993,10 @@ async function readCurrentAuthority(
   if (status.state === 'none') return null;
   if (status.state !== 'ready') fail('HIERARCHICAL_WORKFLOW_BASELINE_DRIFT');
   try {
-    return await corpusStore.readAuthority(projectId);
+    const authority = await corpusStore.readAuthority(projectId);
+    // A generic hierarchy workflow cannot silently replace project-knowledge authority.
+    if (authority.schemaVersion === 'buildlore.approved-wiki-authority.v3') fail('HIERARCHICAL_WORKFLOW_BASELINE_DRIFT');
+    return authority;
   } catch (error) {
     if (error instanceof ApprovedWikiProjectionError) {
       return fail('HIERARCHICAL_WORKFLOW_BASELINE_DRIFT');

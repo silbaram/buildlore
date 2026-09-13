@@ -1,11 +1,23 @@
-import { createApprovedWikiProjectionStore, readApprovedWikiPublicationSnapshot } from './approved-corpus-store.js';
-import { searchApprovedWikiLexicalV3 } from './hybrid.js';
+import { knowledgeReaderPacket, type KnowledgeReaderPacketV1 } from '../compiler/project-knowledge/reader-packet.js';
+import { knowledgeDevelopmentMemory, type KnowledgeDevelopmentMemoryV1 } from '../compiler/project-knowledge/reader-memory.js';
+import { screenRetainedKnowledgeValue } from '../compiler/project-knowledge/history-security.js';
+import { latestKnowledgeGeneration } from './project-knowledge-authority.js';
+import { dirname, resolve } from 'node:path';
+import { createApprovedWikiPublicationReader } from './approved-corpus-store.js';
+import { createApprovedWikiHybridRetrievalV3, searchApprovedWikiLexicalV3 } from './hybrid.js';
+import { createLocalEmbeddingProvider, type EmbeddingProviderPort } from './embedding/index.js';
+import { createFlatFileVectorIndex, type VectorIndexPort } from './vector-index/index.js';
 import { createKnowledgeRankingSignals } from './project-knowledge-ranking.js';
+import { KNOWLEDGE_SEMANTIC_RELEVANCE_V2 } from './semantic-relevance.js';
 import type { LocalWikiRetrievalIntent } from './hybrid-types.js';
 import { createProjectSecurityService, readSecurityPolicy } from '../sanitizer/index.js';
 import { consumePreparedSource } from '../sanitizer/approval.js';
 import { digest, invalid, sha256 } from '../knowledge/project-knowledge/guards.js';
 import { renderKnowledgeFiles } from '../compiler/project-knowledge/markdown.js';
+import { knowledgeFactSupport } from '../compiler/project-knowledge/citation-support.js';
+import { knowledgeReaderPage, knowledgeReaderLookup, type KnowledgeReaderPageV1,
+  type KnowledgeReaderLookupV1 } from '../compiler/project-knowledge/reader-surface.js';
+import type { KnowledgeFactSupportV1 } from '../compiler/project-knowledge/citation-support.js';
 import type { KnowledgeDigest, KnowledgeGenerationV1, KnowledgePageV1,
   KnowledgeRecordV1, KnowledgeEvidenceV1 } from '../knowledge/project-knowledge/types.js';
 
@@ -26,33 +38,55 @@ export interface KnowledgeWikiPageView {
 export interface KnowledgeWikiReader {
   list(projectId: string, options?: Readonly<{ cursor?: string; limit?: number }>): Promise<Readonly<Record<string, unknown>> | null>;
   read(projectId: string, pageRef: string): Promise<KnowledgeWikiPageView | null>;
+  readPacket(projectId: string): Promise<KnowledgeReaderPacketV1 | null>;
+  readMemory(projectId: string): Promise<KnowledgeDevelopmentMemoryV1 | null>;
+  readContext(projectId: string, pageRef: string): Promise<KnowledgeReaderPageV1 | null>;
+  lookup(projectId: string, expectedGeneration: KnowledgeDigest, kind: 'evidence' | 'fact', id: KnowledgeDigest): Promise<KnowledgeReaderLookupV1>;
   citations(projectId: string, pageRef: string): Promise<Readonly<Record<string, unknown>> | null>;
   search(projectId: string, query: string, mode: 'lexical' | 'hybrid' | 'semantic' | 'graph', intent?: LocalWikiRetrievalIntent): Promise<Readonly<Record<string, unknown>> | null>;
   evidence(projectId: string, generationDigest: KnowledgeDigest, evidenceId: KnowledgeDigest): Promise<KnowledgeEvidenceV1>;
+  fact(projectId: string, generationDigest: KnowledgeDigest, factId: KnowledgeDigest): Promise<KnowledgeFactSupportV1>;
+}
+
+export interface CreateKnowledgeWikiReaderOptions {
+  /** Defaults to the parent of the Mode A knowledge checkout. */
+  readonly hubRoot?: string;
+  readonly provider?: EmbeddingProviderPort;
+  readonly vectorIndex?: VectorIndexPort;
 }
 
 /** Reads only the selected authority, never archive files, edited projections or a legacy cache. */
-export function createKnowledgeWikiReader(knowledgeRoot: string): KnowledgeWikiReader {
-  const corpusStore = createApprovedWikiProjectionStore(knowledgeRoot);
+export function createKnowledgeWikiReader(knowledgeRoot: string,
+  options: CreateKnowledgeWikiReaderOptions = {},
+): KnowledgeWikiReader {
+  const publications = createApprovedWikiPublicationReader(knowledgeRoot);
   const security = createProjectSecurityService({ knowledgeRoot });
-  const screen = async (projectId: string, body: string, policyDigest: KnowledgeDigest): Promise<void> => {
-    const result = await security.prepareSource({ projectId, source: 'project-knowledge-reader.md', sourceKind: 'wiki',
+  let provider = options.provider;
+  let vectorIndex = options.vectorIndex;
+  const screen = async (projectId: string, source: string, body: string,
+    policyDigest: KnowledgeDigest): Promise<void> => {
+    const result = await security.prepareSource({ projectId, source, sourceKind: 'wiki',
       body, bodyDigest: sha256(body), sourceRevisionOrContentSha256: sha256(body) });
     const approved = result.ok ? consumePreparedSource(result.prepared) : null;
     if (!approved || approved.approvedBody !== body || approved.policyDigest !== policyDigest || approved.untrustedData) invalid();
   };
   const load = async (projectId: string) => {
-    const status = await corpusStore.status(projectId);
-    if (status.state === 'none') return null;
-    if (status.state !== 'ready') invalid();
-    const publication = await readApprovedWikiPublicationSnapshot(knowledgeRoot, projectId);
+    const publication = await publications.read(projectId).catch(() => invalid());
+    if (publication === null) return null;
     const extension = publication.authority.knowledgeGeneration;
     if (!extension) return null;
-    const generation = extension.generations.at(-1);
+    const generation = latestKnowledgeGeneration(extension);
     const policy = await readSecurityPolicy(knowledgeRoot, projectId);
     if (!generation || generation.snapshot.sanitizerPolicyDigest !== policy.digest) invalid();
-    await screen(projectId, JSON.stringify(generation), policy.digest);
-    return { publication, extension, generation };
+    // Re-screen only the materialized retrieval surface. The immutable generation
+    // also carries the complete sanitized source snapshot for lineage checks; when
+    // serialized as one wiki document, benign security-rule source fragments can
+    // combine into prompt-injection false positives even though none are exposed by
+    // the reader. Activation applies the same per-file boundary before persistence.
+    for (const file of renderKnowledgeFiles(generation)) {
+      await screen(projectId, `buildlore-hierarchy/${file.path}`, file.body, policy.digest);
+    }
+    return { publication, extension, generation, policy };
   };
   const pageView = (generation: KnowledgeGenerationV1, page: KnowledgePageV1, pageId: string): KnowledgeWikiPageView => {
     const claims = page.sections.flatMap((s) => s.claims);
@@ -65,6 +99,37 @@ export function createKnowledgeWikiReader(knowledgeRoot: string): KnowledgeWikiR
       claims, facts, evidence: generation.evidence.filter((e) => evidenceIds.has(e.evidenceId)), egress: 'none' };
   };
   const reader: KnowledgeWikiReader = {
+    async readMemory(projectId) {
+      const loaded = await load(projectId);
+      if (!loaded) return null;
+      const result = knowledgeDevelopmentMemory(loaded.generation);
+      await screenRetainedKnowledgeValue(result, body =>
+        screen(projectId, 'buildlore-hierarchy/development-memory.json', body, loaded.policy.digest));
+      return result;
+    },
+    async readPacket(projectId) {
+      const loaded = await load(projectId);
+      if (!loaded) return null;
+      const result = knowledgeReaderPacket(loaded.generation);
+      await screen(projectId, 'buildlore-hierarchy/reader-packet.json', JSON.stringify(result), loaded.policy.digest);
+      return result;
+    },
+    async readContext(projectId, pageRef) {
+      const loaded = await load(projectId);
+      if (!loaded) return null;
+      const mapping = loaded.extension.pageMappings.find(m => [m.pageId, m.role, `${m.role}.md`,
+        `wiki/buildlore-hierarchy/${m.role}.md`, `buildlore-hierarchy/${m.role}.md`].includes(pageRef)) ?? invalid();
+      const result = knowledgeReaderPage(loaded.generation, mapping.role);
+      await screen(projectId, 'buildlore-hierarchy/reader-page.json', JSON.stringify(result), loaded.policy.digest);
+      return result;
+    },
+    async lookup(projectId, expectedGeneration, kind, id) {
+      const loaded = await load(projectId);
+      if (!loaded || loaded.generation.generationDigest !== expectedGeneration) invalid();
+      const result = knowledgeReaderLookup(loaded.generation, kind, id);
+      await screen(projectId, 'buildlore-hierarchy/reader-lookup.json', JSON.stringify(result), loaded.policy.digest);
+      return result;
+    },
     async list(projectId, options = {}) {
       const loaded = await load(projectId);
       if (!loaded) return null;
@@ -102,34 +167,62 @@ export function createKnowledgeWikiReader(knowledgeRoot: string): KnowledgeWikiR
       if (!loaded || loaded.generation.generationDigest !== expectedGeneration) invalid();
       return loaded.generation.evidence.find((e) => e.evidenceId === evidenceId) ?? invalid();
     },
+    async fact(projectId, expectedGeneration, factId) {
+      const loaded = await load(projectId);
+      if (!loaded || loaded.generation.generationDigest !== expectedGeneration) invalid();
+      return knowledgeFactSupport(loaded.generation, factId);
+    },
     async search(projectId, query, mode, intent = 'auto') {
       const loaded = await load(projectId);
       if (!loaded) return null;
-      await screen(projectId, query, loaded.generation.snapshot.sanitizerPolicyDigest);
-      const result = searchApprovedWikiLexicalV3(loaded.publication.projection.corpus,
-        { projectId, query, intent, mode: mode === 'graph' ? 'graph' : 'lexical' },
-        createKnowledgeRankingSignals(loaded.extension, loaded.publication.projection.corpus));
-      const basis = { ...result, schemaVersion: 'buildlore.project-knowledge-search.v1',
+      await screen(projectId, 'project-knowledge-query.md', query,
+        loaded.generation.snapshot.sanitizerPolicyDigest);
+      const corpus = loaded.publication.projection.corpus;
+      const meaningForHit = createKnowledgeRankingSignals(loaded.extension, corpus);
+      const request = { projectId, query, intent, mode };
+      const result = mode === 'lexical' || mode === 'graph'
+        ? searchApprovedWikiLexicalV3(corpus, request, meaningForHit)
+        : await createApprovedWikiHybridRetrievalV3({
+          corpus, projectId, meaningForHit, sanitizerPolicyDigest: loaded.policy.digest,
+          filterLowRelevanceSemanticHits: true,
+          provider: provider ??= createLocalEmbeddingProvider({
+            hubRoot: options.hubRoot ?? dirname(resolve(knowledgeRoot)),
+          }),
+          vectorIndex: vectorIndex ??= createFlatFileVectorIndex(knowledgeRoot),
+        }).search(request);
+      if (mode === 'semantic' || mode === 'hybrid') {
+        // Do not attach support from a generation replaced during asynchronous retrieval.
+        const current = await publications.read(projectId).catch(() => invalid());
+        if (current === null || current.recordDigest !== loaded.publication.recordDigest ||
+          current.projection.projectionDigest !== loaded.publication.projection.projectionDigest ||
+          (await readSecurityPolicy(knowledgeRoot, projectId)).digest !== loaded.policy.digest) invalid();
+      }
+      const basis = { ...result, schemaVersion: 'buildlore.project-knowledge-search.v2',
+        semanticRelevancePolicy: mode === 'semantic' || mode === 'hybrid' ? KNOWLEDGE_SEMANTIC_RELEVANCE_V2 : null,
+        supportScope: 'matched-section' as const,
         requestedMode: mode, generationDigest: loaded.generation.generationDigest,
         corpusDigest: loaded.publication.projection.corpus.corpusDigest,
-        fallback: mode === 'hybrid' || mode === 'semantic'
-          ? { reasonCode: 'project-knowledge-semantic-index-unavailable', effectiveMode: 'lexical' } : null,
         hits: result.hits.map((hit) => {
           const mapping = loaded.extension.pageMappings.find((m) => m.pageId === hit.locator.pageId) ?? invalid();
           const page = loaded.generation.pages.find((p) => p.role === mapping.role) ?? invalid();
-          const view = pageView(loaded.generation, page, mapping.pageId);
+          const section = page.sections.find((_, index) => `knowledge-${String(index)}` === hit.locator.sectionId) ?? invalid();
+          const claims = section.claims;
+          const factIds = new Set(claims.flatMap(claim => claim.factIds));
+          const facts = loaded.generation.records.filter(fact => factIds.has(fact.id));
+          const evidenceIds = new Set(facts.flatMap(fact => fact.evidenceIds));
+          const evidence = loaded.generation.evidence.filter(item => evidenceIds.has(item.evidenceId));
           // The hierarchy's overview contains reviewed child summaries. Expose
           // their original pages and fact state instead of pretending the text
           // is a claim in the named overview Markdown.
-          const inheritedClaims = mapping.role === 'overview' ? loaded.generation.pages.filter((p) => p.role !== 'overview').map((child) => {
+          const inheritedClaims = mapping.role === 'overview' && hit.locator.sectionId === 'knowledge-0'
+            ? loaded.generation.pages.filter((p) => p.role !== 'overview').map((child) => {
             const childMapping = loaded.extension.pageMappings.find((m) => m.role === child.role) ?? invalid();
-            const childView = pageView(loaded.generation, child, childMapping.pageId);
             const claim = child.sections[0]?.claims[0] ?? invalid();
-            const facts = childView.facts.filter((fact) => claim.factIds.includes(fact.id));
+            const facts = loaded.generation.records.filter((fact) => claim.factIds.includes(fact.id));
             return { pageId: childMapping.pageId, role: child.role, claim, facts,
-              evidence: childView.evidence.filter((e) => facts.some((fact) => fact.evidenceIds.includes(e.evidenceId))) };
+              evidence: loaded.generation.evidence.filter((e) => facts.some((fact) => fact.evidenceIds.includes(e.evidenceId))) };
           }) : [];
-          return { ...hit, role: mapping.role, claims: view.claims, facts: view.facts, evidence: view.evidence, inheritedClaims };
+          return { ...hit, role: mapping.role, claims, facts, evidence, inheritedClaims };
         }), egress: 'none' };
       return { ...basis, resultDigest: digest(basis) };
     },

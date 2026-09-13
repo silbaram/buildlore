@@ -40,14 +40,14 @@
         "structure": [
           "CLI -> planner -> store",
           "src/planner grouping and src/store persistence are documented responsibilities, not inspected implementation",
-          "store failure preserves previous manifest"
+          "preserving the previous manifest on store failure is a documented requirement, not inspected implementation or executed verification"
         ],
         "commands": [
           "parcel plan --input deliveries.json",
           "parcel check",
           "JSON files replaced SQLite design",
           "retryLimit 5 conflicts with operations note 3; do not invent precedence",
-          "R1 synthetic passed report is not actual current R2 code verification"
+          "retained report declares revision R1, passed and manifest parser fixture scope but is synthetic and unauthenticated; no actual verified code revision or executed verification scope is established for R1 or R2"
         ],
         "decisions": [
           "SQLite originally chosen for transactions",
@@ -98,7 +98,7 @@
         "purpose": [
           "offline local documentation link checking",
           "reports broken links without publishing or fetching remote sites",
-          "automatic repair remains unverified"
+          "automatic repair remains unverified despite the R2 settings done declaration; a declared status is not implementation or test evidence"
         ],
         "structure": [
           "CLI -> link resolver -> report writer",
@@ -109,10 +109,10 @@
           "lantern report",
           "case-sensitive matching selected in R2",
           "maxDepth 8 conflicts with operations note 4",
-          "synthetic P2A history and task done do not prove current R2 tests or implementation"
+          "retained synthetic R1 history concerns documenting local link checks, has empty execution verification arrays and no verified code revision; task done does not prove automatic repair or current R2 behavior"
         ],
         "decisions": [
-          "case-insensitive policy originally reduced migration disruption",
+          "case-insensitive policy was originally chosen for imported-document compatibility and to reduce migration disruption; this is documented rationale, not a measured outcome",
           "strict matching selected for portable Linux builds",
           "old mixed-case references need fixes, automatic repair unverified"
         ],
@@ -125,7 +125,7 @@
       },
       "forbidden": [
         "automatic repair implemented or tested",
-        "R2 tests passed because P2A finished",
+        "R2 tests passed or synthetic artifacts establish authenticated passing tests, regardless of rationale",
         "incremental checks feature removed",
         "unqualified maxDepth precedence"
       ],
@@ -140,7 +140,8 @@
         "commands": [
           "settings.json",
           "README.md",
-          "artifacts/runs"
+          "artifacts/runs",
+          "artifacts/iterations/v1-links/gate-c-task-graph/task-graph.json"
         ],
         "decisions": [
           "decision.md"
@@ -149,7 +150,10 @@
           "R1/support.md",
           "R2/decision.md",
           "R2/settings.json",
-          "artifacts/runs"
+          "R2/README.md",
+          "artifacts/runs",
+          "R2/artifacts/iterations/v1-links/gate-b-spec/spec.json",
+          "R2/artifacts/iterations/v1-links/gate-c-task-graph/task-graph.json"
         ]
       }
     }

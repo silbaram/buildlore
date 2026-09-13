@@ -1,0 +1,1117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/project-knowledge-answers.schema.json",
+  "title": "Project knowledge answer evaluation audit contracts",
+  "description": "Shape only; does not prove semantic truth, live AI execution or independent oracle review. Runtime verifies project, generation, canonical digests, actual UTF-8 byte accounting, full claim span coverage, criterion coverage and role separation. A recorded-pass only summarizes supplied judgments and attestations. Incomplete runtime context makes the full initial context count null. Budget excess yields failed, never truncation; structural bounds still apply. Use the security service before disclosure/storage.",
+  "x-buildlore-maxUtf8Bytes": 16777216,
+  "oneOf": [
+    {
+      "$ref": "#/$defs/contract"
+    },
+    {
+      "$ref": "#/$defs/contractV2"
+    },
+    {
+      "$ref": "#/$defs/contextualEvidence"
+    },
+    {
+      "$ref": "#/$defs/report"
+    },
+    {
+      "$ref": "#/$defs/reportV2"
+    },
+    {
+      "$ref": "#/$defs/contractV3"
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "$ref": "project-knowledge.schema.json#/$defs/digest"
+    },
+    "actor": {
+      "$ref": "project-knowledge.schema.json#/$defs/actor"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "initialContextUtf8Bytes",
+        "evidenceLookupUtf8Bytes",
+        "maximumLookups",
+        "answerUtf8Bytes"
+      ],
+      "properties": {
+        "initialContextUtf8Bytes": {
+          "const": 32768
+        },
+        "evidenceLookupUtf8Bytes": {
+          "const": 16384
+        },
+        "maximumLookups": {
+          "const": 10
+        },
+        "answerUtf8Bytes": {
+          "const": 8192
+        }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "statement"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "mandatory",
+            "forbidden",
+            "unknown"
+          ]
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "question",
+        "criteria"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "kind",
+        "body",
+        "bodyDigest",
+        "utf8Bytes"
+      ],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "kind": {
+          "enum": [
+            "instructions",
+            "questions",
+            "wiki",
+            "evidence"
+          ]
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144
+        },
+        "bodyDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "utf8Bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "runtimeContext": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "body",
+            "unavailableReason"
+          ],
+          "properties": {
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 262144
+            },
+            "unavailableReason": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "body",
+            "unavailableReason"
+          ],
+          "properties": {
+            "body": {
+              "type": "null"
+            },
+            "unavailableReason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "inputTokens",
+            "outputTokens",
+            "unavailableReason"
+          ],
+          "properties": {
+            "status": {
+              "const": "measured"
+            },
+            "inputTokens": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "outputTokens": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "unavailableReason": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "inputTokens",
+            "outputTokens",
+            "unavailableReason"
+          ],
+          "properties": {
+            "status": {
+              "const": "unavailable"
+            },
+            "inputTokens": {
+              "type": "null"
+            },
+            "outputTokens": {
+              "type": "null"
+            },
+            "unavailableReason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          }
+        }
+      ]
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "startUtf8",
+        "endUtf8",
+        "text",
+        "verdict",
+        "evidenceIds",
+        "rationale",
+        "unsupportedImplementationOrVerification",
+        "historicalAsCurrent",
+        "hiddenContradiction"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "startUtf8": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "endUtf8": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144
+        },
+        "verdict": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "insufficient",
+            "conflicting"
+          ]
+        },
+        "evidenceIds": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "uniqueItems": true
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "unsupportedImplementationOrVerification": {
+          "type": "boolean"
+        },
+        "historicalAsCurrent": {
+          "type": "boolean"
+        },
+        "hiddenContradiction": {
+          "type": "boolean"
+        }
+      }
+    },
+    "judgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterionId",
+        "verdict",
+        "rationale"
+      ],
+      "properties": {
+        "criterionId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "verdict": {
+          "enum": [
+            "satisfied",
+            "violated",
+            "unassessed"
+          ]
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    "answer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionId",
+        "answer",
+        "answerDigest",
+        "utf8Bytes",
+        "tokenUsage",
+        "claims",
+        "criteria"
+      ],
+      "properties": {
+        "questionId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144
+        },
+        "answerDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "utf8Bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tokenUsage": {
+          "$ref": "#/$defs/tokens"
+        },
+        "claims": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/claim"
+          }
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/judgment"
+          }
+        }
+      }
+    },
+    "lookup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionId",
+        "evidenceIds",
+        "returned"
+      ],
+      "properties": {
+        "questionId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "evidenceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "uniqueItems": true
+        },
+        "returned": {
+          "$ref": "#/$defs/context"
+        }
+      }
+    },
+    "attestations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "freshReader",
+        "oracleWithheld",
+        "writerHistoryWithheld",
+        "oracleFrozenBeforeGeneration",
+        "readerSessionDigest",
+        "reviewerSessionDigest"
+      ],
+      "properties": {
+        "freshReader": {
+          "type": "boolean"
+        },
+        "oracleWithheld": {
+          "type": "boolean"
+        },
+        "writerHistoryWithheld": {
+          "type": "boolean"
+        },
+        "oracleFrozenBeforeGeneration": {
+          "type": "boolean"
+        },
+        "readerSessionDigest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reviewerSessionDigest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "initialContextUtf8Bytes",
+        "providedContextUtf8Bytes",
+        "evidenceLookupUtf8Bytes",
+        "lookupCount",
+        "answerUtf8Bytes"
+      ],
+      "properties": {
+        "initialContextUtf8Bytes": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providedContextUtf8Bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "evidenceLookupUtf8Bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "lookupCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "answerUtf8Bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "sampleId",
+        "revision",
+        "fixtureDigest",
+        "oracleDigest",
+        "budget",
+        "questions",
+        "contractDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-answer-contract.v1"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "sampleId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "revision": {
+          "$ref": "#/$defs/identifier"
+        },
+        "fixtureDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "oracleDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "questions": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/question"
+          }
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "contractV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "sampleId",
+        "revision",
+        "fixtureDigest",
+        "oracleDigest",
+        "budget",
+        "questions",
+        "contractDigest",
+        "contextFormat"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-answer-contract.v2"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "sampleId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "revision": {
+          "$ref": "#/$defs/identifier"
+        },
+        "fixtureDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "oracleDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "questions": {
+          "$ref": "#/$defs/contract/properties/questions"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "contextFormat": {
+          "enum": [
+            "knowledge-reader-v1",
+            "knowledge-cli-reader-v1"
+          ]
+        }
+      }
+    },
+    "contextualEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "items"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-evidence-context.v1"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "evidence",
+              "sectionContext"
+            ],
+            "properties": {
+              "evidence": {
+                "$ref": "project-knowledge.schema.json#/$defs/evidence"
+              },
+              "sectionContext": {
+                "$ref": "#/$defs/sectionContext"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sectionContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "headings",
+        "unavailableReason"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "unavailableReason": {
+          "enum": [
+            null,
+            "source-not-in-current-snapshot",
+            "not-markdown-lines",
+            "redacted-heading"
+          ]
+        },
+        "headings": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "level",
+              "startLine",
+              "endLine",
+              "excerpt"
+            ],
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 6
+              },
+              "startLine": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "endLine": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "excerpt": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 262144
+              }
+            }
+          }
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "contractDigest",
+        "generationDigest",
+        "origin",
+        "writer",
+        "reader",
+        "reviewer",
+        "attestations",
+        "initialContext",
+        "runtimeContext",
+        "lookups",
+        "answers",
+        "usage",
+        "outcome",
+        "evaluationDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-answer-evaluation.v1"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "origin": {
+          "enum": [
+            "live-session",
+            "deterministic-replay"
+          ]
+        },
+        "writer": {
+          "$ref": "#/$defs/actor"
+        },
+        "reader": {
+          "$ref": "#/$defs/actor"
+        },
+        "reviewer": {
+          "$ref": "#/$defs/actor"
+        },
+        "attestations": {
+          "$ref": "#/$defs/attestations"
+        },
+        "initialContext": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/context"
+          }
+        },
+        "runtimeContext": {
+          "$ref": "#/$defs/runtimeContext"
+        },
+        "lookups": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/lookup"
+          }
+        },
+        "answers": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/answer"
+          }
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        },
+        "outcome": {
+          "enum": [
+            "recorded-pass",
+            "failed",
+            "incomplete",
+            "fixture-only"
+          ]
+        },
+        "evaluationDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "claimV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "startUtf8",
+        "endUtf8",
+        "text",
+        "verdict",
+        "evidenceIds",
+        "rationale",
+        "unsupportedImplementationOrVerification",
+        "historicalAsCurrent",
+        "hiddenContradiction",
+        "factIds"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "startUtf8": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "endUtf8": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144
+        },
+        "verdict": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "insufficient",
+            "conflicting"
+          ]
+        },
+        "evidenceIds": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "uniqueItems": true
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "unsupportedImplementationOrVerification": {
+          "type": "boolean"
+        },
+        "historicalAsCurrent": {
+          "type": "boolean"
+        },
+        "hiddenContradiction": {
+          "type": "boolean"
+        },
+        "factIds": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/digest"
+          }
+        }
+      },
+      "description": "Typed citation sets must exactly match the literal [evidence:sha256:...] and [fact:sha256:...] citations in this span. Fact citations support recorded knowledge state, not verified implementation."
+    },
+    "answerV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionId",
+        "answer",
+        "answerDigest",
+        "utf8Bytes",
+        "tokenUsage",
+        "claims",
+        "criteria"
+      ],
+      "properties": {
+        "questionId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144
+        },
+        "answerDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "utf8Bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tokenUsage": {
+          "$ref": "#/$defs/tokens"
+        },
+        "claims": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/claimV2"
+          }
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/judgment"
+          }
+        }
+      }
+    },
+    "lookupV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionId",
+        "evidenceIds",
+        "returned",
+        "factIds"
+      ],
+      "properties": {
+        "questionId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "evidenceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "uniqueItems": true
+        },
+        "returned": {
+          "$ref": "#/$defs/context"
+        },
+        "factIds": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/digest"
+          }
+        }
+      }
+    },
+    "reportV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "contractDigest",
+        "generationDigest",
+        "origin",
+        "writer",
+        "reader",
+        "reviewer",
+        "attestations",
+        "initialContext",
+        "runtimeContext",
+        "lookups",
+        "answers",
+        "usage",
+        "outcome",
+        "evaluationDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-answer-evaluation.v2"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "origin": {
+          "enum": [
+            "live-session",
+            "deterministic-replay"
+          ]
+        },
+        "writer": {
+          "$ref": "#/$defs/actor"
+        },
+        "reader": {
+          "$ref": "#/$defs/actor"
+        },
+        "reviewer": {
+          "$ref": "#/$defs/actor"
+        },
+        "attestations": {
+          "$ref": "#/$defs/attestations"
+        },
+        "initialContext": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/context"
+          }
+        },
+        "runtimeContext": {
+          "$ref": "#/$defs/runtimeContext"
+        },
+        "lookups": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/lookupV2"
+          }
+        },
+        "answers": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/answerV2"
+          }
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        },
+        "outcome": {
+          "enum": [
+            "recorded-pass",
+            "failed",
+            "incomplete",
+            "fixture-only"
+          ]
+        },
+        "evaluationDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "contractV3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "sampleId",
+        "revision",
+        "fixtureDigest",
+        "oracleDigest",
+        "budget",
+        "questions",
+        "contractDigest",
+        "contextFormat"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-answer-contract.v3"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "sampleId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "revision": {
+          "$ref": "#/$defs/identifier"
+        },
+        "fixtureDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "oracleDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "questions": {
+          "$ref": "#/$defs/contract/properties/questions"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "contextFormat": {
+          "const": "knowledge-reader-packet-v1"
+        }
+      }
+    }
+  }
+}

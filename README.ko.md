@@ -311,6 +311,18 @@ fail-closed 상태입니다. 데이터 분류를 검토한 후 외부로 전송�
 정책 파일도 `sources.json`과 같이 BOM 없는 UTF-8, 2칸 들여쓰기, LF, 파일 끝의
 LF 정확히 하나를 사용합니다. 최상위 필드는 `schemaVersion`, `projectId`,
 `defaultClassification`, `classificationRules`, `egressRules`, `overrides` 순서입니다.
+선택 필드 `sourceSecretHandling`은 `overrides` 뒤에 둡니다. `"mask"`로 설정하면
+소스 수집에서 탐지된 자격증명과 고엔트로피 의심 구간만 마스킹한 뒤 전체를 재검사합니다.
+원본 파일은 수정하지 않고, 통과한 파생본만 동기화·컴파일에 사용합니다. 생략하거나
+`"reject"`로 설정하면 기존 보안 동작을 유지합니다. 정책 변경 후에는 다시 동기화하고
+Wiki 생성 작업을 새로 준비해야 합니다.
+
+마스킹은 AI가 작성한 사실·리뷰·평가나 외부 전송 권한에는 적용되지 않습니다.
+비밀키, 프롬프트 주입, 불명확한 중첩, 검사 한도 초과, 재검사 실패 및 위험한 인용
+메타데이터는 계속 차단합니다. `<REDACTED:CREDENTIAL>` / `<REDACTED:SECRET>`는
+값을 알 수 없다는 표시이며, 해당 행은 새 지식 스냅샷의 사실 근거에서 제외합니다.
+이 기능은 탐지된 위험을 처리하는 방식이지, 모든 비밀정보의 탐지를 보장하지는 않습니다.
+
 분류 규칙은 `sourceKind`와 선택적인 `sourceIdentitySha256` 순서로 정렬합니다. Egress
 규칙은 `capability` 순서로 정렬하고 `allowedClassifications`는 `internal`, `public`
 순서로 둡니다. Override는 `sourceIdentitySha256`,
@@ -385,14 +397,21 @@ Kind별 조건과 필드 상한의 정본은 `compile-proposal.schema.json`이�
 아닙니다. 현재 개발 중인 opt-in 기능으로, 저장·갱신 테스트 통과가 독립 AI의
 프로젝트 이해도 검증 통과를 뜻하지는 않습니다.
 
-기존 `compile hierarchy start` 명령에 다음 purpose 파일을 전달합니다.
+작성 전에 대상 프로젝트의 질문과 필요한 근거를 정하고, 기존 `compile hierarchy start` 명령에
+다음 purpose 파일을 전달합니다.
 
 ```json
 {
-  "schemaVersion": "buildlore.hierarchical-workflow-purpose-input.v2",
+  "schemaVersion": "buildlore.hierarchical-workflow-purpose-input.v3",
   "projectId": "example",
   "generationModel": "project-knowledge-v1",
-  "outputLanguage": "ko"
+  "outputLanguage": "ko",
+  "authoringQuestions": [{
+    "id": "storage", "role": "architecture",
+    "question": "어떤 저장 방식이 설정되어 있고 무엇을 제어하는가?",
+    "requirements": [{ "id": "storage-value", "sourceRef": "settings.json",
+      "jsonPointer": "/storage", "contentKind": "json-value" }]
+  }]
 }
 ```
 
@@ -403,7 +422,135 @@ Kind별 조건과 필드 상한의 정본은 `compile-proposal.schema.json`이�
 [지식 계약](schemas/project-knowledge.schema.json)과
 [워크플로 계약](schemas/project-knowledge-workflow.schema.json)을 참고하세요.
 
-이 모드의 순서는 `sync` → `start` → `submit` → `review` → `finalize` → `approve`
+purpose v3은 범용 프로젝트 작성 지침과 고정된 질문이 있는 exchange v2를 반환합니다.
+제출 입력은 `{ schemaVersion: "buildlore.knowledge-question-submission.v1", projectId,
+proposal, questionAnswers: [{ id: "storage", claimIds: ["storage-setting"] }] }`입니다.
+지정한 claim은 질문의 페이지에 있어야 하며 필요한 근거를 인용해야 합니다. start/status의
+`sourceCoverage`에서 원문 포함 여부를, submit/review의 `questionCoverage`에서 답변 연결을
+확인합니다. 누락된 질문, 잘못된 페이지, 인용하지 않은 필수 근거는 제출을 차단합니다.
+질문과 답변 연결은 실행에 저장되어 재개·최종화·승인 시 재검사됩니다. 시작 후 purpose 파일을
+수정해도 기존 실행의 요구는 바뀌지 않습니다. `reviewViewDigest`는 답변 연결까지 결속합니다.
+검토자는 질문별로 실제 설명이 충분한지 판단해야 하며, 구조 검사의 `covered`는 의미상 합격을
+보증하지 않습니다. purpose v2와 과거 실행은 재현성을 위해 원래 입력·exchange를 유지합니다.
+
+purpose v3 실행에서는 작성 전에 질문별 코드·설정·테스트 근거를 읽을 수 있습니다.
+
+```sh
+node dist/cli/bin.js compile hierarchy inspect --project example --run <run-id> --input inspection.json --expect-exchange <exchange-digest> --json
+```
+
+```json
+{
+  "schemaVersion": "buildlore.knowledge-authoring-inspection-request.v1",
+  "projectId": "example",
+  "questionId": "storage",
+  "operation": "find",
+  "contains": "storage"
+}
+```
+
+start/status의 `inspectionArgs`에 `--input <요청.json>`을 붙여도 됩니다. `sources`는 선택된
+파일 목록을 반환하고 선택적 `contains`로 경로를 찾습니다. `find`는 근거 본문에서 대소문자를
+구분하는 문자열 찾기이며 선택적 `sourceRef`로 파일을 한정합니다. `read`와 `sourceRef`는
+해당 파일의 근거를 순서대로 읽습니다. 쓰지 않는 `sourceRef`, `contains`, `cursor`는 생략하거나
+`null`로 지정합니다. `read`의 경로와 `find`의 검색 문자열은 여전히 필수입니다. 공개 SDK의
+`compiler.parseKnowledgeAuthoringInspectionRequest` 결과를 `session.inspect`에 바로 전달하거나
+JSON으로 저장해 CLI 입력에 사용할 수 있습니다. 현재 AI가 진입점,
+호출되는 이름과 호출 위치, 설정, 오류 처리, 관련 테스트를 필요한 만큼 따라가며 확인합니다.
+언어별 AST·호출 그래프 분석기나 의미검색·코드 실행 기능은 아닙니다.
+
+실행의 스냅샷과 일치하는 기존 선택·정제 소스만 제공합니다. 미선택 경로, 다른 프로젝트,
+알 수 없는 질문, 소스·authority 변경은 실행 상태를 바꾸지 않고 거절합니다. 추가 파일이
+필요하면 수집 범위를 명시적으로 바꾸고 재동기화 후 새 문서 작성 실행을 시작해야 합니다.
+조회 결과의 근거 ID·내용 digest·위치를 보존합니다. 줄 번호는 명시적인 origin 정보가 없는 한
+정제된 투영 기준이지 원본 코드 파일의 줄 번호가 아닙니다. 코드 열람이나 테스트 정의는
+실행 또는 현재 테스트 통과의 증거가 아닙니다.
+
+현재 AI는 문서의 의도와 실제 구현을 대조해 역할·동작·차이·미확인을 설명하고 proposal의
+facts와 `questionAnswers`에 근거를 연결합니다. 코드·설정·테스트 인용이 필수인 질문은 시작
+전에 해당 소스를 requirements에 포함합니다. 조회 결과 자체는 의미상 승인이 아니므로
+별도 검토자가 설명의 충분함과 문서·구현 불일치의 양쪽 근거를 판단해야 합니다. 코드에 없는
+결정 이유를 만들어 넣지 않습니다. 조회는 최종화 전에 사용하며 exchange를 변경하거나
+도구 호출 기록 제출을 강제하지 않습니다.
+
+`cursor`, `limit`(1–50, 기본 10), `maxBytes`(8,192–1,048,576, 기본 65,536)로 나눠 읽습니다.
+바이트 한도는 CLI envelope·들여쓰기를 제외한 compact JSON 조회 결과 기준입니다. 근거를
+자르거나 건너뛰지 않습니다. 하나가 너무 크면 `item-too-large`, 빈 페이지, 재시도 cursor와
+`minimumRequiredBytes`를 반환하므로 `maxBytes`를 늘려 다시 읽습니다. cursor는 스냅샷·질문·
+작업·필터에 결속되어 필터를 바꿀 때는 처음부터 조회해야 합니다.
+질문·응답 메타데이터 자체가 한도를 넘으면 CLI는 `KNOWLEDGE_INSPECTION_BUDGET_EXCEEDED`와
+작은 오류 `data`를 반환합니다. SDK는 공개된 `compiler.KnowledgeAuthoringInspectionBudgetError`의
+`details`로 같은 정보를 제공합니다. `byteBudget`, `minimumRequiredBytes`, `maximumBytes`,
+`retryable`을 확인하고, 재시도가 가능하면 같은 요청·cursor의 `maxBytes`를 `minimumRequiredBytes`로
+바꿔 다시 호출합니다. `retryable: false`면 지원 상한 안에 질문 전체를 담을 수 없으므로 질문 묶음을
+조정한 새 작성 실행이 필요합니다. 필수 근거나 내용을 몰래 줄이지 않으며 보안 검사는 유지합니다.
+오류 데이터는 `buildlore.knowledge-authoring-inspection-budget.v1`이고 정상 응답 계약은 그대로입니다.
+스키마는 패키지의 `buildlore/schemas/project-knowledge-inspection.schema.json`으로도 불러올 수 있습니다.
+[조회 계약](schemas/project-knowledge-inspection.schema.json)을 참고하세요.
+
+
+### Wiki 갱신 전에 변경 영향 확인하기
+
+검증된 이전 승인 generation이 있어야 합니다. 변경된 소스를 명시적으로 선택한 뒤 `sync`와
+새 작성 실행의 `start`를 수행하고 `status`를 확인합니다. 갱신 전에 이전 `wiki memory`의
+스냅샷 식별자를 보관하세요. 요청에는 이전 generation·snapshot digest와 새 exchange·snapshot
+ digest가 필요합니다. 기준선이 없는 첫 작성 실행은 `KNOWLEDGE_INVALID`로 거절합니다.
+
+```json
+{
+  "schemaVersion": "buildlore.knowledge-change-impact-request.v1",
+  "operation": "change-impact",
+  "projectId": "example",
+  "expectExchangeDigest": "<새 exchange.exchangeDigest>",
+  "expectSnapshotDigest": "<새 exchange.snapshot.snapshotDigest>",
+  "expectBaselineGenerationDigest": "<이전 generationDigest>",
+  "expectBaselineSnapshotDigest": "<이전 snapshotDigest>",
+  "limit": 10,
+  "maxBytes": 65536
+}
+```
+
+자리표시자를 완전한 `sha256:…` digest로 바꾸고 `impact.json`으로 저장합니다.
+
+```sh
+buildlore compile hierarchy inspect --project example --run <run-id> --input impact.json --expect-exchange <새-exchange-digest> --json
+```
+
+SDK는 `session.inspectChangeImpact(request, session.exchange.exchangeDigest)`를 사용합니다.
+`compiler.parseKnowledgeChangeImpactRequest`가 원시 JSON 입력을 검증하고 기본값을 채웁니다.
+질문 없는 기존 작성 실행에도 사용할 수 있으며 `awaiting-proposal`, `review-ready` 상태에서
+기존 exchange·status·run 저장 형식을 보존합니다. 별도 스키마는 패키지의
+`buildlore/schemas/project-knowledge-change-impact.schema.json`으로 제공됩니다.
+
+보고서는 바뀐 근거를 이전 current 사실과 이전 Wiki 문장 위치에 연결하며, 같은 사실의 일치하는
+근거도 모두 보존합니다. 근거 일부만 달라져도 기존 reconciliation에서 그 사실은 새 제안·검토가
+없으면 stale 대상입니다. `summary`는 페이지와 무관한 전체 비교 수치이며 근거 연결 수는 이전
+current 사실 기준입니다. historical·superseded·stale 사실은 각각 제외 수치로 표시합니다.
+
+`revision-metadata-changed`는 대응하는 발췌·소스 내용은 같고 식별자나 버전 정보가 다른 경우입니다.
+`same-excerpt-source-changed`는 발췌가 같아도 소스 bytes나 위치가 바뀐 경우를 구분합니다.
+둘 다 의미상 동일함이나 테스트 통과를 증명하지 않습니다. `content-changed`는 구조적으로 대응한
+발췌의 변화이며 새 사실의 승인이 아닙니다. `source-unselected`, `aligned-evidence-unavailable`은
+현재 선택 범위의 미확인이며 삭제의 증거가 아닙니다. 구조 후보가 여러 개면 모호함을 그대로
+표시합니다. 문자열·의미 유사도, 이름 변경 추정이나 checkout 전체 탐색을 수행하지 않습니다.
+
+`cursor`, `limit`(1–50), `maxBytes`(8,192–1,048,576)로 사실 단위로 나눠 읽습니다.
+`item-too-large`는 사실을 자르지 않고 같은 위치의 cursor를 반환합니다. `retryable: true`이면
+그 cursor와 `maxBytes: minimumRequiredBytes`로 재시도하며 페이지 크기도 바꿀 수 있습니다.
+false이면 사실 전체가 지원 상한을 초과한 것으로 이 조회에서 건너뛸 수 없습니다.
+용량은 `resultDigest`를 포함한 compact UTF-8 보고서 JSON 기준이며 CLI envelope·들여쓰기·마지막
+줄바꿈은 제외합니다. 메타데이터 한도 초과는 원문을 담지 않는
+`KNOWLEDGE_CHANGE_IMPACT_BUDGET_EXCEEDED` 오류를 사용합니다. SDK에서는
+`compiler.KnowledgeChangeImpactBudgetError.details`로 확인합니다. expected 식별자나 cursor가
+현재 입력과 맞지 않으면 `KNOWLEDGE_DRIFT`로 실패합니다.
+
+기존 exchange·작성용 inspection과 정본 fact/evidence lookup으로 실제 정제 근거를 읽고,
+근거 있는 새 사실과 범위가 명시된 supersession/conflict를 작성합니다. 이후 `submit` → 독립
+`review`·`finalize` → 명시적 `approve` → `activationArgs` 순서로 갱신합니다.
+보고서 자체는 지식을 수정하거나 승인하지 않습니다. 일반 `wiki memory`는 새 generation을
+승인·활성화하기 전까지 마지막 승인 스냅샷을 설명합니다.
+
+이 모드의 순서는 `sync` → `start` → 질문별 `inspect`·작성 → `submit` → `review` → `finalize` → `approve`
 → 반환된 `activationArgs`입니다. `submit`에는 `exchange.exchangeDigest`를,
 `finalize`에는 `reviewViewDigest`와 독립적으로 작성한
 `buildlore.knowledge-semantic-review.v1`을 전달합니다. 작성자와 다른 검토 세션이나
@@ -423,11 +570,61 @@ Kind별 조건과 필드 상한의 정본은 `compile-proposal.schema.json`이�
 `archives/<authority-digest>.json`에 이전 authority를 보존합니다. 백업은 현재
 검색 대상에 섞이지 않습니다.
 
+새 프로젝트 지식 승인은 `buildlore.approved-wiki-authority.v3`와
+`knowledge-authority-extension.v2`의 이력 참조를 사용합니다. 각 세대는 선택한
+프로젝트의 `.llmwiki/buildlore-hierarchy/knowledge-history/objects/<generation-digest>.json`에
+불변 파일로 저장됩니다. 작은 참조가 최초·최신 세대와 십진 문자열 개수를 결속하므로
+이 경로에는 누적 16MiB·64세대 제한이 없습니다. 개별 세대의 16MiB·구조 제한은
+유지합니다. 전체 검증은 세대별 파일과 digest만 담은 임시 spool을 사용하며,
+보존 이력에 따라 디스크 사용량과 검증 시간은 증가할 수 있습니다.
+
+승인은 검사된 불변 파일을 준비하고 후보 하나·정확한 이전 상태·승인 증명을 담은
+activation-input v2를 생성합니다. 활성화는 별도 명령입니다. 기존 v1/v2 정본은
+읽기만으로 변환하지 않습니다. 명시적인 v2→v3 교체 시 원래 정본 record의 바이트를
+`archives/<record-digest>.record.json`에 그대로 보관합니다. 정본 교체 전 실패에는
+기존 위키를 유지하고, 게시 journal을 통해 재시도합니다. 의미검색 인덱스는 별도로
+`index rebuild`를 실행해야 갱신됩니다.
+
+캐시가 있어도 매번 활성 정본과 참조된 모든 이력의 실제 바이트·파일 경계를 확인합니다.
+과거 근거의 의미 검증과 현재 정책 보안 검사를 저장된 해시나 통과 표시로 대체하지 않습니다.
+읽기는 이력 전환·삭제·embedding·인덱스 재생성을 수행하지 않습니다. 누락·변조·프로젝트
+이탈은 원문 값을 포함하지 않는 구조화된 오류로 거절합니다.
+
+SDK는 `CurrentApprovedWikiAuthority`를 비동기 publication reader 또는
+`prepareCurrentApprovedWikiPublication`으로 검증한 뒤 `latestKnowledgeGeneration`과
+`knowledgeAuthorityHistory`로 접근합니다. 기존 동기 parser는 미해결 v3 참조를 거절합니다.
+작성에는 `previousHistory`, 답변 평가에는 `history`를 전달할 수 있으며, 기존 세대 배열과
+동시에 지정하거나 JSON으로 검증 capability를 재구성할 수 없습니다.
+
+재생성은 보존된 전체 generation chain을 재현 검증한 뒤 모든 텍스트와 metadata를
+현재 보안 정책으로 재검사합니다. 현재 Wiki에 표시되지 않는 과거 source snapshot과
+검토 이유도 포함합니다. 검사할 때 실제 줄바꿈과 필드 경계를 유지하여 JSON 직렬화가
+서로 무관한 필드를 하나의 지시문처럼 만들지 않도록 합니다. 개별 값을 통과시키기 위해
+자르거나 마스킹하거나 분할하지 않으며, 거절되면 새 생성을 막고 활성 Wiki를 유지합니다.
+
 ```sh
 node dist/cli/bin.js wiki read --project example --page overview --json
 node dist/cli/bin.js wiki citations --project example --page decisions --json
 node dist/cli/bin.js search --project example --query "저장 방식 결정" --mode lexical
 ```
+
+프로젝트 지식 검색은 `buildlore.project-knowledge-search.v2`와
+`supportScope: "matched-section"`을 반환합니다. 각 결과에는 일치한 섹션의 주장·사실·근거만
+포함하고, 자식 요약의 근거는 실제 요약이 있는 overview 첫 섹션에만 붙입니다.
+`wiki read`/`citations`는 전체 페이지를 제공합니다. 활성화 후 `index rebuild --project <id>`를
+실행하면 semantic/hybrid 검색은 해당 프로젝트의 현재 Wiki와 일치하는 로컬 인덱스를 사용합니다.
+인덱스나 모델이 없거나 호환되지 않으면 semantic은 원인과 복구 방법을 포함한 오류를 반환하고,
+hybrid는 이유를 표시하며 키워드·그래프 검색으로 전환합니다.
+
+프로젝트 지식 검색은 `semanticRelevancePolicy`를 표시하고 순위 통합 전에 저관련성 의미검색
+후보를 제외합니다. 고정된 multilingual-e5-small 모델의 기준은 같은/미확인 문자권 0.820646121668,
+서로 다른 문자권 0.765124142709의 cosine 점수입니다(V2, calibration version 2). 혼합 기술 문서는 Latin 식별자 속 비Latin 본문도
+인식합니다. 이는 주제 관련성의 경험적 기준이지 정답 존재 판정이나 정확도 확률은 아닙니다.
+두 범용 프로젝트의 한국어·영어 질문으로 검증했으며 다른 언어·분야에는 추가 평가가 필요합니다.
+모든 의미 후보가 제외되면 fallback 없이 빈 결과를 반환합니다. hybrid의 키워드·그래프 후보와
+기존 계층형 검색은 유지합니다. 읽기 객체는 매번 경로와 전체 파일 bytes의 해시를 확인한 뒤
+변경되지 않은 승인 데이터의 검증 결과를 재사용합니다. 정본이나 보안 정책 변경은 다시 검사하며,
+새 CLI 프로세스에는 최초 승인 검증·모델 준비 비용이 남습니다.
 
 원문 값의 관찰(`observed`), 문서의 선언(`declared`), 추론(`inferred`)을 구분합니다.
 검토된 `accepted` + `current`만 현재 설명으로 쓰고, 과거·대체·근거 소실·분쟁
@@ -438,9 +635,50 @@ revision은 `null`입니다. 근거 소실을 기능 제거로, 수집 범위 �
 이미 대체된 사실을 다시 제안해 현재로 되살리거나 대체 관계를 지울 수 없습니다.
 과거 사실을 재검토해도 기존 대체 관계는 보존하며, 후속 변경은 대체 이력을 이어갑니다.
 
-읽기·근거 응답은 같은 generation의 사실과 근거를 반환합니다. 새 모드를 지원하지
-않는 의미검색 인덱스는 명시적으로 기존 일반 검색으로 대체하며 옛 캐시를 혼합하지
-않습니다. 기존 검색 intent도 적용하고 상위 검색 결과의 하위 문서 인용을 별도로
+새 작성 실행은 `knowledge-markdown-v2`를 사용합니다. 인용된 원문의 정확한 발췌문을
+이스케이프하여 표시하고 원래 위치와 `heading` / `json-value` / `text`를 구분합니다.
+원문 주장은 `[evidence:sha256:<64자리 hex>]`, 기록된 지식 상태는 `[fact:sha256:<64자리 hex>]`로
+인용합니다. 상태 설명에는 대체 사실 ID와 해당 snapshot에 남아 있거나 없는 근거 ID를 표시합니다.
+이는 기록의 출처·이력이며 실제 코드 동작이나 원문이 사라진 원인을 증명하지 않습니다.
+기존 v1 정본·진행 중 v1 실행·v1 평가 기록은 원래 렌더러와 바이트를 유지합니다.
+v2 표시를 적용하려면 새 generation을 검토하고 명시적으로 활성화해야 합니다.
+패키지 갱신이나 기존 문서 읽기만으로 활성 Wiki를 교체하지 않습니다.
+
+작성 전에 `compiler.createKnowledgeEvidenceCoverage(snapshot, requirements, projectId)`로 필요한
+근거가 전달되었는지 확인할 수 있습니다. 각 요구는 `{ id, sourceRef, jsonPointer, contentKind }`이며
+`jsonPointer: null`은 파일 전체, `contentKind`는 `any`, `json-value`, `text` 중 하나입니다.
+결과는 `available` / `heading-only` / `unavailable`과 일치하는 근거 ID입니다. 누락된 필드를 빈 배열로
+간주하지 않으며 누락 원문을 추가 수집하거나 어댑터를 바꾸는 기능은 아닙니다. 예를 들어
+`{ id: "storage", sourceRef: "settings.json", jsonPointer: "/storage", contentKind: "json-value" }`는
+제목이 아닌 실제 값을 요구합니다. `compiler.inspectKnowledgeProposalGrounding(snapshot, proposal,
+projectId, previousGenerations?)`는 최종화 전 claim별 기존 단어 겹침 검사의 점수를 보여줍니다.
+검사 기준을 낮추거나 의미 검토를 대체하지 않습니다. 점수를 맞추려고 무관한 문구·근거를 추가하지 마세요.
+두 함수는 정제·저장을 하지 않는 순수 변환이므로 세션이 제공한 정제 snapshot을 사용해야 합니다.
+특정 문서 생산 도구의 필드를 하드코딩하지 않는 범용 기능입니다.
+
+질문별 누락은 `compiler.inspectKnowledgeQuestionCoverage(snapshot, proposal, questions,
+projectId, previousGenerations?)`로 확인합니다. 각 질문은 `{ id, claimIds, requirements }`이고
+`requirements`에는 위의 소스 요구를 넣습니다. `unavailable` / `heading-only`는 필요한 원문이
+없거나 제목만 있다는 뜻이며, `uncited`는 원문은 있지만 그 질문에 연결한 문장에서 인용하지
+않았다는 뜻입니다. 다른 질문에 달린 인용으로 누락을 채울 수 없습니다. `covered`는 연결 확인이며
+문장이 필요한 내용을 의미상 설명하는지는 독립 검토가 판단합니다. 결과는 snapshot·proposal·요구
+digest에 결속됩니다. SDK의 `session.submit(proposal, exchangeDigest, questions)`는 불완전한
+연결을 제출 전에 거절합니다. 기존 SDK 진단과 purpose v2는 계속 지원하며, 실제 CLI 수명주기에서
+질문 요구를 고정·강제하려면 위의 purpose v3을 사용합니다. 작성 요구와 숨겨진
+평가 정답은 구분하며, 평가 정답을 reader에게 전달하지 않습니다.
+
+요약 어댑터가 필요한 JSON 필드를 생략한다면 해당 파일에 기존 `buildlore.json`과 사용자 추출
+프로필을 선택할 수 있습니다. [실행 검증된 세부값 프로필 예시](test/fixtures/project-knowledge/source-details-example.json)는
+일반 JSON Pointer로 검증 배열·작업 상태·명세 승인을 보존합니다. 필드 이름은 사용자 설정에
+있으며 지식 코어가 P2A를 해석하지 않습니다. 같은 파일을 요약 어댑터의 입력 묶음과 범용 선언에
+동시에 넣으면 중복으로 거절되므로 수집 방식을 하나 선택해야 합니다. `required` Pointer는 없는
+필드를 거절하고, 실제 빈 배열은 원래 Pointer와 함께 `_Empty array._`라는 `text` 근거로 전달됩니다.
+프로필에서 제외한 필드까지 포함한 원본 전체 보안 검사는 그대로 적용됩니다.
+
+읽기·근거 응답은 같은 generation의 사실과 근거를 반환합니다. 의미검색에도 동일한
+generation의 인덱스만 사용하며 옛 캐시를 혼합하지 않습니다. 사용할 수 없는 인덱스는
+semantic에서 오류, hybrid에서 명시적인 키워드·그래프 검색 전환으로 처리합니다.
+기존 검색 intent도 적용하고 상위 검색 결과의 하위 문서 인용을 별도로
 표시합니다. 검색 순위에는 인용된 섹션별 검토된 사실 상태와 하위 요약 상태를 전달하되
 저장된 검색 자료나 기존 순위 계산 규칙은 바꾸지 않습니다. 같은 근거를 인용해도 다른
 섹션의 현재성이 섞이지 않습니다. 최초 활성화는 대상 디렉터리가 없거나 비어 있어야 하며,
@@ -449,6 +687,146 @@ revision은 `null`입니다. 근거 소실을 기능 제거로, 수집 범위 �
 Git/백업에서 검토된 원래 파일을 복구한 뒤 재시도하세요. 정본을 임의로 수정하거나
 해시를 다시 계산하여 복구하지 마세요. 새 clone의 기존 지식 읽기에는 작성 당시의
 로컬 run/key가 필요 없지만 새 작성에는 소스 바인딩이 필요합니다.
+
+SDK에는 [AI 답변 평가 기록 계약](schemas/project-knowledge-answers.schema.json)도 있습니다.
+문서 작성 전에 독립 검토한 질문·판정 기준을 `compiler.createAnswerEvaluationContract`로 고정합니다.
+`compiler.createKnowledgeAnswerEvaluationService({ knowledgeRoot }).prepare`에 계약과 동일 프로젝트의
+generation 이력, 선택적 `runtimeContext`를 전달합니다. 정제 검사를 거쳐 작성 안내·질문 5개·실제
+Markdown 3개를 독해용으로 제공하며, 정답 기준과 작성 대화는 포함하지 않습니다.
+`session.lookup(questionId, evidenceIds)`는 해당 generation의 정제 근거만 반환하고, 중복 조회도
+포함하여 최대 10회·누적 16,384 UTF-8 바이트를 제한합니다. v2 generation에서는
+`session.lookupFacts(questionId, factIds)`로 사실 기록·generation 이력·현재 snapshot의 근거 포함 여부도
+동일한 공용 예산 안에서 조회합니다. `retrieval.createKnowledgeWikiReader`의
+`fact(projectId, expectedGenerationDigest, factId)`도 정제 검사 후 활성 generation의 상태를 반환합니다.
+v2 답변 claim의 `evidenceIds`와 `factIds`는 별도 배열이며 답변 본문에 실제로 적힌 구분 인용과 일치해야
+합니다. 사실 ID를 원문 근거 ID로 대신 사용할 수 없고 추가 조회는 한 번에 한 종류만 요청합니다.
+질문 5개와 바이트 한도는 그대로이며 v1 평가는 기존 인용 규칙을 유지합니다.
+`session.serializeReport(input)`는 실제
+조회 이력과 평가 입력을 검증·정제한 감사 JSON을 반환합니다. 로컬 평가 파일 저장은 호출자가
+담당합니다. 새 CLI 명령이나 AI 자동 실행 기능이 아닌 SDK 인터페이스입니다.
+
+새 평가에는 같은 입력으로 `compiler.createReaderAnswerEvaluationContract`를 명시적으로 선택하고
+문서 작성 전에 고정할 수 있습니다. 별도 계약 해시(`knowledge-answer-contract.v2`,
+`contextFormat: "knowledge-reader-v1"`)가 생성되며 `knowledge-markdown-v2` generation이 필요합니다.
+초기 입력은 작성된 Wiki 본문 전체·사실 범위/상태·구분 인용 ID를 유지하고, 긴 원문 근거와 전체 사실
+출처 정보는 필요할 때 조회합니다. 저장된 Wiki Markdown과 기존 계약·평가 기록은 바뀌지 않습니다.
+기존 평가의 계약을 뒤늦게 바꾼 뒤 원래 기준에 합격했다고 취급하지 마세요.
+이 계약에서 `session.lookup`은 `knowledge-evidence-context.v1` 형식으로 정확한 근거와 동일한 정제
+snapshot의 상위 Markdown 제목(ATX/Setext)을 반환합니다. 코드 블록의 제목 예시는 제외하며,
+현재 snapshot에 없는 과거 원문의 문맥이나 마스킹된 제목은 복원하지 않고 미제공/부분 제공으로
+표시합니다. 주변 문단 전체나 의미상 지지의 증명은 아닙니다. 제목·메타데이터를 포함한 응답 전체가
+공용 조회 예산에 포함됩니다. 해당 질문 또는 앞선 질문에서 원문을 조회하지 않은 근거 인용은
+평가 실패이며, ID가 보이거나 사실 상태를 조회했다는 것만으로 원문을 읽은 것으로 인정하지 않습니다.
+
+### 개발 에이전트용 프로젝트 메모리
+
+`buildlore wiki memory --project example --json`은 승인된 프로젝트의 Wiki 본문,
+사실 상태, 출처와 revision 정보를 `buildlore.knowledge-development-memory.v1`으로 반환합니다.
+SDK는 `retrieval.createKnowledgeWikiReader(knowledgeRoot).readMemory('example')`입니다.
+임베딩이나 모델 호출, 재색인, 지식 쓰기 없이 동작합니다. 상세 사실과 원문은 기존
+`wiki lookup --expect-generation`으로 읽으며, 근거 ID를 받았다는 사실은 원문 열람을 뜻하지 않습니다.
+개발 안내는 호스트가 허용한 코드 조사·수정·테스트를 지원하고 과거 결과와 현재 검증을 구분합니다.
+도구 권한을 부여하거나 소스를 자동 수집하지 않습니다.
+
+문서 작성에는 `compiler.createDevelopmentMemoryQuestions`로 다섯 지식 항목을 명시할 수 있습니다.
+
+```js
+import { compiler } from 'buildlore';
+
+const authoringQuestions = compiler.createDevelopmentMemoryQuestions({
+  purpose: [{ id: 'purpose-source', sourceRef: 'docs/README.md', jsonPointer: null, contentKind: 'text' }],
+  architecture: [],
+  decisions: [],
+  'current-state': [],
+  'failures-open-work': [],
+});
+```
+
+결과를 기존 purpose v3 입력에 넣습니다. 선택한 소스에 맞게 빈 목록에 요구사항을 추가합니다.
+각 질문에는 `development-memory-v1` 표시가 붙습니다. 요구를 지정하지 않은 항목은 **미점검**이며
+답변의 claimIds도 비워야 합니다. 해당 지식이 프로젝트에 없다는 뜻은 아닙니다.
+선택한 항목은 필요한 소스 근거와 문장 연결을 모두 충족해야 합니다. 미점검 항목의
+source-coverage에는 `coverage: null`이 표시됩니다.
+
+제출·검토 결과의 `developmentMemoryInspection`은 다섯 항목과 정확한 페이지·문장 위치,
+사실·근거 연결을 보여줍니다. 점검 digest는 재개 후에도 기존 검토 view에 결속됩니다.
+SDK에는 `inspectDevelopmentMemoryContent`와 검증된 history를 받는 대응 함수도 있습니다.
+이는 명시한 구조의 점검이며 `semanticReviewRequired`는 항상 true입니다. 정확성과 충분성은
+근거 검토와 별도의 문서·개발 과제 평가로 판단해야 합니다. 점검 결과는 작성·검토 흐름에 두며
+과거 generation의 항목을 추측해서 채우지 않습니다. 기존 일반 질문과 평가 packet, generation의
+동작과 형식은 유지합니다.
+
+### 개발 인수인계 질문과 실제 CLI 읽기 평가
+
+`compiler.createDevelopmentHandoffQuestions(requirements)`는 목적(`purpose`), 구조(`architecture`),
+현재 상태(`current-state`), 결정 이유(`decisions`), 변경 이력(`changes`)의 질문 5개를 만듭니다.
+이 다섯 키에 각각 기존 `{ id, sourceRef, jsonPointer, contentKind }` 근거 요구 배열을 지정하고,
+결과를 purpose v3의 `authoringQuestions`에 넣습니다. 자료 선택은 호출자가 소유하며 특정 언어나
+P2A를 요구하지 않습니다. 직접 작성한 질문도 계속 사용할 수 있습니다.
+
+새 인수인계 질문은 해당 답변 안의 작성 주체·전달/저장 전 검사, 변경된 동작과 유지된 정상/오류 응답,
+버전별 검증 범위를 함께 요구합니다. 조회 지침은 독립 검토자가 선택된 근거로 이 내용을 확인하도록
+안내하지만 의미상 충족을 자동 인증하지는 않습니다. 새 factory 호출부터 보강된 문구를 사용하며,
+이미 저장된 질문·exchange 지침/해시와 호출자가 직접 작성한 질문은 다시 쓰지 않습니다.
+질문별 주제 점검은 실행 기능뿐 아니라 근거가 있는 문서·작성 지침·개발 절차 변경도 포함합니다.
+관련 주제를 먼저 목록화하고 해당 답변의 인용 문장과 대조해 제출 전에 누락을 확인합니다.
+다른 답변에만 언급한 것은 충족으로 보지 않으며, 이 지침 자체가 의미상 합격을 자동 인증하지는 않습니다.
+
+작성 전 기존 inspect 요청에 `operation: "coverage"`와 질문 ID를 지정합니다(`sourceRef`, `contains` 생략).
+요구별로 `available`(근거 있음), `heading-only`(제목만 있음), `source-not-selected`(현재 수집 범위 밖),
+`detail-unavailable`(수집 자료 안에서 요구한 상세 근거를 찾지 못함)을 페이지 단위로 반환합니다.
+원본에 내용이 없는지, 필터링·마스킹으로 빠졌는지까지 추측하지 않습니다. 근거의 의미상 지지나 실제
+열람 여부도 증명하지 않습니다. 제출 후에는 기존 `questionCoverage`가 필수 근거의 인용 누락을 확인합니다.
+조회 지침은 개발 주제별 이전/현재 상태·이유·영향·검증·남은 일을 연결하고 관련 코드의 입출력,
+호출 관계·실패 처리·테스트를 확인하도록 안내합니다. 필요한 추가 근거는 선택된 소스 안에서 조회합니다.
+정직하게 미확인이라고 썼더라도, 자료에 있는 필수 답을 누락했다면 정보 충족도는 미달입니다.
+보안 검사와 기존 제출 조건은 그대로 유지합니다.
+
+```sh
+node dist/cli/bin.js wiki read --project example --page architecture --view reader --json
+node dist/cli/bin.js wiki lookup --project example --kind evidence --id <evidence-digest> --expect-generation <generation-digest> --json
+node dist/cli/bin.js wiki lookup --project example --kind fact --id <fact-digest> --expect-generation <generation-digest> --json
+```
+
+`--view reader`는 작성된 본문 전체·사실 범위/상태·조회 ID를 제공하고 긴 근거 원문의 중복을 줄입니다.
+기본값과 `--view full`은 기존 전체 응답을 유지합니다. reader 모드는 활성 project-knowledge generation이
+필요하며 legacy 페이지로 몰래 대체하지 않습니다. lookup은 한 ID의 원문·제목 문맥 또는 전체 사실 상태를
+반환하고, 읽는 사이 generation이 바뀌면 거절합니다. 읽기 명령은 동기화·재생성·활성화를 수행하지 않습니다.
+
+새 평가는 `compiler.createCliReaderAnswerEvaluationContract`로
+`contextFormat: "knowledge-cli-reader-v1"`을 고정할 수 있습니다. 초기 Wiki와 추가 조회는 실제 CLI의
+동일한 `data` 객체 전체를 canonical JSON으로 제공하며 generation 메타데이터도 바이트에 포함합니다.
+질문·예산·실제 근거 열람 검사·독립 판정 조건은 유지합니다. CLI/도구 외곽 응답과 알려진 세션 안내는
+`runtimeContext`에 따로 집계하며, 누락한 상태로 전체 입력량을 측정했다고 주장하지 않습니다.
+기존 평가 형식과 해시는 유지됩니다. 프로토콜 테스트 통과는 실제 Wiki 품질 합격이 아닙니다.
+[읽기 응답 계약](schemas/project-knowledge-reader.schema.json)을 참고하세요.
+
+`compiler.createKnowledgeAnswerEvaluationService({ knowledgeRoot }).inspect`는 `prepare`와 같은 입력으로
+정제 검사 후 항목별 바이트·확인된 초기 입력량·추가 문맥 확인 여부·한도·`exceedsBudget`를 반환하며
+내용은 내보내지 않습니다. 입력 초과 상황도 진단할 수 있지만 `prepare`는 자르지 않고 거절합니다.
+이는 입력량 진단이지 품질 판정이 아닙니다. 32,768바이트는 고정 비교 예산이며 모델 문맥 한도,
+토큰 수 또는 저장 Wiki 전체의 크기 제한이 아닙니다. 실제 AI 답변에 적합한지는 독립 평가가 필요합니다.
+
+보관된 이력은 구조·재생성 검증 후 AI 전달 문맥과 별도로 보안 검사합니다. 모든 스냅샷·검토·메타데이터와
+JSON 소스의 디코딩된 키·값을 검사 대상에 유지합니다. 동일 필드의 중복 검사를 줄이고 한정된 묶음으로
+검사하되, 탐지나 크기 제한을 피하려고 개별 값을 자르지 않습니다. 검사 한 번당 8MiB 제한과 기존 구조
+제한은 그대로이며 실제 초기 문맥·추가 조회·평가 보고서도 각각 보안 검사를 거칩니다.
+원문 없는 오류 코드로 `KNOWLEDGE_SECURITY_INPUT_TOO_LARGE`(검사 크기 초과),
+`KNOWLEDGE_SECURITY_BLOCKED`(보안 거절), `KNOWLEDGE_CONTEXT_BUDGET_EXCEEDED`(독자 예산 초과)를
+구분합니다. 잘못된 구조나 구조 상한 초과는 `KNOWLEDGE_INVALID`이며 보안 실패 시 부분 문맥이나
+크기 진단도 반환하지 않습니다.
+
+답변 전체를 UTF-8 바이트 구간별 claim 판정에 연결하고, 모든 기대 기준도 독립 검토해야 합니다.
+근거 ID가 유효하다는 검사와 의미상 지지 여부는 별개입니다. 초기 문맥은 32,768바이트,
+질문별 답변은 8,192바이트이며 답변 초과분을 몰래 자르지 않고 실패로 기록합니다.
+`runtimeContext`는 알려진 추가 세션 안내·문맥을 집계합니다. 이를 제공받지 못하면 전체 초기
+문맥량은 `null`, 제공한 분량은 별도로 기록하고 실제 평가는 미완료입니다. 이 값을 채우려고
+비공개 시스템 지침을 내보내지 마세요. 토큰 수는 실제 계측값 또는 `null`과 미제공 사유로
+구분하며 바이트에서 추정하지 않습니다. `recorded-pass`는 입력된 판정·세션 확인 기록의 요약일 뿐,
+실제로 독립 AI 평가를 수행했다는 증명이 아닙니다. `fixture-only`는 실제 품질 합격으로 취급하지
+않습니다. 최초 두 표본의 독립 AI 평가에서는 인용·정보 누락 문제가 확인되었습니다.
+v2 개선 코드의 새로운 독립 AI 품질 평가는 아직 통과하지 않았으며 코드 테스트를 품질 합격으로
+간주하지 않습니다.
 
 #### 기존 계층형 모드의 권장 CLI 흐름
 
@@ -836,3 +1214,25 @@ p2a next --entry plans/entries/github-issue-<n>.md
 
 진행 중인 아키텍처 결정과 장단점은 프로젝트 지식 저장소로 투영하기 전에
 Git에서 제외된 로컬 `plans/adr/` 디렉터리에 보관할 수 있습니다.
+
+### 전체 독자 자료 묶음
+
+`buildlore wiki packet --project <id> --json`은 선택적으로 사용하는 `buildlore.knowledge-reader-packet.v1` 자료를 반환합니다. Wiki의 전체 설명과 사실의 범위·상태를 유지하고 중복 참조를 모읍니다. 표시용 별칭은 목록에서 정식 ID로 바꾼 뒤 조회·인용합니다. 각 항목은 끝 개행을 포함한 compact UTF-8 JSON 기준의 단일 ID 전체 조회 비용을 표시합니다. 목록에 있는 출처는 아직 읽은 출처가 아닙니다. 기존 `wiki read`와 `wiki lookup --expect-generation` 출력은 그대로입니다.
+
+SDK는 `readPacket(projectId)`와 `createPacketAnswerEvaluationContract`를 제공합니다. 새 answer contract v3는 `knowledge-reader-packet-v1`을 사용하며 초기 자료 32,768바이트, 누적 조회 16,384바이트·10회, 답변당 8,192바이트 한도를 유지합니다. 전체 data 객체와 질문이 예산에 포함됩니다. 출처 인용에는 같은 질문 또는 이전 질문에서 실제 수행한 조회가 필요합니다. 측정하지 못한 runtime 부가는 미확인으로 남기며 내용 완전성과 전체 실행 인증을 구분합니다. 이전 계약·보고서 인코딩은 유지되며 새 자료 형식은 `knowledge-markdown-v2` 세대를 요구합니다.
+
+고정 로컬 임베딩 모델은 버전이 있는 주제 관련성 기준을 적용하며 검색 결과의 `semanticRelevancePolicy`에 이를 표시합니다. V2 기준은 동결한 교정 자료와 알려진 회귀 사례에서 문자권별 필수 관련 점수의 최솟값과 무관 점수의 최댓값 사이 중간값으로 정했습니다. 점수는 정답 확률이 아닙니다. 독립 평가 결과는 별도로 보고하며 분리 가능한 구간이 없거나 평가가 실패하면 실패한 시도로 보존합니다. 질문의 판정을 바꾸어 통과시키지 않습니다. 교정 자료와 정책 출처는 `test/fixtures/semantic-relevance-*-v2.json`에 있고, 오프라인 `calibrateSemanticRelevance` 함수는 표본 누락·잘못된 점수·겹치는 구간을 거절합니다.
+
+### 완전성 작성과 지식의 한계
+
+명시적으로 선택하는 `completeness-v1`은 검토된 필수 목록을 정확한 Wiki 문장에 연결하고, 근거·현재성 검토와 누락 검토를 모두 요구합니다. 근거 있는 미확인 사항은 연결된 본문에 설명해야 합니다. 출처 인용이나 목록의 unknown 표시만으로는 충족되지 않습니다.
+
+“선택된 근거로는 운영 환경의 성능을 확인할 수 없다”는 현재 근거가 지원하는 문장이므로 `current`로 표현합니다. 측정 결과는 모르더라도 근거의 한계는 확인된 사실입니다. `uncertainty`는 미확인 상태의 사실을 참조할 때 사용하며, 이 표시를 위해 오래되거나 논쟁 중인 사실을 만들어서는 안 됩니다. 단계별 조회에서 이 안내를 제공하고 기존 exchange의 결속은 유지합니다.
+
+선언된 필수 자료가 없으면 최종 확정을 계속 차단합니다. 선택된 자료로 확인되는 범위 한계는 근거 있는 미확인 사항으로 기록할 수 있습니다. 모든 범주를 검토하되 전체 프로젝트 이력을 상상해 채우거나 같은 질문·범주에서 동일 명제를 반복하지 않습니다. 이 안내와 자동 검증만으로 문서·독자 점수 향상이 입증되지는 않으며 독립 평가가 필요합니다.
+
+해당 질문의 본문에 기록된 설계 이유, 버전별 변경, 기본값·예외·호환성 조건을 함께 설명합니다. 생성된 출력, 구현된 동작, 실제 실행한 검증을 구분하고, 누락 검토자는 항목 ID나 인용의 존재뿐 아니라 필요한 조건이 본문에 쓰였는지 판단합니다.
+
+본문 제출 후 작성자와 누락 검토자의 단계별 조회에는 질문·필수 항목·정확한 현재 문장·사실·근거의 공통 목록를 묶은 읽기 전용 `material.reviewPacket`이 제공될 수 있습니다. proposal·inventory·mapping 결속을 포함하지만 통과 판정이나 승인 권한은 부여하지 않으며, 근거·현재성 검토자에게는 노출하지 않습니다. 공백 들여쓰기 없는 JSON 묶음이 256 KiB를 넘거나 기존 단계 조회 한도를 초과하면 묶음 전체를 생략하고 원래의 개별 자료 조회를 유지합니다. 조회로 저장된 실행이나 이력을 바꾸지 않습니다.
+
+목록 검증 오류는 기존 `KNOWLEDGE_INVALID` 코드와 함께 0부터 시작하는 질문·분류·항목 위치, 고정된 위반 규칙, 전체 초안 digest를 반환합니다. 요구사항 연결에는 해당 현재 소스의 근거가 필요하며 과거 근거만으로 충족할 수 없습니다. `compiler.repairKnowledgeCompletenessInventoryDraft(draft, exchange, role, { draftDigest, questionIndex, categoryIndex, itemIndex, replacement })`로 작성자가 가진 초안의 한 항목을 교체하면 항목 식별자를 유지하고 전체 결과를 다시 검증합니다. 결과는 기존 shadow/inventory 명령과 현재 stage digest로 제출합니다. 이 함수는 세션을 저장하거나 확정 목록을 수정하지 않습니다. 역할 안내에는 기존 coverage 검사 요청 형식도 포함됩니다.

@@ -48,12 +48,16 @@ export {
   verifyApprovedWikiAuthority,
   type ApprovedWikiProjectionErrorCode,
   type ApprovedWikiAuthorityV1,
+  type ApprovedWikiAuthorityV3,
+  type CurrentApprovedWikiAuthority,
+  prepareCurrentApprovedWikiPublication,
   type ApprovedWikiPublicationSnapshotV1,
   type ApprovedWikiProjectionStatusV1,
   type ApprovedWikiProjectionStorePort,
   type ApprovedWikiRetrievalProjectionV1,
 } from './approved-corpus-store.js';
-export { createKnowledgeWikiReader, type KnowledgeWikiReader, type KnowledgeWikiPageView } from './project-knowledge-reader.js';
+export { createKnowledgeWikiReader, type CreateKnowledgeWikiReaderOptions, type KnowledgeWikiReader,
+  type KnowledgeWikiPageView } from './project-knowledge-reader.js';
 export { parseKnowledgeAuthorityExtension, createKnowledgeAuthorityExtension,
   approveKnowledgeWikiAuthority, type KnowledgeAuthorityExtensionV1 } from './project-knowledge-authority.js';
 export {
@@ -218,3 +222,8 @@ export {
   type SearchHit,
   type SearchScoreComponents,
 } from './types.js';
+
+export { createKnowledgeGenerationHistoryStore, KnowledgeHistoryError } from './project-knowledge-history-store.js';
+export type { VerifiedKnowledgeHistory, KnowledgeGenerationHistoryStorePort } from './project-knowledge-history-store.js';
+export { approveKnowledgeWikiHistoryAuthority, latestKnowledgeGeneration, knowledgeAuthorityHistory } from './project-knowledge-authority.js';
+export type { KnowledgeAuthorityExtension, KnowledgeAuthorityExtensionV2, KnowledgeHistoryAppendV1 } from './project-knowledge-authority.js';

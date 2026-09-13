@@ -12,7 +12,10 @@ Usage:
   buildlore source diff --project <project-id> [--json]
   buildlore wiki list --project <project-id> [--cursor <opaque-cursor>] [--limit <1-100>] [--json]
   buildlore wiki curate --project <project-id> [--json]
-  buildlore wiki read --project <project-id> --page <page-type/slug|page-sha256-id> [--json]
+  buildlore wiki read --project <project-id> --page <page-type/slug|page-sha256-id|overview|architecture|decisions> [--view full|reader] [--json]
+  buildlore wiki packet --project <project-id> [--json]
+  buildlore wiki memory --project <project-id> [--json]
+  buildlore wiki lookup --project <project-id> --kind evidence|fact --id <sha256:id> --expect-generation <sha256:generation> [--json]
   buildlore wiki citations --project <project-id> --page <page-type/slug|page-sha256-id> [--json]
   buildlore export --project <project-id> --format json|okf --output <directory> [--json]
   buildlore sync --project <project-id> [--dry-run] [--json]
@@ -24,12 +27,15 @@ Usage:
   buildlore compile activate --project <project-id> --confirm-approval <sha256:...> [--input <approved-bundle.json>] [--json]
   buildlore compile activate --project <project-id> --rematerialize [--json]
   buildlore compile hierarchy start --project <project-id> --purpose <relative.json> [--json]
-  buildlore compile hierarchy status --project <project-id> --run <run-id> [--json]
+  buildlore compile hierarchy status --project <project-id> --run <run-id> [--role author|completeness-reviewer|source-reviewer] [--json]
+  buildlore compile hierarchy inspect --project <project-id> --run <run-id> --input <relative.json> --expect-exchange <sha256:...> [--json]
   buildlore compile hierarchy submit --project <project-id> --run <run-id> --input <relative.json> --expect-exchange <sha256:...> [--json]
   buildlore compile hierarchy resubmit --project <project-id> --run <run-id> --page <page-id> --input <relative.json> --expect-exchange <sha256:...> [--json]
   buildlore compile hierarchy child-review --project <project-id> --run <run-id> --input <relative.json> --expect-review <sha256:...> [--json]
-  buildlore compile hierarchy review --project <project-id> --run <run-id> [--json]
+  buildlore compile hierarchy review --project <project-id> --run <run-id> [--role author|completeness-reviewer|source-reviewer] [--json]
   buildlore compile hierarchy finalize --project <project-id> --run <run-id> --input <relative.json> --expect-review <sha256:...> [--json]
+  buildlore compile hierarchy finalize --project <project-id> --run <run-id> --input <relative.json> --expect-stage <sha256:...> [--json]
+  buildlore compile hierarchy completeness shadow|inventory|inventory-review|reconcile|submit|review|source-review|correct --project <project-id> --run <run-id> --input <relative.json> --expect-stage <sha256:...> [--json]
   buildlore compile hierarchy approve --project <project-id> --run <run-id> --expect-ledger <sha256:...> --confirm-approval [--json]
   buildlore check --project <project-id> [--json]
   buildlore index status --project <project-id> [--json]
@@ -64,7 +70,9 @@ Session compilation:
   compile activate Validates approval and stores authority plus deterministic tracked Markdown
                    (default input: .buildlore/approved-wiki.json)
   compile hierarchy  Exchanges confined JSON handoffs with the current agent session.
-  hierarchy approve  Records explicit human approval only; it does not activate or publish.
+  hierarchy approve  Records explicit human approval and stages the activation bundle.
+                     Project knowledge stores generations separately; activation remains explicit.
+                     Existing history is retained. Rebuild the semantic index after activation.
   BuildLore never launches a Claude or Codex CLI process; it never launches any agent process.
   The caller session owns generation.
 

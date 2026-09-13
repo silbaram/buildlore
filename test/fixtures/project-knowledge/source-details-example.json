@@ -1,0 +1,75 @@
+[
+  {
+    "adapterId": "buildlore.json",
+    "adapterVersion": 1,
+    "id": "execution-details",
+    "kind": "json",
+    "path": "artifacts/runs/v1-links/run-2026-08-01T00-00-00-000Z-task-001.json",
+    "pathType": "file",
+    "metadata": {
+      "namespace": "buildlore.json",
+      "schemaVersion": "buildlore.json-metadata.v1",
+      "values": {
+        "profileRequired": true,
+        "profiles": [{
+          "id": "execution-details",
+          "schemaVersion": "buildlore.json-extraction-profile.v1",
+          "match": { "pointer": "/schema_version", "equals": "p2a.run.v2" },
+          "required": ["/executionEnvelope/verification", "/verification"],
+          "sections": [
+            { "pointer": "/status", "title": "Recorded workflow status" },
+            { "pointer": "/verification", "title": "Recorded verification entries" },
+            { "pointer": "/executionEnvelope/verification", "title": "Declared verification plan" }
+          ]
+        }]
+      }
+    }
+  },
+  {
+    "adapterId": "buildlore.json",
+    "adapterVersion": 1,
+    "id": "task-details",
+    "kind": "json",
+    "path": "artifacts/iterations/v1-links/gate-c-task-graph/task-graph.json",
+    "pathType": "file",
+    "metadata": {
+      "namespace": "buildlore.json",
+      "schemaVersion": "buildlore.json-metadata.v1",
+      "values": {
+        "profileRequired": true,
+        "profiles": [{
+          "id": "task-details",
+          "schemaVersion": "buildlore.json-extraction-profile.v1",
+          "match": { "pointer": "/schema_version", "equals": "p2a.task_graph.v1" },
+          "required": ["/tasks/0/status"],
+          "sections": [{ "pointer": "/tasks", "title": "Recorded tasks", "fields": ["id", "title", "status"] }]
+        }]
+      }
+    }
+  },
+  {
+    "adapterId": "buildlore.json",
+    "adapterVersion": 1,
+    "id": "spec-details",
+    "kind": "json",
+    "path": "artifacts/iterations/v1-links/gate-b-spec/spec.json",
+    "pathType": "file",
+    "metadata": {
+      "namespace": "buildlore.json",
+      "schemaVersion": "buildlore.json-metadata.v1",
+      "values": {
+        "profileRequired": true,
+        "profiles": [{
+          "id": "spec-details",
+          "schemaVersion": "buildlore.json-extraction-profile.v1",
+          "match": { "pointer": "/schema_version", "equals": "p2a.spec.v1" },
+          "required": ["/approval", "/implementation/verification"],
+          "sections": [
+            { "pointer": "/approval", "title": "Specification approval declaration" },
+            { "pointer": "/implementation/verification", "title": "Specification verification plan" }
+          ]
+        }]
+      }
+    }
+  }
+]

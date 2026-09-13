@@ -1,0 +1,320 @@
+{
+  "schemaVersion": "buildlore.semantic-relevance-fixture.v2",
+  "split": "holdout",
+  "documents": [
+    {
+      "id": "quillbox-note-history",
+      "project": "quillbox",
+      "text": "Quillbox keeps a local revision history for each note. After an editing session, the previous saved text becomes a dated revision in the note's History panel. Select a revision to compare it with the current text, then choose Restore to make that revision the current version. Restoring also preserves the version you are replacing, so you can undo a mistaken restoration. History belongs to the workspace on this computer and does not synchronize between machines. Removing a note permanently also removes its revisions. To recover text that was accidentally overwritten, open History before deleting or recreating the note.",
+      "sourceRef": "fixtures/projects/quillbox/docs/note-history.md",
+      "locator": "section:recovering-earlier-text"
+    },
+    {
+      "id": "quillbox-image-storage",
+      "project": "quillbox",
+      "text": "When you drop a picture into a Quillbox note, the application copies the image into the workspace's attachments directory and inserts a reference to that copy. The original picture can then be moved or removed without breaking the note. Importing identical image bytes again reuses the existing attachment, even when the source filename is different. Quillbox preserves the imported image rather than resizing or recompressing it. Removing an image from a note does not immediately remove its stored attachment. The attachment cleanup screen lists files no longer referenced by any note and lets you remove those unused copies.",
+      "sourceRef": "fixtures/projects/quillbox/docs/image-storage.md",
+      "locator": "section:imported-image-copies"
+    },
+    {
+      "id": "quillbox-html-export",
+      "project": "quillbox",
+      "text": "Quillbox can export a selected note folder as a portable HTML archive. The archive contains an index page, one page for each included note, and the images those notes use. Links between included notes become relative links, allowing the extracted pages to work without an internet connection or a running Quillbox application. Links to notes outside the selected folder appear in an export warning; those destination notes are not silently added. Choose a wider folder if the recipient needs them. Extract the archive before opening its index page so the browser can resolve the accompanying files correctly.",
+      "sourceRef": "fixtures/projects/quillbox/docs/html-export.md",
+      "locator": "section:sharing-a-portable-folder"
+    },
+    {
+      "id": "quillbox-workspace-lock",
+      "project": "quillbox",
+      "text": "A Quillbox workspace permits one editing window at a time. The first window that opens the workspace acquires its local write lock. Additional windows can browse and search the notes, but their editing controls remain disabled to prevent competing saves. Close the editing window, then reopen the workspace in the window you want to use for changes. After an abnormal application exit, a leftover lock may remain. Quillbox offers to clear it only after confirming that the recorded local process is no longer running. Copying the workspace directory is not a supported way to coordinate simultaneous edits.",
+      "sourceRef": "fixtures/projects/quillbox/docs/workspace-lock.md",
+      "locator": "section:one-editing-window"
+    },
+    {
+      "id": "moru-session-recovery",
+      "project": "moru",
+      "text": "모루는 컴퓨터에서 혼자 사용하는 작업 시간 기록 도구입니다. 타이머가 실행되는 동안 최근 활동 시각을 일정 간격으로 로컬 파일에 저장합니다. 프로그램이나 컴퓨터가 갑자기 종료되면 다음 실행 때 미완료 기록을 보여 줍니다. 복구 화면의 종료 시각은 마지막으로 저장된 활동 시각이며, 사용자는 실제 작업을 끝낸 시각에 맞게 수정한 뒤 저장하거나 기록을 버릴 수 있습니다. 컴퓨터가 꺼져 있던 시간을 자동으로 작업 시간에 더하지는 않습니다. 복구를 확인하기 전까지 해당 기록은 완료된 작업 목록이나 통계에 포함되지 않습니다.",
+      "sourceRef": "fixtures/projects/moru/docs/session-recovery.md",
+      "locator": "section:중단된-타이머-복구"
+    },
+    {
+      "id": "moru-record-correction",
+      "project": "moru",
+      "text": "완료된 작업의 시간이 실제와 다르면 기록 목록에서 항목을 열어 시작 시각, 종료 시각, 휴식 시간을 고칠 수 있습니다. 작업 시간은 두 시각 사이의 길이에서 휴식 시간을 뺀 값으로 다시 계산됩니다. 종료 시각이 시작 시각보다 빠르거나 휴식 시간이 전체 길이보다 길면 저장할 수 없습니다. 다른 기록과 시간이 겹치면 겹치는 항목을 보여 주고 확인을 요청합니다. 메모와 작업 분류는 시간 수정 후에도 유지됩니다. 변경 내역에는 수정 전후 값이 남으므로 잘못 고친 경우 이전 내용을 보고 다시 입력할 수 있습니다.",
+      "sourceRef": "fixtures/projects/moru/docs/record-correction.md",
+      "locator": "section:완료-기록-시간-수정"
+    },
+    {
+      "id": "moru-weekly-report",
+      "project": "moru",
+      "text": "주간 요약은 월요일부터 일요일까지 완료된 작업 시간을 분류별로 합산합니다. 분류를 선택하지 않은 기록은 '미분류' 행에 모이며 전체 합계에는 포함됩니다. 날짜 경계는 현재 컴퓨터의 현지 시간대를 따릅니다. 자정을 넘긴 작업은 각 날짜에 실제로 걸친 시간만큼 나누어 표시합니다. 요약 화면에서 주를 고른 뒤 CSV로 저장하면 날짜, 분류, 작업 시간 열이 담긴 파일을 얻습니다. 개인 메모 내용은 이 파일에 넣지 않습니다. 아직 실행 중이거나 복구 확인을 기다리는 타이머는 주간 합계에서 제외됩니다.",
+      "sourceRef": "fixtures/projects/moru/docs/weekly-report.md",
+      "locator": "section:분류별-주간-요약"
+    },
+    {
+      "id": "moru-quick-controls",
+      "project": "moru",
+      "text": "모루의 알림 영역 아이콘을 누르면 전체 창을 열지 않고 타이머를 시작하거나 일시 정지할 수 있습니다. 빠른 시작은 마지막에 사용한 작업 분류를 다시 선택하며, 메뉴에서 다른 분류로 바꾼 뒤 시작할 수도 있습니다. 설정의 단축키 항목에서 시작과 일시 정지에 사용할 키 조합을 지정하면 다른 프로그램에 집중하고 있을 때도 같은 동작을 실행할 수 있습니다. 운영체제나 다른 앱이 이미 사용하는 조합은 등록에 실패할 수 있으며, 이 경우 설정 화면에 이유를 표시합니다. 단축키를 바꾸어도 기존 작업 기록에는 영향을 주지 않습니다.",
+      "sourceRef": "fixtures/projects/moru/docs/quick-controls.md",
+      "locator": "section:창을-열지-않고-타이머-조작"
+    }
+  ],
+  "queries": [
+    {
+      "id": "holdout-positive-01",
+      "project": "quillbox",
+      "query": "I saved over a paragraph I still need. Can I bring back an earlier version of the note?",
+      "expected": ["quillbox-note-history"],
+      "relationship": "same-script",
+      "topic": "recovering overwritten note text"
+    },
+    {
+      "id": "holdout-positive-02",
+      "project": "quillbox",
+      "query": "Will a photo pasted into my notes disappear if I delete the original from Downloads?",
+      "expected": ["quillbox-image-storage"],
+      "relationship": "same-script",
+      "topic": "independent copies of imported images"
+    },
+    {
+      "id": "holdout-positive-03",
+      "project": "quillbox",
+      "query": "How can I give someone a folder of notes they can read in a browser while offline?",
+      "expected": ["quillbox-html-export"],
+      "relationship": "same-script",
+      "topic": "portable offline note export"
+    },
+    {
+      "id": "holdout-positive-04",
+      "project": "quillbox",
+      "query": "The same workspace is open twice, but I can only type in one window. How do I switch which window can edit?",
+      "expected": ["quillbox-workspace-lock"],
+      "relationship": "same-script",
+      "topic": "exclusive workspace editing"
+    },
+    {
+      "id": "holdout-positive-05",
+      "project": "moru",
+      "query": "작업 시간을 재다가 컴퓨터가 꺼졌는데, 다시 켜면 꺼져 있던 시간까지 기록되나요?",
+      "expected": ["moru-session-recovery"],
+      "relationship": "same-script",
+      "topic": "interrupted timer recovery"
+    },
+    {
+      "id": "holdout-positive-06",
+      "project": "moru",
+      "query": "점심 먹은 시간을 빼지 않고 작업을 저장했어요. 끝난 기록에서 휴식 시간을 나중에 반영할 수 있나요?",
+      "expected": ["moru-record-correction"],
+      "relationship": "same-script",
+      "topic": "correcting completed work duration"
+    },
+    {
+      "id": "holdout-positive-07",
+      "project": "moru",
+      "query": "지난주에 어떤 종류의 일에 시간을 썼는지 표로 뽑고 싶은데, 개인 메모도 같이 나가나요?",
+      "expected": ["moru-weekly-report"],
+      "relationship": "same-script",
+      "topic": "weekly categorized time export"
+    },
+    {
+      "id": "holdout-positive-08",
+      "project": "moru",
+      "query": "다른 프로그램에서 일하는 중에 모루 창으로 돌아가지 않고 시간 측정을 멈췄다가 다시 하고 싶어요.",
+      "expected": ["moru-quick-controls"],
+      "relationship": "same-script",
+      "topic": "timer control from another application"
+    },
+    {
+      "id": "holdout-positive-09",
+      "project": "quillbox",
+      "query": "노트를 잘못 고쳐서 저장했는데, 예전에 쓴 내용을 비교해 보고 되돌리는 방법이 있나요?",
+      "expected": ["quillbox-note-history"],
+      "relationship": "cross-script",
+      "topic": "recovering overwritten note text"
+    },
+    {
+      "id": "holdout-positive-10",
+      "project": "quillbox",
+      "query": "이름만 다른 똑같은 사진을 여러 노트에 넣으면 첨부 파일도 매번 따로 저장되나요?",
+      "expected": ["quillbox-image-storage"],
+      "relationship": "cross-script",
+      "topic": "reuse of identical imported images"
+    },
+    {
+      "id": "holdout-positive-11",
+      "project": "quillbox",
+      "query": "앱을 설치하지 않은 사람에게 노트 묶음을 보내서 인터넷 없이도 그림과 내부 링크를 볼 수 있게 하고 싶어요.",
+      "expected": ["quillbox-html-export"],
+      "relationship": "cross-script",
+      "topic": "portable offline note export"
+    },
+    {
+      "id": "holdout-positive-12",
+      "project": "quillbox",
+      "query": "작업 공간을 다른 창에서도 열었더니 수정 버튼이 비활성화됐어요. 어느 창에서 수정할지는 어떻게 정하나요?",
+      "expected": ["quillbox-workspace-lock"],
+      "relationship": "cross-script",
+      "topic": "exclusive workspace editing"
+    },
+    {
+      "id": "holdout-positive-13",
+      "project": "moru",
+      "query": "My laptop lost power with the timer running. What happens to that unfinished session when I launch the app again?",
+      "expected": ["moru-session-recovery"],
+      "relationship": "cross-script",
+      "topic": "interrupted timer recovery"
+    },
+    {
+      "id": "holdout-positive-14",
+      "project": "moru",
+      "query": "I forgot to stop tracking when I finished work. Can I fix the end time of a saved session without losing its notes?",
+      "expected": ["moru-record-correction"],
+      "relationship": "cross-script",
+      "topic": "correcting completed work duration"
+    },
+    {
+      "id": "holdout-positive-15",
+      "project": "moru",
+      "query": "Where can I download last week's hours grouped by activity, including sessions I never assigned to a category?",
+      "expected": ["moru-weekly-report"],
+      "relationship": "cross-script",
+      "topic": "weekly categorized time export"
+    },
+    {
+      "id": "holdout-positive-16",
+      "project": "moru",
+      "query": "Can I pause tracking with a keyboard shortcut while another app has focus, and change the shortcut if it conflicts?",
+      "expected": ["moru-quick-controls"],
+      "relationship": "cross-script",
+      "topic": "timer control from another application"
+    },
+    {
+      "id": "holdout-unrelated-01",
+      "project": "quillbox",
+      "query": "Why does a lunar eclipse sometimes make the Moon look red?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "astronomy"
+    },
+    {
+      "id": "holdout-unrelated-02",
+      "project": "quillbox",
+      "query": "How should I adjust a bread recipe when using whole wheat flour instead of white flour?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "bread baking"
+    },
+    {
+      "id": "holdout-unrelated-03",
+      "project": "quillbox",
+      "query": "What router settings are needed to let a game console report an open NAT type?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "home network configuration"
+    },
+    {
+      "id": "holdout-unrelated-04",
+      "project": "quillbox",
+      "query": "How do migrating birds find their way across an ocean?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "bird migration"
+    },
+    {
+      "id": "holdout-unrelated-05",
+      "project": "quillbox",
+      "query": "베란다에서 키우는 토마토 잎이 노랗게 변하면 물을 줄여야 하나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "vegetable gardening"
+    },
+    {
+      "id": "holdout-unrelated-06",
+      "project": "quillbox",
+      "query": "도자기를 구울 때 초벌과 재벌의 온도는 왜 다르게 잡나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "ceramic firing"
+    },
+    {
+      "id": "holdout-unrelated-07",
+      "project": "quillbox",
+      "query": "카메라 렌즈의 초점 거리가 길어지면 인물 뒤 배경은 어떻게 달라지나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "camera optics"
+    },
+    {
+      "id": "holdout-unrelated-08",
+      "project": "quillbox",
+      "query": "웹 서버의 인증서를 자동 갱신하려면 도메인 소유권 확인을 어떻게 구성하나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "web server certificate renewal"
+    },
+    {
+      "id": "holdout-unrelated-09",
+      "project": "moru",
+      "query": "What geological process creates the hexagonal columns found in some basalt cliffs?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "basalt geology"
+    },
+    {
+      "id": "holdout-unrelated-10",
+      "project": "moru",
+      "query": "How can I keep a cheese sauce smooth instead of grainy when it heats up?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "cooking emulsions"
+    },
+    {
+      "id": "holdout-unrelated-11",
+      "project": "moru",
+      "query": "What does a transposing instrument mean when reading an orchestral score?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "musical notation"
+    },
+    {
+      "id": "holdout-unrelated-12",
+      "project": "moru",
+      "query": "How do I route public HTTPS traffic to a service running inside a Kubernetes cluster?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "container service networking"
+    },
+    {
+      "id": "holdout-unrelated-13",
+      "project": "moru",
+      "query": "자전거 디스크 브레이크에서 비 오는 날 소리가 나는 원인은 무엇인가요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "bicycle brake maintenance"
+    },
+    {
+      "id": "holdout-unrelated-14",
+      "project": "moru",
+      "query": "새 어항에 물고기를 넣기 전에 질소 순환이 자리 잡았는지 어떻게 확인하나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "aquarium water preparation"
+    },
+    {
+      "id": "holdout-unrelated-15",
+      "project": "moru",
+      "query": "책 본문에 쓸 글꼴을 고를 때 명조체와 고딕체의 가독성은 어떻게 비교하나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "book typography"
+    },
+    {
+      "id": "holdout-unrelated-16",
+      "project": "moru",
+      "query": "일기예보의 강수 확률이 40퍼센트라는 말은 지역의 40퍼센트에 비가 온다는 뜻인가요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "weather forecast interpretation"
+    }
+  ]
+}

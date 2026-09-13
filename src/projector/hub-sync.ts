@@ -89,6 +89,7 @@ import {
   boundRawSourceInputsAreSafe,
   inspectRawSourceInputs,
   rawSourceInputSanitizationIsSafe,
+  sourceProvenanceSecurityBody,
 } from './raw-source-inputs.js';
 
 const EMPTY_COUNTS: ProjectSyncDecisionCounts = Object.freeze({
@@ -502,13 +503,14 @@ async function prepareCandidate(
   security: ReturnType<typeof createProjectSecurityService>,
   policyDigest: Sha256Digest,
   failure: HubSyncFailurePort,
+  maskSecrets = false,
 ): Promise<CandidatePreparationOutcome> {
   if (!isCollectableProjectSourceKind(candidate.sourceKind)) {
     return failure.fail('SYNC_SELECTION_FAILED', 'selection');
   }
   const sourceKind = candidate.sourceKind;
   const titleSource = candidate.sourceUri;
-  const metadataBody = candidate.descriptor?.metadata === undefined
+  const metadataBody = maskSecrets ? sourceProvenanceSecurityBody(candidate) : candidate.descriptor?.metadata === undefined
     ? null
     : serializeCanonicalJson(candidate.descriptor.metadata);
   const requests = [
@@ -539,7 +541,7 @@ async function prepareCandidate(
       sourceRevisionOrContentSha256: candidate.sourceRevision,
     }));
   }
-  const rawInputs = inspectRawSourceInputs(candidate);
+  const rawInputs = inspectRawSourceInputs(candidate, maskSecrets);
   for (const rawInput of rawInputs) {
     requests.push(security.prepareSource({
       body: rawInput.body,
@@ -618,6 +620,7 @@ async function prepareCandidate(
       rawInputs[index],
       binding.approvedBody,
       rawResults[index].value.report.summaries,
+      maskSecrets,
     ));
   if (
     title === null || body === null || !titleResult.value.ok || !bodyResult.value.ok ||
@@ -895,8 +898,10 @@ export async function runHubProjectSync(
   }
 
   const knowledgeRoot = join(input.hubRoot, 'knowledge');
-  const security = createProjectSecurityService({ knowledgeRoot });
+  const security = createProjectSecurityService({ knowledgeRoot, sourceIngestion: true });
+  const maskSecrets = (await readSecurityPolicy(knowledgeRoot, input.projectId)).policy.sourceSecretHandling === 'mask';
   if (!await boundRawSourceInputsAreSafe(collection, {
+    maskSecrets,
     policyDigest: planned.policyDigest,
     projectId: input.projectId,
     security,
@@ -920,6 +925,7 @@ export async function runHubProjectSync(
       security,
       planned.policyDigest,
       failure,
+      maskSecrets,
     );
     if (outcome.ok) preparedWithoutSnapshots.push(outcome.prepared);
     else rejected.push(outcome.rejected);
@@ -1054,7 +1060,7 @@ export async function runHubProjectSync(
         sourceKind: item.sourceKind,
         sourceRevision: item.candidate.sourceRevision,
       }, failure);
-      const metadataBody = item.candidate.descriptor?.metadata === undefined
+      const metadataBody = maskSecrets ? sourceProvenanceSecurityBody(item.candidate) : item.candidate.descriptor?.metadata === undefined
         ? null
         : serializeCanonicalJson(item.candidate.descriptor.metadata);
       if (metadataBody !== null) {
@@ -1074,7 +1080,7 @@ export async function runHubProjectSync(
           failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
         }
       }
-      const rawInputs = inspectRawSourceInputs(item.candidate);
+      const rawInputs = inspectRawSourceInputs(item.candidate, maskSecrets);
       if ((item.rawPrepared?.length ?? 0) !== rawInputs.length) {
         failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
       }
@@ -1093,7 +1099,7 @@ export async function runHubProjectSync(
           },
           failure,
         );
-        if (rawInput.allowedRedactionRuleIds.length === 0 && raw.approvedBody !== rawInput.body) {
+        if (!maskSecrets && rawInput.allowedRedactionRuleIds.length === 0 && raw.approvedBody !== rawInput.body) {
           failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
         }
       }

@@ -39,7 +39,7 @@ import {
   type SelectedSourceFile,
 } from './source-manifest.js';
 import { projectSourceProducer } from './project-source-writer.js';
-import { bindRawSourceInputs, type RawSourceInputV1 } from './raw-source-inputs.js';
+import { bindRawSourceInputs, decodedJsonSecurityText, type RawSourceInputV1 } from './raw-source-inputs.js';
 import { createSourceDocument } from './source-document.js';
 import { unicodeScalarLength } from './text-units.js';
 import { MAX_SOURCE_BODY_CHARS, MAX_SOURCE_ORIGIN_MAPPINGS } from './types.js';
@@ -147,6 +147,16 @@ function credentialBearingText(value: unknown): string | null {
 }
 
 function rawInputForLoaded(
+  entry: LoadedEntry,
+  referenceOptions?: JsonKnowledgeReferenceAdapterOptions,
+  referenceContext?: JsonKnowledgeReferenceSecurityContext,
+): string | RawSourceInputV1 {
+  const result = strictRawInputForLoaded(entry, referenceOptions, referenceContext);
+  return { ...(typeof result === 'string' ? { body: result, allowedRedactionRuleIds: [] } : result),
+    maskingPreflightBody: decodedJsonSecurityText(entry.value) };
+}
+
+function strictRawInputForLoaded(
   entry: LoadedEntry,
   referenceOptions?: JsonKnowledgeReferenceAdapterOptions,
   referenceContext?: JsonKnowledgeReferenceSecurityContext,

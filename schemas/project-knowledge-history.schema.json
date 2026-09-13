@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/project-knowledge-history.schema.json",
+  "title": "Project-confined immutable knowledge generation history",
+  "description": "Shape only. Runtime verifies project confinement, actual bytes, all parent links, count/genesis, semantic review and reconciliation, and current-policy screening. No aggregate byte or generation-count admission quota. A reference is not a persisted verification receipt.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/reference"
+    },
+    {
+      "$ref": "#/$defs/record"
+    },
+    {
+      "$ref": "#/$defs/append"
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "projectId": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-buildlore-maxUtf8Bytes": 4096,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "headGenerationDigest",
+        "genesisGenerationDigest",
+        "generationCount",
+        "historyDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-history-reference.v1"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "headGenerationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "genesisGenerationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "generationCount": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,127}$",
+          "description": "Canonical positive decimal syntax, checked against the actual walked count without conversion to a floating-point number."
+        },
+        "historyDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-buildlore-maxUtf8Bytes": 16781312,
+      "description": "Compact UTF-8 JSON. The generation's existing 16 MiB, depth, nodes, strings and collection bounds apply independently of this bounded wrapper.",
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "parentGenerationDigest",
+        "generation",
+        "recordDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-generation-record.v1"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "parentGenerationDigest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "$ref": "project-knowledge.schema.json#/$defs/generation"
+        },
+        "recordDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "append": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "baselineRecordDigest",
+        "baselineHistory",
+        "history",
+        "generation",
+        "appendDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-history-append.v1"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "baselineRecordDigest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baselineHistory": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/reference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "history": {
+          "$ref": "#/$defs/reference"
+        },
+        "generation": {
+          "$ref": "project-knowledge.schema.json#/$defs/generation"
+        },
+        "appendDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    }
+  }
+}

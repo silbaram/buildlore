@@ -5,6 +5,15 @@
   "description": "No AI process is launched. Independent review artifacts are imported. Runtime additionally enforces phase consistency, expected digests, sanitizer capability and current source/authority bindings.",
   "oneOf": [
     {
+      "$ref": "project-knowledge-completeness.schema.json#/$defs/purpose"
+    },
+    {
+      "$ref": "project-knowledge-completeness.schema.json#/$defs/run"
+    },
+    {
+      "$ref": "project-knowledge-completeness.schema.json#/$defs/status"
+    },
+    {
       "$ref": "#/$defs/purpose"
     },
     {
@@ -15,9 +24,403 @@
     },
     {
       "$ref": "#/$defs/run"
+    },
+    {
+      "$ref": "#/$defs/questionSubmission"
+    },
+    {
+      "$ref": "project-knowledge-inspection.schema.json"
     }
   ],
   "$defs": {
+    "authoringQuestions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "question",
+          "role",
+          "requirements"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "project-knowledge.schema.json#/$defs/identifier"
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "role": {
+            "enum": [
+              "overview",
+              "architecture",
+              "decisions"
+            ]
+          },
+          "requirements": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "sourceRef",
+                "jsonPointer",
+                "contentKind"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "project-knowledge.schema.json#/$defs/identifier"
+                },
+                "sourceRef": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "jsonPointer": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 4096
+                },
+                "contentKind": {
+                  "enum": [
+                    "any",
+                    "json-value",
+                    "text"
+                  ]
+                }
+              }
+            }
+          },
+          "contentProfile": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "axis"
+            ],
+            "properties": {
+              "id": {
+                "const": "development-memory-v1"
+              },
+              "axis": {
+                "enum": [
+                  "purpose",
+                  "architecture",
+                  "decisions",
+                  "current-state",
+                  "failures-open-work"
+                ]
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "contentProfile"
+              ]
+            },
+            "else": {
+              "properties": {
+                "requirements": {
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "contentProfile"
+              ],
+              "properties": {
+                "contentProfile": {
+                  "properties": {
+                    "axis": {
+                      "const": "purpose"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "role": {
+                  "const": "overview"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "contentProfile"
+              ],
+              "properties": {
+                "contentProfile": {
+                  "properties": {
+                    "axis": {
+                      "const": "architecture"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "role": {
+                  "const": "architecture"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "contentProfile"
+              ],
+              "properties": {
+                "contentProfile": {
+                  "properties": {
+                    "axis": {
+                      "const": "decisions"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "role": {
+                  "const": "decisions"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "contentProfile"
+              ],
+              "properties": {
+                "contentProfile": {
+                  "properties": {
+                    "axis": {
+                      "const": "current-state"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "role": {
+                  "const": "overview"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "contentProfile"
+              ],
+              "properties": {
+                "contentProfile": {
+                  "properties": {
+                    "axis": {
+                      "const": "failures-open-work"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "role": {
+                  "const": "decisions"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "contains": {
+              "required": [
+                "contentProfile"
+              ]
+            }
+          },
+          "then": {
+            "minItems": 5,
+            "maxItems": 5,
+            "items": {
+              "required": [
+                "contentProfile"
+              ]
+            },
+            "allOf": [
+              {
+                "contains": {
+                  "required": [
+                    "contentProfile"
+                  ],
+                  "properties": {
+                    "contentProfile": {
+                      "properties": {
+                        "axis": {
+                          "const": "purpose"
+                        }
+                      }
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "contains": {
+                  "required": [
+                    "contentProfile"
+                  ],
+                  "properties": {
+                    "contentProfile": {
+                      "properties": {
+                        "axis": {
+                          "const": "architecture"
+                        }
+                      }
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "contains": {
+                  "required": [
+                    "contentProfile"
+                  ],
+                  "properties": {
+                    "contentProfile": {
+                      "properties": {
+                        "axis": {
+                          "const": "decisions"
+                        }
+                      }
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "contains": {
+                  "required": [
+                    "contentProfile"
+                  ],
+                  "properties": {
+                    "contentProfile": {
+                      "properties": {
+                        "axis": {
+                          "const": "current-state"
+                        }
+                      }
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "contains": {
+                  "required": [
+                    "contentProfile"
+                  ],
+                  "properties": {
+                    "contentProfile": {
+                      "properties": {
+                        "axis": {
+                          "const": "failures-open-work"
+                        }
+                      }
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "questionAnswers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "claimIds"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "project-knowledge.schema.json#/$defs/identifier"
+          },
+          "claimIds": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "project-knowledge.schema.json#/$defs/identifier"
+            }
+          }
+        }
+      },
+      "description": "Runtime resolves every answer against the frozen question set. Empty claimIds are valid only for a development-memory-v1 axis with empty requirements; such an axis must map zero claims. Ordinary and selected-axis answers must be non-empty."
+    },
+    "questionSubmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "proposal",
+        "questionAnswers"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-question-submission.v1"
+        },
+        "projectId": {
+          "$ref": "#/$defs/purpose/properties/projectId"
+        },
+        "proposal": {
+          "$ref": "project-knowledge.schema.json#/$defs/proposal"
+        },
+        "questionAnswers": {
+          "$ref": "#/$defs/questionAnswers"
+        }
+      }
+    },
     "purpose": {
       "type": "object",
       "additionalProperties": false,
@@ -29,7 +432,10 @@
       ],
       "properties": {
         "schemaVersion": {
-          "const": "buildlore.hierarchical-workflow-purpose-input.v2"
+          "enum": [
+            "buildlore.hierarchical-workflow-purpose-input.v2",
+            "buildlore.hierarchical-workflow-purpose-input.v3"
+          ]
         },
         "projectId": {
           "type": "string",
@@ -39,11 +445,37 @@
         "generationModel": {
           "const": "project-knowledge-v1"
         },
+        "authoringQuestions": {
+          "$ref": "#/$defs/authoringQuestions"
+        },
         "outputLanguage": {
           "type": "string",
           "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schemaVersion": {
+                "const": "buildlore.hierarchical-workflow-purpose-input.v3"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "authoringQuestions"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "authoringQuestions"
+              ]
+            }
+          }
+        }
+      ]
     },
     "exchange": {
       "type": "object",
@@ -61,12 +493,18 @@
       ],
       "properties": {
         "schemaVersion": {
-          "const": "buildlore.knowledge-exchange.v1"
+          "enum": [
+            "buildlore.knowledge-exchange.v1",
+            "buildlore.knowledge-exchange.v2"
+          ]
         },
         "projectId": {
           "type": "string",
           "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
           "maxLength": 64
+        },
+        "authoringQuestions": {
+          "$ref": "#/$defs/authoringQuestions"
         },
         "snapshot": {
           "$ref": "project-knowledge.schema.json#/$defs/snapshot"
@@ -130,7 +568,30 @@
         "exchangeDigest": {
           "$ref": "project-knowledge.schema.json#/$defs/digest"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schemaVersion": {
+                "const": "buildlore.knowledge-exchange.v2"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "authoringQuestions"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "authoringQuestions"
+              ]
+            }
+          }
+        }
+      ]
     },
     "status": {
       "type": "object",
@@ -188,6 +649,82 @@
           "minItems": 0,
           "maxItems": 16384
         },
+        "authoringQuestions": {
+          "$ref": "#/$defs/authoringQuestions"
+        },
+        "questionCoverage": {
+          "$ref": "project-knowledge.schema.json#/$defs/questionCoverage"
+        },
+        "inspectionArgs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "sourceCoverage": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "coverage"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "project-knowledge.schema.json#/$defs/identifier"
+              },
+              "coverage": {
+                "oneOf": [
+                  {
+                    "$ref": "project-knowledge.schema.json#/$defs/evidenceCoverage"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "requirementSelection": {
+                "enum": [
+                  "selected",
+                  "unassessed"
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "requirementSelection"
+                  ],
+                  "properties": {
+                    "requirementSelection": {
+                      "const": "unassessed"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "coverage": {
+                      "type": "null"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "coverage": {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidenceCoverage"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
         "reviewViewDigest": {
           "$ref": "project-knowledge.schema.json#/$defs/digest"
         },
@@ -212,6 +749,9 @@
         },
         "processSpawned": {
           "const": false
+        },
+        "developmentMemoryInspection": {
+          "$ref": "project-knowledge-inspection.schema.json#/$defs/developmentMemoryInspection"
         }
       }
     },
@@ -236,7 +776,11 @@
       ],
       "properties": {
         "schemaVersion": {
-          "const": "buildlore.project-knowledge-workflow-run.v1"
+          "enum": [
+            "buildlore.project-knowledge-workflow-run.v1",
+            "buildlore.project-knowledge-workflow-run.v2",
+            "buildlore.project-knowledge-workflow-run.v3"
+          ]
         },
         "projectId": {
           "type": "string",
@@ -277,6 +821,19 @@
             },
             {
               "$ref": "project-knowledge.schema.json#/$defs/digest"
+            }
+          ]
+        },
+        "authoringQuestions": {
+          "$ref": "#/$defs/authoringQuestions"
+        },
+        "questionAnswers": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/questionAnswers"
             }
           ]
         },
@@ -323,7 +880,40 @@
         "recordDigest": {
           "$ref": "project-knowledge.schema.json#/$defs/digest"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schemaVersion": {
+                "const": "buildlore.project-knowledge-workflow-run.v3"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "authoringQuestions",
+              "questionAnswers"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "authoringQuestions"
+                  ]
+                },
+                {
+                  "required": [
+                    "questionAnswers"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
   }
 }

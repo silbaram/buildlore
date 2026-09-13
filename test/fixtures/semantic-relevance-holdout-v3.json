@@ -1,0 +1,320 @@
+{
+  "schemaVersion": "buildlore.semantic-relevance-fixture.v2",
+  "split": "holdout",
+  "documents": [
+    {
+      "id": "copper-rename-preview",
+      "project": "copper",
+      "text": "Copper is a desktop utility for renaming groups of local files. Adding files and changing a naming rule only updates the preview table, which shows each current name beside its proposed replacement. Nothing on disk changes until Apply is pressed. Before applying a batch, Copper checks the destination names together. If two selected files would receive the same name, or a proposed name belongs to a file outside the selection, it blocks the entire batch and marks the conflicting rows. Adjust the rule or remove a row, then review the table again. Copper does not silently overwrite an existing file to resolve a collision.",
+      "sourceRef": "fixtures/projects/copper/docs/rename-preview.md",
+      "locator": "section:reviewing-proposed-names"
+    },
+    {
+      "id": "copper-number-sequences",
+      "project": "copper",
+      "text": "The sequence component adds a different number to each filename in a Copper batch. Its settings include the first number, the increment, and the minimum digit width; a width of three displays seven as 007. Numbers follow the rows in the preview table. Sort by the current filename or drag rows into a custom order before applying the batch. Copper assigns the sequence again whenever that order changes, so the preview always shows the number each file will receive. A new batch starts from the configured first number rather than continuing automatically from the previous batch. Numbering affects filenames only and does not rearrange file contents.",
+      "sourceRef": "fixtures/projects/copper/docs/number-sequences.md",
+      "locator": "section:assigning-numbers-by-row-order"
+    },
+    {
+      "id": "copper-undo-renaming",
+      "project": "copper",
+      "text": "After a successful rename, Copper saves a local journal containing the old and new paths for that batch. Undo Last Batch uses this journal to restore the earlier filenames. Before changing anything, it verifies that the renamed files are still at their recorded paths and that their old names are available. If a file has since been moved, renamed again outside Copper, or replaced by another file, the undo operation stops and identifies the affected entry. Resolve that mismatch before trying again. The journal reverses the most recent completed batch as a whole; it is not a backup of file contents and cannot recover a deleted file.",
+      "sourceRef": "fixtures/projects/copper/docs/undo-renaming.md",
+      "locator": "section:reversing-the-last-batch"
+    },
+    {
+      "id": "copper-photo-dates",
+      "project": "copper",
+      "text": "For photographs, Copper can build filenames from the capture date stored in the image metadata. Select Capture Date as the date source and choose the desired year, month, and day format. This source is separate from the filesystem's modification date, which may change when an image is copied or edited. The preview identifies photographs without a readable capture date. By default those rows cannot be applied with this rule. You may explicitly enable a fallback to the file modification date, but Copper does not make that substitution automatically. Reading the date for naming does not change the embedded image metadata.",
+      "sourceRef": "fixtures/projects/copper/docs/photo-dates.md",
+      "locator": "section:naming-from-camera-metadata"
+    },
+    {
+      "id": "haeon-serving-amounts",
+      "project": "haeon",
+      "text": "해온은 개인 요리법을 컴퓨터에 보관하는 오프라인 앱입니다. 요리법에 기본 인분 수와 재료의 양을 입력해 두면, 상세 화면에서 이번에 만들 인분 수를 바꾸어 필요한 양을 확인할 수 있습니다. 숫자로 입력한 재료는 기본 인분에 대한 비율로 계산하며 소수나 분수로 표시합니다. '적당량'처럼 숫자가 없는 항목은 그대로 남깁니다. 인분 수를 바꾸어 보아도 저장된 원래 요리법은 수정되지 않습니다. 오븐 온도와 조리 시간은 재료의 양처럼 비례해서 늘리지 않으므로 별도로 판단해야 합니다.",
+      "sourceRef": "fixtures/projects/haeon/docs/serving-amounts.md",
+      "locator": "section:만들-인분에-맞춘-재료량"
+    },
+    {
+      "id": "haeon-shopping-list",
+      "project": "haeon",
+      "text": "여러 요리법을 골라 장보기 목록을 만들면 각 요리에 필요한 재료를 한 화면에 모을 수 있습니다. 재료 이름과 단위가 같은 항목은 양을 합쳐 한 줄로 표시합니다. 이름이 같아도 그램과 큰술처럼 단위가 다르면 자동 환산하지 않고 별도 줄로 남깁니다. 서로 다르게 적힌 재료 이름을 같은 재료로 취급하려면 목록을 만들기 전에 이름을 맞추어야 합니다. 각 줄에는 어떤 요리에서 나온 재료인지 표시되며, 구입한 항목을 체크하면 앱을 닫았다 열어도 체크 상태가 유지됩니다. 요리법 원본은 장보기 목록을 편집해도 바뀌지 않습니다.",
+      "sourceRef": "fixtures/projects/haeon/docs/shopping-list.md",
+      "locator": "section:여러-요리의-재료-합치기"
+    },
+    {
+      "id": "haeon-cooking-view",
+      "project": "haeon",
+      "text": "조리 화면은 요리 순서를 한 단계씩 큰 글씨로 보여 줍니다. 앞뒤 이동 버튼으로 단계를 넘길 수 있고, 재료 패널을 펼치면 현재 선택한 인분에 필요한 양을 확인할 수 있습니다. 화면을 나가면 마지막으로 보던 단계가 이 컴퓨터에 저장됩니다. 같은 요리법의 조리 화면을 다시 열 때 처음부터 시작하거나 이어 보기를 선택할 수 있습니다. 설정에서 화면 켜 두기를 활성화하면 조리 화면이 열려 있는 동안 자동 화면 꺼짐을 막습니다. 이 화면은 안내를 읽기 위한 것으로 요리 순서의 내용을 바꾸려면 편집 화면으로 이동해야 합니다.",
+      "sourceRef": "fixtures/projects/haeon/docs/cooking-view.md",
+      "locator": "section:조리-단계를-따라-보기"
+    },
+    {
+      "id": "haeon-text-import",
+      "project": "haeon",
+      "text": "텍스트 가져오기에 요리법을 붙여 넣으면 해온이 제목, 재료 목록, 조리 순서로 나눈 초안을 보여 줍니다. '재료'나 '만드는 법' 같은 구분 문구를 기준으로 나누므로 문서의 형식에 따라 일부 줄이 잘못 배치될 수 있습니다. 저장하기 전에 미리보기에서 줄을 다른 구역으로 옮기거나 내용을 직접 고칠 수 있습니다. 재료의 양이나 단위가 빠져 있으면 확인 표시를 붙이며 값을 임의로 채우지 않습니다. 초안을 저장해야 실제 요리법 목록에 추가되고, 취소하면 붙여 넣은 내용은 보관되지 않습니다. 가져오기 과정은 인터넷 연결 없이 이루어집니다.",
+      "sourceRef": "fixtures/projects/haeon/docs/text-import.md",
+      "locator": "section:붙여-넣은-요리법-정리"
+    }
+  ],
+  "queries": [
+    {
+      "id": "holdout-v2-positive-01",
+      "project": "copper",
+      "query": "Can I check all the resulting filenames before committing, and what happens if two files end up with the same name?",
+      "expected": ["copper-rename-preview"],
+      "relationship": "same-script",
+      "topic": "preview and destination name conflicts"
+    },
+    {
+      "id": "holdout-v2-positive-02",
+      "project": "copper",
+      "query": "I arranged my files in a particular order and want their names numbered 001, 002, and so on. How is that order used?",
+      "expected": ["copper-number-sequences"],
+      "relationship": "same-script",
+      "topic": "ordered filename numbering"
+    },
+    {
+      "id": "holdout-v2-positive-03",
+      "project": "copper",
+      "query": "I just renamed a whole folder's files by mistake. Can I put all their previous names back?",
+      "expected": ["copper-undo-renaming"],
+      "relationship": "same-script",
+      "topic": "reversing a completed rename batch"
+    },
+    {
+      "id": "holdout-v2-positive-04",
+      "project": "copper",
+      "query": "My photos were copied yesterday, but I want the filenames to use the day the camera took them. Which date should I choose?",
+      "expected": ["copper-photo-dates"],
+      "relationship": "same-script",
+      "topic": "photograph capture dates in filenames"
+    },
+    {
+      "id": "holdout-v2-positive-05",
+      "project": "haeon",
+      "query": "두 사람 기준인 요리를 다섯 명이 먹을 만큼 만들려면 재료를 얼마나 준비해야 하는지 볼 수 있나요?",
+      "expected": ["haeon-serving-amounts"],
+      "relationship": "same-script",
+      "topic": "ingredient quantities for a different serving count"
+    },
+    {
+      "id": "holdout-v2-positive-06",
+      "project": "haeon",
+      "query": "이번에 만들 세 가지 요리에 똑같은 재료가 들어가는데, 따로 계산하지 않고 살 양을 한꺼번에 모을 수 있나요?",
+      "expected": ["haeon-shopping-list"],
+      "relationship": "same-script",
+      "topic": "combined shopping quantities"
+    },
+    {
+      "id": "holdout-v2-positive-07",
+      "project": "haeon",
+      "query": "요리하다가 앱을 나갔어요. 다시 들어가서 아까 보던 순서부터 크게 한 단계씩 보고 싶어요.",
+      "expected": ["haeon-cooking-view"],
+      "relationship": "same-script",
+      "topic": "resuming step-by-step cooking instructions"
+    },
+    {
+      "id": "holdout-v2-positive-08",
+      "project": "haeon",
+      "query": "복사한 요리법을 넣었더니 만드는 방법 한 줄이 재료 쪽에 들어갔어요. 등록하기 전에 옮길 수 있나요?",
+      "expected": ["haeon-text-import"],
+      "relationship": "same-script",
+      "topic": "correcting an imported recipe draft"
+    },
+    {
+      "id": "holdout-v2-positive-09",
+      "project": "copper",
+      "query": "이름 바꾸기 규칙을 적용했을 때 기존 파일과 이름이 겹치면 덮어쓰나요, 아니면 실행 전에 확인할 수 있나요?",
+      "expected": ["copper-rename-preview"],
+      "relationship": "cross-script",
+      "topic": "preview and destination name conflicts"
+    },
+    {
+      "id": "holdout-v2-positive-10",
+      "project": "copper",
+      "query": "파일 이름에 순번을 붙이고 싶은데, 제가 끌어서 정한 순서대로 번호를 매기고 앞자리는 0으로 채울 수 있나요?",
+      "expected": ["copper-number-sequences"],
+      "relationship": "cross-script",
+      "topic": "ordered filename numbering"
+    },
+    {
+      "id": "holdout-v2-positive-11",
+      "project": "copper",
+      "query": "방금 파일 이름을 여러 개 한꺼번에 잘못 바꿨어요. 직전 작업을 취소해서 예전 이름으로 돌리는 기능이 있나요?",
+      "expected": ["copper-undo-renaming"],
+      "relationship": "cross-script",
+      "topic": "reversing a completed rename batch"
+    },
+    {
+      "id": "holdout-v2-positive-12",
+      "project": "copper",
+      "query": "사진 파일을 옮긴 날짜 말고 실제 촬영한 날짜로 이름을 만들고 싶은데, 촬영 정보가 없는 사진은 어떻게 되나요?",
+      "expected": ["copper-photo-dates"],
+      "relationship": "cross-script",
+      "topic": "photograph capture dates in filenames"
+    },
+    {
+      "id": "holdout-v2-positive-13",
+      "project": "haeon",
+      "query": "Can I see the ingredient amounts for a larger group without changing the recipe's original quantities?",
+      "expected": ["haeon-serving-amounts"],
+      "relationship": "cross-script",
+      "topic": "ingredient quantities for a different serving count"
+    },
+    {
+      "id": "holdout-v2-positive-14",
+      "project": "haeon",
+      "query": "When I combine ingredients from several recipes into one grocery list, will amounts in grams and tablespoons be added together?",
+      "expected": ["haeon-shopping-list"],
+      "relationship": "cross-script",
+      "topic": "combined shopping quantities"
+    },
+    {
+      "id": "holdout-v2-positive-15",
+      "project": "haeon",
+      "query": "Is there a large-text view that walks me through cooking one instruction at a time and remembers where I stopped?",
+      "expected": ["haeon-cooking-view"],
+      "relationship": "cross-script",
+      "topic": "resuming step-by-step cooking instructions"
+    },
+    {
+      "id": "holdout-v2-positive-16",
+      "project": "haeon",
+      "query": "I have a recipe copied as plain text. Can I review how the app separates ingredients from directions before saving it?",
+      "expected": ["haeon-text-import"],
+      "relationship": "cross-script",
+      "topic": "correcting an imported recipe draft"
+    },
+    {
+      "id": "holdout-v2-unrelated-01",
+      "project": "copper",
+      "query": "Why can someone verify a digital signature with a public key without being able to create the same signature?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "public key signature principles"
+    },
+    {
+      "id": "holdout-v2-unrelated-02",
+      "project": "copper",
+      "query": "When is the passive voice more appropriate than the active voice in an English sentence?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "English grammar"
+    },
+    {
+      "id": "holdout-v2-unrelated-03",
+      "project": "copper",
+      "query": "Under what conditions is an en passant capture legal in chess?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "chess move rules"
+    },
+    {
+      "id": "holdout-v2-unrelated-04",
+      "project": "copper",
+      "query": "How does changing a wing's angle of attack affect lift before an aircraft stalls?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "aircraft aerodynamics"
+    },
+    {
+      "id": "holdout-v2-unrelated-05",
+      "project": "copper",
+      "query": "경제학에서 명목 임금과 실질 임금은 어떤 차이가 있나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "nominal and real wages"
+    },
+    {
+      "id": "holdout-v2-unrelated-06",
+      "project": "copper",
+      "query": "고대 메소포타미아의 쐐기 문자는 어떤 재료에 어떤 도구로 썼나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "ancient writing materials"
+    },
+    {
+      "id": "holdout-v2-unrelated-07",
+      "project": "copper",
+      "query": "양말을 대바늘로 뜰 때 뒤꿈치 부분의 코를 줄였다가 다시 늘리는 이유는 무엇인가요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "sock knitting construction"
+    },
+    {
+      "id": "holdout-v2-unrelated-08",
+      "project": "copper",
+      "query": "운영체제의 가상 메모리에서 페이지 폴트가 발생하면 CPU와 커널은 어떤 순서로 처리하나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "virtual memory fault handling"
+    },
+    {
+      "id": "holdout-v2-unrelated-09",
+      "project": "haeon",
+      "query": "How can I derive the sum of the interior angles of a polygon with any number of sides?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "polygon geometry"
+    },
+    {
+      "id": "holdout-v2-unrelated-10",
+      "project": "haeon",
+      "query": "How does serving order change during a tennis tiebreak?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "tennis scoring and service"
+    },
+    {
+      "id": "holdout-v2-unrelated-11",
+      "project": "haeon",
+      "query": "Why can a machine learning model improve on training data while getting worse on a validation set?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "machine learning overfitting"
+    },
+    {
+      "id": "holdout-v2-unrelated-12",
+      "project": "haeon",
+      "query": "What makes a dovetail joint resist being pulled apart in a wooden drawer?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "woodworking joints"
+    },
+    {
+      "id": "holdout-v2-unrelated-13",
+      "project": "haeon",
+      "query": "등산용 로프의 정적 로프와 동적 로프는 늘어나는 성질이 왜 다른가요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "climbing rope construction"
+    },
+    {
+      "id": "holdout-v2-unrelated-14",
+      "project": "haeon",
+      "query": "가솔린 엔진에서 점화 플러그는 어느 행정에 불꽃을 만들고 무슨 역할을 하나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "combustion engine ignition"
+    },
+    {
+      "id": "holdout-v2-unrelated-15",
+      "project": "haeon",
+      "query": "우표 수집에서 종이의 워터마크가 같은 도안의 발행 종류를 구별하는 데 어떻게 쓰이나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "stamp collecting identification"
+    },
+    {
+      "id": "holdout-v2-unrelated-16",
+      "project": "haeon",
+      "query": "연극 연습에서 배우의 동선을 정한다는 것은 대사 연습과 어떻게 다른 작업인가요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "theater stage blocking"
+    }
+  ]
+}

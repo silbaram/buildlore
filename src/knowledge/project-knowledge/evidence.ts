@@ -1,5 +1,6 @@
 import { parseJsonWithLocationsStrict } from '../strict-json.js';
 import { serializeCanonicalJson } from '../atomic-file.js';
+import { containsSecretRedaction } from '../../sanitizer/redaction-marker.js';
 import { validateSourceOriginRange, validateJsonPointer } from '../../projector/source-contracts.js';
 import { boundedJson, choice, compare, digest, hash, identifier, invalid, keys, list,
   nullableText, portablePath, project, record, sha256, text } from './guards.js';
@@ -81,12 +82,15 @@ function evidence(source: KnowledgeSourceV1, locator: KnowledgeLocatorV1,
 }
 
 /** Sources must be sanitized by the caller before this pure transformation or persistence. */
-export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: string): readonly KnowledgeEvidenceV1[] {
+export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: string,
+  excludeRedacted = false): readonly KnowledgeEvidenceV1[] {
   if (source.format === 'json') {
     const parsed = parseJsonWithLocationsStrict(source.content);
     return Object.freeze(parsed.locations.flatMap(({ pointer }) => {
       const value = resolvePointer(parsed.value, pointer);
       if (typeof value === 'object' && value !== null) return [];
+      if (excludeRedacted && (containsSecretRedaction(pointer) ||
+        containsSecretRedaction(serializeCanonicalJson(value)))) return [];
       return [evidence(source, { kind: 'json-pointer', pointer }, serializeCanonicalJson(value).trimEnd(), projectId)];
     }));
   }
@@ -95,7 +99,8 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
   let start = 0;
   const originByLine = new Map(source.origins?.map((o) => [o.projectedLine, o]));
   while (start < lines.length) {
-    if ((lines[start] ?? '').trim() === '') { start += 1; continue; }
+    if ((lines[start] ?? '').trim() === '' ||
+        (excludeRedacted && containsSecretRedaction(lines[start] ?? ''))) { start += 1; continue; }
     const origin = originByLine.get(start + 1);
     if (origin !== undefined) {
       result.push(evidence(source, { kind: 'lines', start: start + 1, end: start + 1 },
@@ -104,7 +109,8 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
       continue;
     }
     let end = start + 1;
-    while (end < lines.length && (lines[end] ?? '').trim() !== '' && !originByLine.has(end + 1)) end += 1;
+    while (end < lines.length && (lines[end] ?? '').trim() !== '' && !originByLine.has(end + 1) &&
+      !(excludeRedacted && containsSecretRedaction(lines[end] ?? ''))) end += 1;
     result.push(evidence(source, { kind: 'lines', start: start + 1, end }, lines.slice(start, end).join('\n'), projectId));
     start = end;
   }
@@ -119,7 +125,10 @@ export function createKnowledgeSnapshot(value: unknown, expectedProjectId: strin
       new Set(sources.map((s) => s.sourceRef)).size !== sources.length) invalid();
   let extracted: readonly KnowledgeEvidenceV1[];
   const projectId = project(input.projectId, expectedProjectId);
-  try { extracted = sources.flatMap((s) => extractKnowledgeEvidence(s, projectId)).sort((a, b) => compare(a.evidenceId, b.evidenceId)); }
+  try { extracted = sources.flatMap((s) => extractKnowledgeEvidence(s, projectId,
+    input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v6' ||
+    input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v7' ||
+    input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v8')).sort((a, b) => compare(a.evidenceId, b.evidenceId)); }
   catch { return invalid(); }
   if (extracted.length > 8192) invalid();
   const basis = {

@@ -1,3 +1,4 @@
+import { latestKnowledgeGeneration } from './project-knowledge-authority.js';
 import { createHash } from 'node:crypto';
 
 import type {
@@ -13,7 +14,7 @@ import {
 } from './approved-corpus-store.js';
 import type { ApprovedWikiRetrievalPageV1 } from './hierarchical.js';
 import { renderKnowledgeFiles } from '../compiler/project-knowledge/markdown.js';
-import type { KnowledgePageRole } from '../knowledge/project-knowledge/types.js';
+import type { KnowledgePageRole, KnowledgeRendererVersion } from '../knowledge/project-knowledge/types.js';
 
 export const HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION =
   'buildlore.hierarchical-markdown-materialization-manifest.v2' as const;
@@ -82,6 +83,16 @@ export const HIERARCHICAL_MARKDOWN_RENDERER_DIGEST = digestValue(RENDERER_CONTRA
 export const KNOWLEDGE_MARKDOWN_RENDERER_DIGEST = digestValue({ schemaVersion: 'buildlore.knowledge-markdown-renderer.v1',
   encoding: 'utf-8', timestamp: 'none', pageRoles: ['overview', 'architecture', 'decisions'],
   claims: 'reviewed-text-with-fact-footnotes', authority: 'single-approved-wiki-authority' });
+const KNOWLEDGE_MARKDOWN_V2_RENDERER_DIGEST = digestValue({ schemaVersion: 'buildlore.knowledge-markdown-renderer.v2',
+  encoding: 'utf-8', timestamp: 'none', pageRoles: ['overview', 'architecture', 'decisions'],
+  claims: 'reviewed-text-with-typed-state-and-source-citations', evidence: 'exact-escaped-excerpts-with-kind',
+  state: 'generation-bound-record-and-snapshot-membership', authority: 'single-approved-wiki-authority' });
+
+export function knowledgeMarkdownRendererDigest(version: KnowledgeRendererVersion): `sha256:${string}` {
+  if (version === 'knowledge-markdown-v1') return KNOWLEDGE_MARKDOWN_RENDERER_DIGEST;
+  if (version === 'knowledge-markdown-v2') return KNOWLEDGE_MARKDOWN_V2_RENDERER_DIGEST;
+  return fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+}
 
 export type HierarchicalMarkdownMaterializationErrorCode =
   | 'HIERARCHICAL_MARKDOWN_BUSY'
@@ -652,6 +663,7 @@ function manifestBasis(
 export function renderHierarchicalMarkdown(
   input: Readonly<{ readonly publication: ApprovedWikiPublicationSnapshotV1 }>,
 ): HierarchicalMarkdownRenderPlanV1 {
+  if (input.publication.authority.schemaVersion === 'buildlore.approved-wiki-authority.v3') fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
   const expected = prepareApprovedWikiPublication(
     input.publication.authority,
     input.publication.projection.projectId,
@@ -766,7 +778,7 @@ export function renderVerifiedHierarchicalMarkdown(
 
 function renderKnowledgeMaterialization(publication: ApprovedWikiPublicationSnapshotV1): HierarchicalMarkdownRenderPlanV1 {
   const extension = publication.authority.knowledgeGeneration;
-  const generation = extension?.generations.at(-1);
+  const generation = extension === undefined ? undefined : latestKnowledgeGeneration(extension);
   if (!extension || !generation) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
   const files: HierarchicalMarkdownRenderedFileV1[] = renderKnowledgeFiles(generation).filter((f) => f.path !== 'manifest.json').map((file) => {
     const mapping = extension.pageMappings.find((m) => `${m.role}.md` === file.path);
@@ -784,7 +796,7 @@ function renderKnowledgeMaterialization(publication: ApprovedWikiPublicationSnap
     files: files.map(({ body, ...metadata }) => { void body; return metadata; }),
     generationDigest: publication.projection.corpus.generationDigest, knowledgeGenerationDigest: generation.generationDigest,
     pageCount: 3, projectId: generation.projectId, projectionDigest: publication.projection.projectionDigest,
-    recordDigest: publication.recordDigest, rendererDigest: KNOWLEDGE_MARKDOWN_RENDERER_DIGEST,
+    recordDigest: publication.recordDigest, rendererDigest: knowledgeMarkdownRendererDigest(generation.rendererVersion),
     sanitizerPolicyDigest: publication.projection.sanitizerPolicyDigest, schemaVersion: KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION };
   const manifest = { ...basis, materializationDigest: digestValue(basis) };
   const manifestBody = serializeCanonicalJson(manifest);

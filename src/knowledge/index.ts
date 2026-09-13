@@ -179,3 +179,5 @@ export {
   validateProjectId,
   validateRepositoryLocator,
 } from './validation.js';
+
+export type { KnowledgeHistoryReferenceV1, KnowledgeGenerationRecordV1 } from './project-knowledge/history.js';

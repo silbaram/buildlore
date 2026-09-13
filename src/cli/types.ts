@@ -9,7 +9,16 @@ export type CliCommandId =
   | 'compile.candidates'
   | 'compile.hierarchy.approve'
   | 'compile.hierarchy.child-review'
+  | 'compile.hierarchy.completeness.shadow'
+  | 'compile.hierarchy.completeness.inventory'
+  | 'compile.hierarchy.completeness.inventory-review'
+  | 'compile.hierarchy.completeness.reconcile'
+  | 'compile.hierarchy.completeness.submit'
+  | 'compile.hierarchy.completeness.review'
+  | 'compile.hierarchy.completeness.source-review'
+  | 'compile.hierarchy.completeness.correct'
   | 'compile.hierarchy.finalize'
+  | 'compile.hierarchy.inspect'
   | 'compile.hierarchy.review'
   | 'compile.hierarchy.resubmit'
   | 'compile.hierarchy.start'
@@ -42,7 +51,10 @@ export type CliCommandId =
   | 'wiki.citations'
   | 'wiki.curate'
   | 'wiki.list'
-  | 'wiki.read';
+  | 'wiki.packet'
+  | 'wiki.memory'
+  | 'wiki.read'
+  | 'wiki.lookup';
 
 export type CliEnvelopeCommand = CliCommandId | 'unknown';
 export type CliExitCode = 0 | 2 | 3 | 4 | 5 | 6;

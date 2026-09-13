@@ -149,12 +149,17 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     ['wiki', 'read'],
     'wiki.read',
     'wiki.read',
-    ['--project', '--page'],
+    ['--project', '--page', '--view'],
     ['--project', '--page'],
     [],
     {},
     '--project',
   ),
+  command(['wiki', 'packet'], 'wiki.packet', 'wiki.packet', ['--project'], ['--project'], [], {}, '--project'),
+  command(['wiki', 'memory'], 'wiki.memory', 'wiki.memory', ['--project'], ['--project'], [], {}, '--project'),
+  command(['wiki', 'lookup'], 'wiki.lookup', 'wiki.lookup',
+    ['--project', '--kind', '--id', '--expect-generation'],
+    ['--project', '--kind', '--id', '--expect-generation'], [], {}, '--project'),
   command(
     ['wiki', 'citations'],
     'wiki.citations',
@@ -241,8 +246,18 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     ['compile', 'hierarchy', 'status'],
     'compile.hierarchy.status',
     'compile.hierarchy.status',
+    ['--project', '--run', '--role'],
     ['--project', '--run'],
-    ['--project', '--run'],
+    [],
+    {},
+    '--project',
+  ),
+  command(
+    ['compile', 'hierarchy', 'inspect'],
+    'compile.hierarchy.inspect',
+    'compile.hierarchy.inspect',
+    ['--project', '--run', '--input', '--expect-exchange'],
+    ['--project', '--run', '--input', '--expect-exchange'],
     [],
     {},
     '--project',
@@ -281,7 +296,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     ['compile', 'hierarchy', 'review'],
     'compile.hierarchy.review',
     'compile.hierarchy.review',
-    ['--project', '--run'],
+    ['--project', '--run', '--role'],
     ['--project', '--run'],
     [],
     {},
@@ -291,8 +306,8 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     ['compile', 'hierarchy', 'finalize'],
     'compile.hierarchy.finalize',
     'compile.hierarchy.finalize',
-    ['--project', '--run', '--input', '--expect-review'],
-    ['--project', '--run', '--input', '--expect-review'],
+    ['--project', '--run', '--input', '--expect-review', '--expect-stage'],
+    ['--project', '--run', '--input'],
     [],
     {},
     '--project',
@@ -307,6 +322,10 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     {},
     '--project',
   ),
+  ...(['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct'] as const).map(action =>
+    command(['compile', 'hierarchy', 'completeness', action], `compile.hierarchy.completeness.${action}`,
+      `compile.hierarchy.completeness.${action}`, ['--project', '--run', '--input', '--expect-stage'],
+      ['--project', '--run', '--input', '--expect-stage'], [], {}, '--project')),
   command(['compile'], 'compile', 'compile', ['--project'], ['--project'], ['--review'], {}, '--project'),
   command(['check'], 'check', 'check', ['--project'], ['--project'], [], {}, '--project'),
   command(
@@ -617,7 +636,16 @@ function validateWikiOptions(
   commandId: CliCommandId,
   values: Readonly<Record<string, CliOptionValue>>,
 ): void {
+  if (commandId === 'wiki.lookup') {
+    if (!['evidence', 'fact'].includes(String(values['--kind'])) ||
+        ['--id', '--expect-generation'].some(option => typeof values[option] !== 'string' ||
+          !/^sha256:[a-f0-9]{64}$/u.test(String(values[option])))) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    return;
+  }
   if (commandId === 'wiki.read' || commandId === 'wiki.citations') {
+    if (values['--view'] !== undefined && !['full', 'reader'].includes(String(values['--view']))) {
+      throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    }
     const page = values['--page'];
     if (typeof page !== 'string' || page.length > 320 ||
         !/^(?:(?:concepts|decisions|failures|queries|verifications)\/[a-z0-9]+(?:-[a-z0-9]+)*|page-[a-f0-9]{64}|(?:(?:wiki\/)?buildlore-hierarchy\/)?(?:overview|architecture|decisions)(?:\.md)?)$/u
@@ -776,11 +804,18 @@ function validateHierarchyCompileOptions(
       (typeof run !== 'string' || !HIERARCHY_RUN_ID_PATTERN.test(run))) {
     throw new CliUsageError('CLI_ARGUMENT_INVALID');
   }
-  for (const option of ['--expect-exchange', '--expect-review', '--expect-ledger']) {
+  for (const option of ['--expect-exchange', '--expect-review', '--expect-ledger', '--expect-stage']) {
     const value = values[option];
     if (value !== undefined && (typeof value !== 'string' || !PLAN_DIGEST_PATTERN.test(value))) {
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
+  }
+  if (values['--role'] !== undefined && !['author', 'completeness-reviewer', 'source-reviewer'].includes(String(values['--role']))) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
+  if (commandId === 'compile.hierarchy.finalize') {
+    if (values['--expect-stage'] === undefined && values['--expect-review'] === undefined) throw new CliUsageError('CLI_OPTION_MISSING');
+    if (values['--expect-stage'] !== undefined && values['--expect-review'] !== undefined) throw new CliUsageError('CLI_OPTION_CONFLICT');
   }
   for (const option of ['--purpose', '--input']) {
     const value = values[option];

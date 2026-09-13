@@ -27,7 +27,8 @@ export class KnowledgeHierarchyQualityError extends Error {
 
   constructor(reasonCodes: readonly string[]) {
     const codes = [...new Set(reasonCodes)].sort();
-    super(`Project knowledge hierarchy quality checks failed: ${codes.join(', ')}.`);
+    super(`Project knowledge hierarchy quality checks failed: ${codes.join(', ')}.` +
+      (codes.includes('claim-evidence-unsupported') ? ' Inspect claim overlap with inspectKnowledgeProposalGrounding; lexical overlap is not a semantic review.' : ''));
     this.name = 'KnowledgeHierarchyQualityError';
     this.reasonCodes = Object.freeze(codes);
   }

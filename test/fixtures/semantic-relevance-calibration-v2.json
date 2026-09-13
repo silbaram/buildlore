@@ -1,0 +1,524 @@
+{
+  "schemaVersion": "buildlore.semantic-relevance-fixture.v2",
+  "split": "calibration",
+  "documents": [
+    {
+      "id": "parcel-config",
+      "project": "parcel",
+      "text": "Parcel collects Markdown and JSON documents only from folders listed in the source manifest. A recursive flag controls whether nested folders are included. After changing the selected folders, run sync to refresh the collected documents. Undeclared folders are never scanned.",
+      "sourceRef": "fixtures/parcel/config.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "parcel-security",
+      "project": "parcel",
+      "text": "Parcel scans selected input documents for credentials before storing or indexing them. Suspected secrets stop the operation with a value-free diagnostic. Optional source masking creates a sanitized derivative and leaves the original document unchanged.",
+      "sourceRef": "fixtures/parcel/security.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "parcel-search",
+      "project": "parcel",
+      "text": "Parcel builds a local semantic index from approved documents using an embedding model on the CPU. Activating replacement documents makes the previous index stale. The user runs index rebuild explicitly. Keyword search remains available when the semantic model cannot be loaded.",
+      "sourceRef": "fixtures/parcel/search.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "parcel-export",
+      "project": "parcel",
+      "text": "Parcel exports the currently approved documentation as UTF-8 Markdown or JSON. Export is read-only and does not approve a pending draft. The output includes the generation identifier so consumers can recognize which document revision they received.",
+      "sourceRef": "fixtures/parcel/export.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "grove-storage",
+      "project": "grove",
+      "text": "Grove 메모 앱은 내용을 로컬 UTF-8 Markdown 파일에 저장한다. 변경 이력은 Git으로 관리한다. 중앙 데이터베이스나 상시 서버는 필요하지 않으며 사용자가 저장 폴더를 지정할 수 있다.",
+      "sourceRef": "fixtures/grove/storage.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "grove-recovery",
+      "project": "grove",
+      "text": "Grove는 문서를 수정할 때 임시 파일에 새 내용을 먼저 쓴 뒤 이름을 원자적으로 바꾼다. 임시 파일 쓰기가 실패하면 기존 문서는 그대로 남는다. 사용자는 Git 이력에서 이전 문서 버전을 골라 복원할 수 있다.",
+      "sourceRef": "fixtures/grove/recovery.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "grove-build",
+      "project": "grove",
+      "text": "Grove 변경 검증은 npm run build, npm test, npm run lint, npm run typecheck 순으로 실행한다. 저장 모듈 변경에는 파일 저장과 이전 버전 복원 테스트가 포함된다. 테스트는 임시 폴더를 사용하며 네트워크를 호출하지 않는다.",
+      "sourceRef": "fixtures/grove/build.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "grove-architecture",
+      "project": "grove",
+      "text": "Grove는 CLI 입력 처리, Markdown 파싱, 파일 저장 모듈로 나뉜다. CLI가 사용자 명령을 해석하고 파서가 제목과 본문을 분리한 다음 저장 모듈이 파일을 기록한다. 파서는 프로세스를 종료하거나 사용자 화면에 직접 출력하지 않는다.",
+      "sourceRef": "fixtures/grove/architecture.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "beacon-queue",
+      "project": "beacon",
+      "text": "Beacon is a local batch image converter. Jobs are placed in a disk-backed queue and processed one at a time. A failed conversion records a diagnostic and preserves the input image. The user can explicitly retry the failed job after changing its options.",
+      "sourceRef": "fixtures/beacon/queue.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "beacon-formats",
+      "project": "beacon",
+      "text": "Beacon converts PNG and JPEG images into WebP output. Width and height limits preserve the aspect ratio rather than stretching the picture. The output directory must differ from the selected input directory so a conversion cannot overwrite its source.",
+      "sourceRef": "fixtures/beacon/formats.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "beacon-settings",
+      "project": "beacon",
+      "text": "Beacon reads conversion defaults from a project configuration file. Explicit command-line options override those defaults for one invocation. Unknown setting names are rejected before any conversion begins. The configuration file is never rewritten during conversion.",
+      "sourceRef": "fixtures/beacon/settings.md",
+      "locator": "lines:1-1"
+    },
+    {
+      "id": "beacon-inspection",
+      "project": "beacon",
+      "text": "Beacon dry-run lists planned input and output image paths and the selected conversion options. It does not create images or queue jobs. The user can inspect the plan before executing the same explicit input selection.",
+      "sourceRef": "fixtures/beacon/inspection.md",
+      "locator": "lines:1-1"
+    }
+  ],
+  "queries": [
+    {
+      "id": "cal-parcel-config-same-script",
+      "project": "parcel",
+      "query": "How do I configure which folders Parcel collects recursively?",
+      "expected": [
+        "parcel-config"
+      ],
+      "relationship": "same-script",
+      "topic": "config"
+    },
+    {
+      "id": "cal-parcel-config-cross-script",
+      "project": "parcel",
+      "query": "Parcel에서 수집할 폴더와 하위 폴더 포함 여부는 어디에 설정하나요?",
+      "expected": [
+        "parcel-config"
+      ],
+      "relationship": "cross-script",
+      "topic": "config"
+    },
+    {
+      "id": "cal-parcel-security-same-script",
+      "project": "parcel",
+      "query": "What does Parcel do if a source document contains credentials?",
+      "expected": [
+        "parcel-security"
+      ],
+      "relationship": "same-script",
+      "topic": "security"
+    },
+    {
+      "id": "cal-parcel-security-cross-script",
+      "project": "parcel",
+      "query": "Parcel이 원본 문서에서 민감정보를 발견하면 저장을 중단하나요?",
+      "expected": [
+        "parcel-security"
+      ],
+      "relationship": "cross-script",
+      "topic": "security"
+    },
+    {
+      "id": "cal-parcel-search-same-script",
+      "project": "parcel",
+      "query": "When should I rebuild the local search index after replacing documents?",
+      "expected": [
+        "parcel-search"
+      ],
+      "relationship": "same-script",
+      "topic": "search"
+    },
+    {
+      "id": "cal-parcel-search-cross-script",
+      "project": "parcel",
+      "query": "문서를 교체하면 Parcel의 의미검색 인덱스는 어떻게 갱신해야 하나요?",
+      "expected": [
+        "parcel-search"
+      ],
+      "relationship": "cross-script",
+      "topic": "search"
+    },
+    {
+      "id": "cal-parcel-export-same-script",
+      "project": "parcel",
+      "query": "Does exporting Parcel documentation approve a pending draft?",
+      "expected": [
+        "parcel-export"
+      ],
+      "relationship": "same-script",
+      "topic": "export"
+    },
+    {
+      "id": "cal-parcel-export-cross-script",
+      "project": "parcel",
+      "query": "Parcel 문서를 내보내면 대기 중인 초안도 승인되는 건가요?",
+      "expected": [
+        "parcel-export"
+      ],
+      "relationship": "cross-script",
+      "topic": "export"
+    },
+    {
+      "id": "cal-grove-storage-same-script",
+      "project": "grove",
+      "query": "Grove 메모는 어디에 저장되며 중앙 데이터베이스가 필요한가요?",
+      "expected": [
+        "grove-storage"
+      ],
+      "relationship": "same-script",
+      "topic": "storage"
+    },
+    {
+      "id": "cal-grove-storage-cross-script",
+      "project": "grove",
+      "query": "Where does Grove store notes, and does it need a central database?",
+      "expected": [
+        "grove-storage"
+      ],
+      "relationship": "cross-script",
+      "topic": "storage"
+    },
+    {
+      "id": "cal-grove-recovery-same-script",
+      "project": "grove",
+      "query": "문서 저장 도중 실패하면 Grove의 기존 파일은 어떻게 보호되나요?",
+      "expected": [
+        "grove-recovery"
+      ],
+      "relationship": "same-script",
+      "topic": "recovery"
+    },
+    {
+      "id": "cal-grove-recovery-cross-script",
+      "project": "grove",
+      "query": "How does Grove protect the old note when saving fails?",
+      "expected": [
+        "grove-recovery"
+      ],
+      "relationship": "cross-script",
+      "topic": "recovery"
+    },
+    {
+      "id": "cal-grove-build-same-script",
+      "project": "grove",
+      "query": "Grove 저장 모듈을 수정한 뒤 어떤 검증 명령과 테스트를 실행하나요?",
+      "expected": [
+        "grove-build"
+      ],
+      "relationship": "same-script",
+      "topic": "build"
+    },
+    {
+      "id": "cal-grove-build-cross-script",
+      "project": "grove",
+      "query": "Which checks should run after changing Grove note storage?",
+      "expected": [
+        "grove-build"
+      ],
+      "relationship": "cross-script",
+      "topic": "build"
+    },
+    {
+      "id": "cal-grove-architecture-same-script",
+      "project": "grove",
+      "query": "Grove의 CLI, 파서, 파일 저장 모듈은 어떤 순서로 동작하나요?",
+      "expected": [
+        "grove-architecture"
+      ],
+      "relationship": "same-script",
+      "topic": "architecture"
+    },
+    {
+      "id": "cal-grove-architecture-cross-script",
+      "project": "grove",
+      "query": "How do the CLI, parser and storage modules cooperate in Grove?",
+      "expected": [
+        "grove-architecture"
+      ],
+      "relationship": "cross-script",
+      "topic": "architecture"
+    },
+    {
+      "id": "cal-beacon-queue-same-script",
+      "project": "beacon",
+      "query": "How does Beacon handle and retry a failed conversion job?",
+      "expected": [
+        "beacon-queue"
+      ],
+      "relationship": "same-script",
+      "topic": "queue"
+    },
+    {
+      "id": "cal-beacon-queue-cross-script",
+      "project": "beacon",
+      "query": "Beacon에서 이미지 변환 작업이 실패하면 원본과 재시도는 어떻게 처리되나요?",
+      "expected": [
+        "beacon-queue"
+      ],
+      "relationship": "cross-script",
+      "topic": "queue"
+    },
+    {
+      "id": "cal-beacon-formats-same-script",
+      "project": "beacon",
+      "query": "Which output format and image sizing rules does Beacon use?",
+      "expected": [
+        "beacon-formats"
+      ],
+      "relationship": "same-script",
+      "topic": "formats"
+    },
+    {
+      "id": "cal-beacon-formats-cross-script",
+      "project": "beacon",
+      "query": "Beacon 이미지 변환의 출력 형식과 크기 조정 규칙은 무엇인가요?",
+      "expected": [
+        "beacon-formats"
+      ],
+      "relationship": "cross-script",
+      "topic": "formats"
+    },
+    {
+      "id": "cal-beacon-settings-same-script",
+      "project": "beacon",
+      "query": "How do command-line options interact with Beacon configuration defaults?",
+      "expected": [
+        "beacon-settings"
+      ],
+      "relationship": "same-script",
+      "topic": "settings"
+    },
+    {
+      "id": "cal-beacon-settings-cross-script",
+      "project": "beacon",
+      "query": "Beacon의 명령행 옵션은 설정 파일의 기본값보다 우선하나요?",
+      "expected": [
+        "beacon-settings"
+      ],
+      "relationship": "cross-script",
+      "topic": "settings"
+    },
+    {
+      "id": "cal-beacon-inspection-same-script",
+      "project": "beacon",
+      "query": "Does a Beacon dry-run create images or enqueue jobs?",
+      "expected": [
+        "beacon-inspection"
+      ],
+      "relationship": "same-script",
+      "topic": "inspection"
+    },
+    {
+      "id": "cal-beacon-inspection-cross-script",
+      "project": "beacon",
+      "query": "Beacon의 dry-run은 이미지를 만들거나 작업 큐에 등록하나요?",
+      "expected": [
+        "beacon-inspection"
+      ],
+      "relationship": "cross-script",
+      "topic": "inspection"
+    },
+    {
+      "id": "cal-unrelated-astronomy-parcel",
+      "project": "parcel",
+      "query": "How do astronomers measure the distance to distant stars?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "astronomy"
+    },
+    {
+      "id": "cal-unrelated-astronomy-grove",
+      "project": "grove",
+      "query": "토성의 고리에는 어떤 물질이 있나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "astronomy"
+    },
+    {
+      "id": "cal-unrelated-astronomy-beacon",
+      "project": "beacon",
+      "query": "How do astronomers measure the distance to distant stars?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "astronomy"
+    },
+    {
+      "id": "cal-unrelated-cooking-parcel",
+      "project": "parcel",
+      "query": "김치 발효에 적합한 온도와 소금 농도는?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "cooking"
+    },
+    {
+      "id": "cal-unrelated-cooking-grove",
+      "project": "grove",
+      "query": "How long should beans soak before cooking?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "cooking"
+    },
+    {
+      "id": "cal-unrelated-cooking-beacon",
+      "project": "beacon",
+      "query": "김치 발효에 적합한 온도와 소금 농도는?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "cooking"
+    },
+    {
+      "id": "cal-unrelated-music-parcel",
+      "project": "parcel",
+      "query": "How does a dominant seventh chord resolve?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "music"
+    },
+    {
+      "id": "cal-unrelated-music-grove",
+      "project": "grove",
+      "query": "현악 사중주에서 비올라는 어떤 역할을 하나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "music"
+    },
+    {
+      "id": "cal-unrelated-music-beacon",
+      "project": "beacon",
+      "query": "How does a dominant seventh chord resolve?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "music"
+    },
+    {
+      "id": "cal-unrelated-gardening-parcel",
+      "project": "parcel",
+      "query": "장미 잎이 노랗게 변하는 원인은 무엇인가요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "gardening"
+    },
+    {
+      "id": "cal-unrelated-gardening-grove",
+      "project": "grove",
+      "query": "When should tulip bulbs be planted?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "gardening"
+    },
+    {
+      "id": "cal-unrelated-gardening-beacon",
+      "project": "beacon",
+      "query": "장미 잎이 노랗게 변하는 원인은 무엇인가요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "gardening"
+    },
+    {
+      "id": "cal-unrelated-ocean-parcel",
+      "project": "parcel",
+      "query": "Why do ocean tides vary over the lunar month?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "ocean"
+    },
+    {
+      "id": "cal-unrelated-ocean-grove",
+      "project": "grove",
+      "query": "심해 생물은 햇빛 없이 어떻게 에너지를 얻나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "ocean"
+    },
+    {
+      "id": "cal-unrelated-ocean-beacon",
+      "project": "beacon",
+      "query": "Why do ocean tides vary over the lunar month?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "ocean"
+    },
+    {
+      "id": "cal-unrelated-sport-parcel",
+      "project": "parcel",
+      "query": "배구에서 리베로의 경기 규칙은 무엇인가요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "sport"
+    },
+    {
+      "id": "cal-unrelated-sport-grove",
+      "project": "grove",
+      "query": "How is a tennis tiebreak scored?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "sport"
+    },
+    {
+      "id": "cal-unrelated-sport-beacon",
+      "project": "beacon",
+      "query": "배구에서 리베로의 경기 규칙은 무엇인가요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "sport"
+    },
+    {
+      "id": "cal-unrelated-history-parcel",
+      "project": "parcel",
+      "query": "What materials were used to build medieval castles?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "history"
+    },
+    {
+      "id": "cal-unrelated-history-grove",
+      "project": "grove",
+      "query": "고대 로마의 수도교는 어떤 원리로 물을 운반했나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "history"
+    },
+    {
+      "id": "cal-unrelated-history-beacon",
+      "project": "beacon",
+      "query": "What materials were used to build medieval castles?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "history"
+    },
+    {
+      "id": "cal-unrelated-geology-parcel",
+      "project": "parcel",
+      "query": "화산 용암의 점도는 분화에 어떤 영향을 주나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "geology"
+    },
+    {
+      "id": "cal-unrelated-geology-grove",
+      "project": "grove",
+      "query": "How do sedimentary rocks form?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "geology"
+    },
+    {
+      "id": "cal-unrelated-geology-beacon",
+      "project": "beacon",
+      "query": "화산 용암의 점도는 분화에 어떤 영향을 주나요?",
+      "expected": [],
+      "relationship": "unrelated",
+      "topic": "geology"
+    }
+  ]
+}

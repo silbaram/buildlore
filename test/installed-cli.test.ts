@@ -98,6 +98,7 @@ describe('installed CLI', () => {
       await mkdir(packageRoot);
       await mkdir(consumerRoot);
       await mkdir(workspaceRoot);
+      await cp(join(repositoryRoot, 'schemas'), join(packageRoot, 'schemas'), { recursive: true });
       await Promise.all(
         ['LICENSE', 'README.md', 'package.json'].map(async (file) =>
           copyFile(join(repositoryRoot, file), join(packageRoot, file)),
@@ -120,6 +121,12 @@ describe('installed CLI', () => {
       const binaryDirectory = join(consumerRoot, 'node_modules', '.bin');
       await cp(packageRoot, installedRoot, { recursive: true });
       await mkdir(binaryDirectory, { recursive: true });
+      const inspectionSchema = await run(process.execPath, ['--input-type=module', '-e',
+        'import schema from "buildlore/schemas/project-knowledge-inspection.schema.json" with { type: "json" }; process.stdout.write(schema.$id);'], consumerRoot);
+      expect(inspectionSchema.stdout).toBe('https://buildlore.local/schemas/project-knowledge-inspection.schema.json');
+      const changeImpactSchema = await run(process.execPath, ['--input-type=module', '-e',
+        'import schema from "buildlore/schemas/project-knowledge-change-impact.schema.json" with { type: "json" }; import { compiler } from "buildlore"; if (typeof compiler.parseKnowledgeChangeImpactRequest !== "function" || typeof compiler.createKnowledgeSessionService !== "function") throw new Error("Missing change-impact SDK"); process.stdout.write(schema.$id);'], consumerRoot);
+      expect(changeImpactSchema.stdout).toBe('https://buildlore.local/schemas/project-knowledge-change-impact.schema.json');
 
       const packageJson = JSON.parse(
         await readFile(join(installedRoot, 'package.json'), 'utf8'),
@@ -353,5 +360,6 @@ describe('installed CLI', () => {
         rm(temporaryRoot, { force: true, recursive: true }),
       ]);
     }
-  }, 30_000);
+  // Includes a fresh TypeScript build and installed-process checks under full-suite contention.
+  }, 60_000);
 });

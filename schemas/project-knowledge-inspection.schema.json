@@ -1,0 +1,725 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/project-knowledge-inspection.schema.json",
+  "title": "Question-bound, read-only inspection of selected sanitized source evidence",
+  "description": "No code execution, AST analysis, semantic ranking or source selection expansion. Runtime enforces project/exchange/snapshot bindings, question membership, byte bounds and cursor identity. Locators refer to projected sources unless an explicit origin is provided.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/budgetFailure"
+    },
+    {
+      "$ref": "#/$defs/developmentMemoryInspection"
+    }
+  ],
+  "$defs": {
+    "budgetFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "reason",
+        "byteBudget",
+        "minimumRequiredBytes",
+        "maximumBytes",
+        "retryable"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-authoring-inspection-budget.v1"
+        },
+        "reason": {
+          "const": "response-metadata-too-large"
+        },
+        "byteBudget": {
+          "type": "integer",
+          "minimum": 8192,
+          "maximum": 1048576
+        },
+        "minimumRequiredBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maximumBytes": {
+          "const": 1048576
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "description": "CLI failure data / SDK budget error details. Retry with minimumRequiredBytes only when retryable is true. Never contains source, question or query values."
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "questionId",
+        "operation"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-authoring-inspection-request.v1"
+        },
+        "projectId": {
+          "$ref": "project-knowledge-workflow.schema.json#/$defs/purpose/properties/projectId"
+        },
+        "questionId": {
+          "$ref": "project-knowledge.schema.json#/$defs/identifier"
+        },
+        "operation": {
+          "enum": [
+            "sources",
+            "find",
+            "read",
+            "coverage"
+          ]
+        },
+        "sourceRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "contains": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 96,
+          "pattern": "^inspection-(?:0|[1-9][0-9]{0,4})-[0-9a-f]{64}$"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "default": 10
+        },
+        "maxBytes": {
+          "type": "integer",
+          "minimum": 8192,
+          "maximum": 1048576,
+          "default": 65536
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "coverage"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sourceRef": {
+                "type": "null"
+              },
+              "contains": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "sources"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sourceRef": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "find"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "contains"
+            ],
+            "properties": {
+              "contains": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "read"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sourceRef"
+            ],
+            "properties": {
+              "sourceRef": {
+                "type": "string"
+              },
+              "contains": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "requirementSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirementId",
+        "status",
+        "evidenceIds",
+        "semanticReviewRequired"
+      ],
+      "properties": {
+        "requirementId": {
+          "$ref": "project-knowledge.schema.json#/$defs/identifier"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "heading-only",
+            "source-not-selected",
+            "detail-unavailable"
+          ]
+        },
+        "evidenceIds": {
+          "type": "array",
+          "maxItems": 8192,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "project-knowledge.schema.json#/$defs/digest"
+          }
+        },
+        "semanticReviewRequired": {
+          "const": true
+        }
+      },
+      "description": "Snapshot availability only. Does not infer original-file absence, extraction failure, semantic support or whether an author read the evidence."
+    },
+    "sourceSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceId",
+        "sourceRef",
+        "sourceContentDigest",
+        "sanitizedContentDigest",
+        "repositoryRevision",
+        "sourceRevision",
+        "codeRevision",
+        "format",
+        "evidenceCount"
+      ],
+      "properties": {
+        "sourceId": {
+          "$ref": "project-knowledge.schema.json#/$defs/identifier"
+        },
+        "sourceRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "sourceContentDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "sanitizedContentDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "repositoryRevision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "codeRevision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "format": {
+          "enum": [
+            "markdown",
+            "json"
+          ]
+        },
+        "evidenceCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "exchangeDigest",
+        "snapshotDigest",
+        "question",
+        "operation",
+        "sourceRef",
+        "contains",
+        "entries",
+        "total",
+        "cursor",
+        "status",
+        "minimumRequiredBytes",
+        "byteBudget",
+        "instructions",
+        "egress",
+        "processSpawned",
+        "resultDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-authoring-inspection.v1"
+        },
+        "projectId": {
+          "$ref": "project-knowledge-workflow.schema.json#/$defs/purpose/properties/projectId"
+        },
+        "exchangeDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "snapshotDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "question": {
+          "$ref": "project-knowledge-workflow.schema.json#/$defs/authoringQuestions/items"
+        },
+        "operation": {
+          "enum": [
+            "sources",
+            "find",
+            "read",
+            "coverage"
+          ]
+        },
+        "sourceRef": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          ]
+        },
+        "contains": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/requirementSummary"
+              },
+              {
+                "$ref": "#/$defs/sourceSummary"
+              },
+              {
+                "$ref": "project-knowledge.schema.json#/$defs/evidence"
+              }
+            ]
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "cursor": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "maxLength": 96,
+              "pattern": "^inspection-(?:0|[1-9][0-9]{0,4})-[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "empty",
+            "item-too-large"
+          ]
+        },
+        "minimumRequiredBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "byteBudget": {
+          "type": "integer",
+          "minimum": 8192,
+          "maximum": 1048576
+        },
+        "instructions": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "egress": {
+          "const": "none"
+        },
+        "processSpawned": {
+          "const": false
+        },
+        "resultDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "requirementSelection": {
+          "enum": [
+            "selected",
+            "unassessed"
+          ]
+        },
+        "developmentMemoryInspection": {
+          "$ref": "#/$defs/developmentMemoryInspection"
+        }
+      }
+    },
+    "developmentMemoryInspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "proposalDigest",
+        "questionsDigest",
+        "profileDigest",
+        "inspectionDigest",
+        "structuralStatus",
+        "semanticReviewRequired",
+        "axes"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.development-memory-inspection.v1"
+        },
+        "projectId": {
+          "$ref": "project-knowledge-workflow.schema.json#/$defs/purpose/properties/projectId"
+        },
+        "snapshotDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "proposalDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "questionsDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "profileDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "inspectionDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "structuralStatus": {
+          "enum": [
+            "covered",
+            "incomplete",
+            "unassessed"
+          ]
+        },
+        "semanticReviewRequired": {
+          "const": true
+        },
+        "axes": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "axis",
+              "questionId",
+              "role",
+              "requirementSelection",
+              "structuralStatus",
+              "requirements",
+              "links",
+              "semanticReviewRequired"
+            ],
+            "properties": {
+              "axis": {
+                "enum": [
+                  "purpose",
+                  "architecture",
+                  "decisions",
+                  "current-state",
+                  "failures-open-work"
+                ]
+              },
+              "questionId": {
+                "$ref": "project-knowledge.schema.json#/$defs/identifier"
+              },
+              "role": {
+                "enum": [
+                  "overview",
+                  "architecture",
+                  "decisions"
+                ]
+              },
+              "requirementSelection": {
+                "enum": [
+                  "selected",
+                  "unassessed"
+                ]
+              },
+              "structuralStatus": {
+                "enum": [
+                  "covered",
+                  "incomplete",
+                  "unassessed"
+                ]
+              },
+              "requirements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "sourceRef",
+                    "jsonPointer",
+                    "contentKind",
+                    "status",
+                    "evidenceIds",
+                    "citedEvidenceIds",
+                    "sourceStatus"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "project-knowledge.schema.json#/$defs/identifier"
+                    },
+                    "sourceRef": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    },
+                    "jsonPointer": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 4096
+                    },
+                    "contentKind": {
+                      "enum": [
+                        "any",
+                        "json-value",
+                        "text"
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "covered",
+                        "uncited",
+                        "heading-only",
+                        "unavailable"
+                      ]
+                    },
+                    "evidenceIds": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "project-knowledge.schema.json#/$defs/digest"
+                      }
+                    },
+                    "citedEvidenceIds": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "project-knowledge.schema.json#/$defs/digest"
+                      }
+                    },
+                    "sourceStatus": {
+                      "enum": [
+                        "available",
+                        "heading-only",
+                        "source-not-selected",
+                        "detail-unavailable"
+                      ]
+                    }
+                  }
+                }
+              },
+              "links": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "claimId",
+                    "pageRole",
+                    "sectionIndex",
+                    "claimIndex",
+                    "facts"
+                  ],
+                  "properties": {
+                    "claimId": {
+                      "$ref": "project-knowledge.schema.json#/$defs/identifier"
+                    },
+                    "pageRole": {
+                      "enum": [
+                        "overview",
+                        "architecture",
+                        "decisions"
+                      ]
+                    },
+                    "sectionIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "claimIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "facts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "classification",
+                          "lifecycle",
+                          "reviewStatus",
+                          "scope",
+                          "supersededBy",
+                          "factId",
+                          "evidence"
+                        ],
+                        "properties": {
+                          "classification": {
+                            "$ref": "project-knowledge.schema.json#/$defs/record/properties/classification"
+                          },
+                          "lifecycle": {
+                            "$ref": "project-knowledge.schema.json#/$defs/record/properties/lifecycle"
+                          },
+                          "reviewStatus": {
+                            "$ref": "project-knowledge.schema.json#/$defs/record/properties/reviewStatus"
+                          },
+                          "scope": {
+                            "$ref": "project-knowledge.schema.json#/$defs/record/properties/scope"
+                          },
+                          "supersededBy": {
+                            "$ref": "project-knowledge.schema.json#/$defs/record/properties/supersededBy"
+                          },
+                          "factId": {
+                            "$ref": "project-knowledge.schema.json#/$defs/digest"
+                          },
+                          "evidence": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "evidenceId",
+                                "sourceRef",
+                                "locator",
+                                "sourceRevision",
+                                "codeRevision",
+                                "presentInCurrentSnapshot"
+                              ],
+                              "properties": {
+                                "evidenceId": {
+                                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/evidenceId"
+                                },
+                                "sourceRef": {
+                                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRef"
+                                },
+                                "locator": {
+                                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/locator"
+                                },
+                                "sourceRevision": {
+                                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevision"
+                                },
+                                "codeRevision": {
+                                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevision"
+                                },
+                                "presentInCurrentSnapshot": {
+                                  "type": "boolean"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "semanticReviewRequired": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

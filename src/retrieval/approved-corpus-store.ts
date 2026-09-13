@@ -1,9 +1,10 @@
+import { createKnowledgeGenerationHistoryStore, type KnowledgeGenerationHistoryStorePort } from './project-knowledge-history-store.js';
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import {
   lstat,
   mkdir,
   open,
-  readFile,
   realpath,
   unlink,
   type FileHandle,
@@ -27,7 +28,7 @@ import { isNodeError } from '../knowledge/errors.js';
 import { resolveProjectWorkspace } from '../knowledge/paths.js';
 import { decodeUtf8Strict, parseJsonStrict } from '../knowledge/strict-json.js';
 import { neutralSourceRetrievalMeaning } from '../projector/source-contracts.js';
-import { parseKnowledgeAuthorityExtension, type KnowledgeAuthorityExtensionV1 } from './project-knowledge-authority.js';
+import { parseKnowledgeAuthorityExtension, resolveKnowledgeAuthorityExtension, verifyKnowledgeAuthorityPredecessor, verifyResolvedKnowledgeAuthorityExtension, knowledgeAuthorityHistory, type KnowledgeAuthorityExtensionV1, type KnowledgeAuthorityExtensionV2 } from './project-knowledge-authority.js';
 import {
   createApprovedWikiRetrieval,
   projectApprovedWikiForRetrieval,
@@ -106,6 +107,13 @@ export interface ApprovedWikiAuthorityV1 {
   readonly authorityCheck: AuthoritativeWikiCheckV1;
 }
 
+export interface ApprovedWikiAuthorityV3 extends Omit<ApprovedWikiAuthorityV1, 'schemaVersion' | 'knowledgeGeneration'> {
+  readonly schemaVersion: 'buildlore.approved-wiki-authority.v3';
+  readonly knowledgeGeneration: KnowledgeAuthorityExtensionV2;
+  readonly baselineRecordDigest: `sha256:${string}` | null;
+}
+export type CurrentApprovedWikiAuthority = ApprovedWikiAuthorityV1 | ApprovedWikiAuthorityV3;
+
 export interface ApprovedWikiRetrievalProjectionV1 {
   readonly schemaVersion: typeof APPROVED_WIKI_RETRIEVAL_PROJECTION_SCHEMA_VERSION;
   readonly projectId: string;
@@ -116,7 +124,7 @@ export interface ApprovedWikiRetrievalProjectionV1 {
 
 /** Verified, path-free authority identity shared by publication and derived views. */
 export interface ApprovedWikiPublicationSnapshotV1 {
-  readonly authority: ApprovedWikiAuthorityV1;
+  readonly authority: CurrentApprovedWikiAuthority;
   readonly authorityDigest: `sha256:${string}`;
   readonly projection: ApprovedWikiRetrievalProjectionV1;
   readonly recordDigest: `sha256:${string}`;
@@ -125,9 +133,11 @@ export interface ApprovedWikiPublicationSnapshotV1 {
 interface ApprovedWikiAuthorityRecordV1 {
   readonly schemaVersion: typeof APPROVED_WIKI_AUTHORITY_RECORD_SCHEMA_VERSION;
   readonly projectId: string;
-  readonly authority: ApprovedWikiAuthorityV1;
+  readonly authority: CurrentApprovedWikiAuthority;
   readonly authorityDigest: `sha256:${string}`;
   readonly recordDigest: `sha256:${string}`;
+  /** In-memory only: the projection already verified while parsing the record. */
+  readonly projection: ApprovedWikiRetrievalProjectionV1;
 }
 
 export type ApprovedWikiProjectionStatusV1 =
@@ -145,11 +155,11 @@ export type ApprovedWikiProjectionStatusV1 =
 
 export interface ApprovedWikiProjectionStorePort {
   publish(input: Readonly<{
-    readonly authority: ApprovedWikiAuthorityV1;
+    readonly authority: CurrentApprovedWikiAuthority;
     readonly projectId: string;
   }>): Promise<ApprovedWikiRetrievalProjectionV1>;
   read(projectId: string): Promise<ApprovedWikiRetrievalProjectionV1>;
-  readAuthority(projectId: string): Promise<ApprovedWikiAuthorityV1>;
+  readAuthority(projectId: string): Promise<CurrentApprovedWikiAuthority>;
   status(projectId: string): Promise<ApprovedWikiProjectionStatusV1>;
 }
 
@@ -285,7 +295,7 @@ const LEGACY_INSTRUCTION_CODES = Object.freeze(LEGACY_INSTRUCTIONS.map(({ code }
  * Recognizes only the complete v22 current-session version constellation. Historical
  * submissions are intentionally not upgraded or re-evaluated under current policy.
  */
-function isHistoricalApprovedAuthority(value: ApprovedWikiAuthorityV1): boolean {
+function isHistoricalApprovedAuthority(value: CurrentApprovedWikiAuthority): boolean {
   if (!hasExactKeys(value, AUTHORITY_PROPERTIES) || !isRecord(value.finalization)) return false;
   const finalization = value.finalization as unknown as UnknownRecord;
   if (!Array.isArray(finalization.generationHandoffs) ||
@@ -383,7 +393,7 @@ function historicalHandoffBindings(handoff: unknown): HistoricalHandoffBindings 
 }
 
 function historicalApprovedWikiInput(
-  value: ApprovedWikiAuthorityV1,
+  value: CurrentApprovedWikiAuthority,
   expectedProjectId: string,
 ): ProjectApprovedWikiInputV1 {
   if (!isHistoricalApprovedAuthority(value) || value.projectId !== expectedProjectId ||
@@ -594,12 +604,12 @@ function historicalApprovedWikiInput(
 }
 
 function snapshotAuthority(
-  value: ApprovedWikiAuthorityV1,
-): ApprovedWikiAuthorityV1 {
+  value: CurrentApprovedWikiAuthority,
+): CurrentApprovedWikiAuthority {
   try {
     const parsed = parseJsonStrict(serializeCanonicalJson(value));
     if (!isRecord(parsed)) fail('APPROVED_WIKI_PROJECTION_INVALID');
-    return parsed as unknown as ApprovedWikiAuthorityV1;
+    return parsed as unknown as CurrentApprovedWikiAuthority;
   } catch (error) {
     if (error instanceof ApprovedWikiProjectionError) throw error;
     fail('APPROVED_WIKI_PROJECTION_INVALID');
@@ -607,11 +617,13 @@ function snapshotAuthority(
 }
 
 function verifyAuthority(
-  value: ApprovedWikiAuthorityV1,
+  value: CurrentApprovedWikiAuthority,
   expectedProjectId: string,
+  allowResolvedHistory = false,
 ): ProjectApprovedWikiInputV1 {
-  const knowledgeMode = value.schemaVersion === PROJECT_KNOWLEDGE_WIKI_AUTHORITY_SCHEMA_VERSION;
-  const properties: readonly string[] = knowledgeMode ? [...AUTHORITY_PROPERTIES, 'knowledgeGeneration'] : AUTHORITY_PROPERTIES;
+  const historyMode = allowResolvedHistory && value.schemaVersion === 'buildlore.approved-wiki-authority.v3';
+  const knowledgeMode = historyMode || value.schemaVersion === PROJECT_KNOWLEDGE_WIKI_AUTHORITY_SCHEMA_VERSION;
+  const properties: readonly string[] = knowledgeMode ? [...AUTHORITY_PROPERTIES, 'knowledgeGeneration', ...(historyMode ? ['baselineRecordDigest'] : [])] : AUTHORITY_PROPERTIES;
   if (!isRecord(value) ||
       Object.keys(value).sort().join('\0') !== [...properties].sort().join('\0') ||
       (!knowledgeMode && value.schemaVersion !== APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION) ||
@@ -621,7 +633,11 @@ function verifyAuthority(
       : 'APPROVED_WIKI_PROJECTION_PROJECT_MISMATCH');
   }
   try {
-    if (knowledgeMode) parseKnowledgeAuthorityExtension(value.knowledgeGeneration, value);
+    if (value.schemaVersion === 'buildlore.approved-wiki-authority.v3' && historyMode) {
+      verifyResolvedKnowledgeAuthorityExtension(value.knowledgeGeneration, value);
+      if (value.baselineRecordDigest !== null && !DIGEST_PATTERN.test(value.baselineRecordDigest)) fail('APPROVED_WIKI_PROJECTION_INVALID');
+      if ((value.currentState === null) !== (value.baselineRecordDigest === null)) fail('APPROVED_WIKI_PROJECTION_INVALID');
+    } else if (knowledgeMode) parseKnowledgeAuthorityExtension(value.knowledgeGeneration, value);
     const expectedState = verifyCompileRunApproval({
       currentState: value.currentState,
       finalization: value.finalization,
@@ -671,15 +687,21 @@ export function verifyApprovedWikiAuthority(
   verifyAuthority(value, expectedProjectId);
 }
 
+/** @internal Requires a resolved, project-bound pointer capability for v3. */
+export function verifyResolvedApprovedWikiAuthority(value: CurrentApprovedWikiAuthority, projectId: string): void {
+  verifyAuthority(value, projectId, true);
+}
+
 function projectAuthority(
-  authority: ApprovedWikiAuthorityV1,
+  authority: CurrentApprovedWikiAuthority,
   projectId: string,
   allowHistorical = false,
+  allowResolvedHistory = false,
 ): ApprovedWikiRetrievalProjectionV1 {
   try {
     const verified = allowHistorical && isHistoricalApprovedAuthority(authority)
       ? historicalApprovedWikiInput(authority, projectId)
-      : verifyAuthority(authority, projectId);
+      : verifyAuthority(authority, projectId, allowResolvedHistory);
     const approvedWiki: ProjectApprovedWikiInputV1 = Object.freeze({
       ...verified,
       sourceMeanings: Object.freeze(authority.liveSnapshot.sources.map((source) => Object.freeze({
@@ -729,6 +751,23 @@ export function prepareApprovedWikiPublication(
     projection,
     recordDigest: digest(basis),
   });
+}
+
+/** Verifies pointer history and hierarchy proof before deriving a projection. */
+export async function prepareCurrentApprovedWikiPublication(value: CurrentApprovedWikiAuthority, projectId: string,
+  knowledgeRoot: string, store = createKnowledgeGenerationHistoryStore({ knowledgeRoot })): Promise<ApprovedWikiPublicationSnapshotV1> {
+  if (value.schemaVersion !== 'buildlore.approved-wiki-authority.v3') return prepareApprovedWikiPublication(value, projectId);
+  const copied = snapshotAuthority(value);
+  if (copied.schemaVersion !== 'buildlore.approved-wiki-authority.v3') fail('APPROVED_WIKI_PROJECTION_INVALID');
+  if (copied.projectId !== projectId) fail('APPROVED_WIKI_PROJECTION_PROJECT_MISMATCH');
+  const extension = await resolveKnowledgeAuthorityExtension(copied.knowledgeGeneration, copied, store);
+  const authority = Object.freeze({ ...copied, knowledgeGeneration: extension });
+  const projection = projectAuthority(authority, projectId, false, true);
+  const authorityDigest = digest(authority);
+  const recordDigest = digest({ authority, authorityDigest, projectId, schemaVersion: APPROVED_WIKI_AUTHORITY_RECORD_SCHEMA_VERSION });
+  freezePublicationValue(authority);
+  freezePublicationValue(projection);
+  return Object.freeze({ authority, authorityDigest, projection, recordDigest });
 }
 
 async function safeDirectory(path: string): Promise<void> {
@@ -860,10 +899,11 @@ function exactLockPath(identity: StoreDirectoryIdentity): string {
   return lockPath;
 }
 
-function parseAuthorityRecord(
+async function parseAuthorityRecord(
   value: unknown,
   expectedProjectId: string,
-): ApprovedWikiAuthorityRecordV1 {
+  historyStore: KnowledgeGenerationHistoryStorePort,
+): Promise<ApprovedWikiAuthorityRecordV1> {
   if (!isRecord(value) || Object.keys(value).sort().join('\0') !== [
     'authority',
     'authorityDigest',
@@ -883,7 +923,11 @@ function parseAuthorityRecord(
   if (value.projectId !== expectedProjectId || value.authority.projectId !== expectedProjectId) {
     fail('APPROVED_WIKI_PROJECTION_PROJECT_MISMATCH');
   }
-  const authority = value.authority as unknown as ApprovedWikiAuthorityV1;
+  let authority = value.authority as unknown as CurrentApprovedWikiAuthority;
+  if (authority.schemaVersion === 'buildlore.approved-wiki-authority.v3') {
+    authority = Object.freeze({ ...authority, knowledgeGeneration:
+      await resolveKnowledgeAuthorityExtension(authority.knowledgeGeneration, authority, historyStore) });
+  }
   const basis = Object.freeze({
     authority,
     authorityDigest: value.authorityDigest,
@@ -893,8 +937,10 @@ function parseAuthorityRecord(
   if (value.authorityDigest !== digest(authority) || value.recordDigest !== digest(basis)) {
     fail('APPROVED_WIKI_PROJECTION_INVALID');
   }
-  projectAuthority(authority, expectedProjectId, true);
-  return Object.freeze({ ...basis, recordDigest: value.recordDigest }) as
+  const projection = projectAuthority(authority, expectedProjectId, true, true);
+  freezePublicationValue(authority);
+  freezePublicationValue(projection);
+  return Object.freeze({ ...basis, recordDigest: value.recordDigest, projection }) as
     ApprovedWikiAuthorityRecordV1;
 }
 
@@ -904,7 +950,7 @@ async function readAuthorityRecord(
 ): Promise<ApprovedWikiAuthorityRecordV1> {
   const workspace = await resolveProjectWorkspace(knowledgeRoot, projectId, { mustExist: true });
   const path = join(workspace, '.llmwiki', STORE_DIRECTORY, STORE_FILENAME);
-  const record = await readAuthorityRecordAtPath(path, projectId);
+  const record = await readAuthorityRecordAtPath(path, projectId, createKnowledgeGenerationHistoryStore({ knowledgeRoot }));
   if (record === null) fail('APPROVED_WIKI_PROJECTION_UNAVAILABLE');
   return record;
 }
@@ -918,7 +964,7 @@ export async function readApprovedWikiPublicationSnapshot(
   return Object.freeze({
     authority: record.authority,
     authorityDigest: record.authorityDigest,
-    projection: projectAuthority(record.authority, projectId, true),
+    projection: record.projection,
     recordDigest: record.recordDigest,
   });
 }
@@ -926,19 +972,122 @@ export async function readApprovedWikiPublicationSnapshot(
 async function readAuthorityRecordAtPath(
   path: string,
   projectId: string,
+  historyStore: KnowledgeGenerationHistoryStorePort,
 ): Promise<ApprovedWikiAuthorityRecordV1 | null> {
+  try {
+    const bytes = await readAuthorityBytesAtPath(path);
+    return bytes === null ? null : await parseAuthorityRecord(parseJsonStrict(decodeUtf8Strict(bytes)), projectId, historyStore);
+  } catch (error) {
+    if (error instanceof ApprovedWikiProjectionError) throw error;
+    fail('APPROVED_WIKI_PROJECTION_INVALID');
+  }
+}
+
+/** @internal Bounded exact-byte legacy record capture for explicit migration only. */
+export async function readVerifiedLegacyAuthorityRecordBytes(knowledgeRoot: string, projectId: string,
+  expectedRecordDigest: `sha256:${string}`): Promise<Buffer> {
+  const workspace = await resolveProjectWorkspace(knowledgeRoot, projectId, { mustExist: true });
+  const bytes = await readAuthorityBytesAtPath(join(workspace, '.llmwiki', STORE_DIRECTORY, STORE_FILENAME));
+  if (bytes === null) fail('APPROVED_WIKI_PROJECTION_UNAVAILABLE');
+  const parsed = await parseAuthorityRecord(parseJsonStrict(decodeUtf8Strict(bytes)), projectId,
+    createKnowledgeGenerationHistoryStore({ knowledgeRoot }));
+  if (parsed.authority.schemaVersion === 'buildlore.approved-wiki-authority.v3' || parsed.recordDigest !== expectedRecordDigest) fail('APPROVED_WIKI_PROJECTION_INVALID');
+  return bytes;
+}
+
+async function readAuthorityBytesAtPath(path: string): Promise<Buffer | null> {
+  let handle: FileHandle | undefined;
   try {
     const status = await lstat(path);
     if (!status.isFile() || status.isSymbolicLink() || status.size < 2 ||
         status.size > MAXIMUM_AUTHORITY_BYTES || await realpath(path) !== resolve(path)) {
       fail('APPROVED_WIKI_PROJECTION_INVALID');
     }
-    return parseAuthorityRecord(parseJsonStrict(decodeUtf8Strict(await readFile(path))), projectId);
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.dev !== status.dev || opened.ino !== status.ino ||
+        opened.size !== status.size) fail('APPROVED_WIKI_PROJECTION_INVALID');
+    // A growing file cannot turn the pre-read size check into an unbounded read.
+    const bytes = Buffer.alloc(status.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (read.bytesRead === 0) fail('APPROVED_WIKI_PROJECTION_INVALID');
+      offset += read.bytesRead;
+    }
+    const extra = await handle.read(Buffer.alloc(1), 0, 1, offset);
+    const closed = await handle.stat();
+    const after = await lstat(path);
+    if (extra.bytesRead !== 0 || closed.dev !== status.dev || closed.ino !== status.ino ||
+        closed.size !== status.size || closed.mtimeMs !== status.mtimeMs || closed.ctimeMs !== status.ctimeMs ||
+        !after.isFile() || after.isSymbolicLink() || status.dev !== after.dev || status.ino !== after.ino ||
+        status.size !== after.size || status.mtimeMs !== after.mtimeMs || status.ctimeMs !== after.ctimeMs ||
+        bytes.length !== after.size || await realpath(path) !== resolve(path)) fail('APPROVED_WIKI_PROJECTION_INVALID');
+    return bytes;
   } catch (error) {
     if (error instanceof ApprovedWikiProjectionError) throw error;
     if (isNodeError(error) && error.code === 'ENOENT') return null;
-    fail('APPROVED_WIKI_PROJECTION_INVALID');
+    return fail('APPROVED_WIKI_PROJECTION_INVALID');
+  } finally {
+    await handle?.close();
   }
+}
+
+export interface ApprovedWikiPublicationReader {
+  read(projectId: string): Promise<ApprovedWikiPublicationSnapshotV1 | null>;
+}
+
+function freezePublicationValue(value: unknown, seen = new WeakSet<object>()): void {
+  if (typeof value !== 'object' || value === null || seen.has(value)) return;
+  seen.add(value);
+  for (const child of Object.values(value)) freezePublicationValue(child, seen);
+  Object.freeze(value);
+}
+
+/** Instance-local, single-entry cache. Never trust mtimes or declared digests as cache keys.
+ * Every access checks project/path confinement and hashes the actual complete file bytes.
+ * Cached nested values are frozen because read/search callers can receive their references.
+ */
+export function createApprovedWikiPublicationReader(knowledgeRoot: string): ApprovedWikiPublicationReader {
+  const historyStore = createKnowledgeGenerationHistoryStore({ knowledgeRoot });
+  let cached: Readonly<{ projectId: string; path: string; bytesDigest: string;
+    snapshot: ApprovedWikiPublicationSnapshotV1 }> | undefined;
+  return Object.freeze({
+    async read(projectId: string): Promise<ApprovedWikiPublicationSnapshotV1 | null> {
+      try {
+        const workspace = await resolveProjectWorkspace(knowledgeRoot, projectId, { mustExist: true });
+        const path = join(workspace, '.llmwiki', STORE_DIRECTORY, STORE_FILENAME);
+        const bytes = await readAuthorityBytesAtPath(path);
+        if (bytes === null) { cached = undefined; return null; }
+        const bytesDigest = createHash('sha256').update(bytes).digest('hex');
+        if (cached?.projectId === projectId && cached.path === path && cached.bytesDigest === bytesDigest) {
+          const authority = cached.snapshot.authority;
+          if (authority.schemaVersion === 'buildlore.approved-wiki-authority.v3') {
+            const history = await historyStore.verify(authority.knowledgeGeneration.history, projectId);
+            const prior = knowledgeAuthorityHistory(authority.knowledgeGeneration);
+            if (history.policyDigest !== prior.policyDigest || history.bytesFingerprint !== prior.bytesFingerprint) {
+              cached = undefined;
+              fail('APPROVED_WIKI_PROJECTION_INVALID');
+            }
+          }
+          return cached.snapshot;
+        }
+        cached = undefined;
+        const record = await parseAuthorityRecord(parseJsonStrict(decodeUtf8Strict(bytes)), projectId, historyStore);
+        // Freeze descendants too: parser records and projection containers are only shallow-frozen.
+        freezePublicationValue(record.authority);
+        freezePublicationValue(record.projection.corpus);
+        const snapshot = Object.freeze({ authority: record.authority, authorityDigest: record.authorityDigest,
+          projection: record.projection, recordDigest: record.recordDigest });
+        cached = { projectId, path, bytesDigest, snapshot };
+        return snapshot;
+      } catch (error) {
+        cached = undefined;
+        if (error instanceof ApprovedWikiProjectionError) throw error;
+        fail('APPROVED_WIKI_PROJECTION_INVALID');
+      }
+    },
+  });
 }
 
 async function lockPathMatches(
@@ -1053,10 +1202,17 @@ export function createApprovedWikiProjectionStore(
   knowledgeRoot: string,
   hooks: ApprovedWikiProjectionStoreTestHooks = {},
 ): ApprovedWikiProjectionStorePort {
+  const historyStore = createKnowledgeGenerationHistoryStore({ knowledgeRoot });
+  const reader = createApprovedWikiPublicationReader(knowledgeRoot);
+  const readRecord = async (projectId: string): Promise<ApprovedWikiPublicationSnapshotV1> => {
+    const result = await reader.read(projectId);
+    if (result === null) fail('APPROVED_WIKI_PROJECTION_UNAVAILABLE');
+    return result;
+  };
   const store: ApprovedWikiProjectionStorePort = {
     async publish(input) {
       const projectId = input.projectId;
-      const prepared = prepareApprovedWikiPublication(input.authority, projectId);
+      const prepared = await prepareCurrentApprovedWikiPublication(input.authority, projectId, knowledgeRoot, historyStore);
       const { authority, authorityDigest, projection, recordDigest } = prepared;
       const basis = Object.freeze({
         authority,
@@ -1072,7 +1228,11 @@ export function createApprovedWikiProjectionStore(
       const directoryIdentity = await captureStoreDirectoryIdentity(workspace, storeRoot);
       await withStoreLock(directoryIdentity, hooks, async (assertLockOwned) => {
         const path = join(storeRoot, STORE_FILENAME);
-        const previous = await readAuthorityRecordAtPath(path, projectId);
+        const previous = await readAuthorityRecordAtPath(path, projectId, historyStore);
+        if (authority.schemaVersion === 'buildlore.approved-wiki-authority.v3') {
+          verifyKnowledgeAuthorityPredecessor(authority, previous?.authority ?? null);
+          if (authority.baselineRecordDigest !== (previous?.recordDigest ?? null)) fail('APPROVED_WIKI_PROJECTION_INVALID');
+        }
         if (
           (previous === null && authority.currentState !== null) ||
           (previous !== null && (authority.currentState === null ||
@@ -1080,10 +1240,18 @@ export function createApprovedWikiProjectionStore(
         ) {
           fail('APPROVED_WIKI_PROJECTION_INVALID');
         }
+        const previousBytes = await readAuthorityBytesAtPath(path);
         try {
           await assertLockOwned();
           await hooks.beforeCommit?.();
           await assertLockOwned();
+          const checked = await readAuthorityRecordAtPath(path, projectId, historyStore);
+          const checkedBytes = await readAuthorityBytesAtPath(path);
+          if (previousBytes === null ? checkedBytes !== null : checkedBytes === null || !previousBytes.equals(checkedBytes)) fail('APPROVED_WIKI_PROJECTION_INVALID');
+          if ((checked?.recordDigest ?? null) !== (previous?.recordDigest ?? null)) fail('APPROVED_WIKI_PROJECTION_INVALID');
+          if (authority.schemaVersion === 'buildlore.approved-wiki-authority.v3') {
+            await prepareCurrentApprovedWikiPublication(authority, projectId, knowledgeRoot, historyStore);
+          }
           await writeJsonAtomic(path, record, { confinementRoot: workspace });
         } catch {
           fail('APPROVED_WIKI_PROJECTION_WRITE_FAILED');
@@ -1092,11 +1260,11 @@ export function createApprovedWikiProjectionStore(
       return projection;
     },
     async read(projectId) {
-      const record = await readAuthorityRecord(knowledgeRoot, projectId);
-      return projectAuthority(record.authority, projectId, true);
+      const record = await readRecord(projectId);
+      return record.projection;
     },
     async readAuthority(projectId) {
-      return (await readAuthorityRecord(knowledgeRoot, projectId)).authority;
+      return (await readRecord(projectId)).authority;
     },
     async status(projectId) {
       try {

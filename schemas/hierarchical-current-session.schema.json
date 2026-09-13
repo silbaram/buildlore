@@ -500,7 +500,7 @@
           "pattern": "^sha256:[a-f0-9]{64}$"
         },
         "sanitizerRulesVersion": {
-          "const": "buildlore.sanitizer-rules.v5"
+          "const": "buildlore.sanitizer-rules.v8"
         },
         "sanitizerInputDigest": {
           "type": "string",

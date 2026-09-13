@@ -1,3 +1,4 @@
+import { KnowledgeHistoryError } from '../retrieval/project-knowledge-history-store.js';
 import { CompilerOperationError } from '../compiler/errors.js';
 import {
   HierarchyContractError,
@@ -33,6 +34,9 @@ import { HierarchicalWorkflowRunStoreError } from './hierarchical-run-store.js';
 import { HierarchicalWorkflowError } from './hierarchical-workflow.js';
 import { ProjectKnowledgeError } from '../knowledge/project-knowledge/guards.js';
 import { KnowledgeHierarchyQualityError } from '../compiler/project-knowledge/hierarchy-bridge.js';
+import { KnowledgeAuthoringInspectionBudgetError } from '../compiler/project-knowledge/authoring-inspection.js';
+import { KnowledgeCompletenessBudgetError, KnowledgeCompletenessInventoryError } from '../compiler/project-knowledge/completeness.js';
+import { KnowledgeChangeImpactBudgetError } from '../compiler/project-knowledge/change-impact.js';
 import { CliUsageError } from './parser.js';
 import type {
   CliEnvelopeCommand,
@@ -225,7 +229,30 @@ export function mapCliError(
   if (error instanceof HierarchicalWorkflowError) {
     return baseFailure(context, 3, error.code, error.message);
   }
-  if (error instanceof ProjectKnowledgeError || error instanceof KnowledgeHierarchyQualityError) {
+  if (error instanceof KnowledgeChangeImpactBudgetError) {
+    return Object.freeze({ ...baseFailure(context, 3, error.code,
+      'Change-impact response metadata exceeds the requested byte budget.'), data: error.details });
+  }
+  if (error instanceof KnowledgeAuthoringInspectionBudgetError) {
+    return Object.freeze({ ...baseFailure(context, 3, error.code,
+      'Inspection response metadata exceeds the requested byte budget.'), data: error.details });
+  }
+  if (error instanceof KnowledgeCompletenessInventoryError) {
+    const d = error.details;
+    const rule = d.rule === 'requirement-needs-current-evidence'
+      ? 'Each linked requirement needs evidence from its current selected source; prior evidence alone is insufficient.'
+      : d.rule === 'requirement-not-declared' ? 'The linked requirement must be declared for this question.'
+        : 'Check the item shape, identity, evidence and text limits.';
+    return Object.freeze({ ...baseFailure(context, 3, error.code,
+      `Invalid inventory item at questions[${d.questionIndex}].categories[${d.categoryIndex}].items[${d.itemIndex}]. ${rule}`),
+      data: d });
+  }
+  if (error instanceof KnowledgeCompletenessBudgetError) {
+    return Object.freeze({ ...baseFailure(context, 3, error.code, 'Completeness artifact exceeds the byte budget.'),
+      data: { schemaVersion: 'buildlore.knowledge-completeness-budget.v1', maximumBytes: error.maximumBytes,
+        recoveryAction: 'reduce-input-without-dropping-required-content' } });
+  }
+  if (error instanceof KnowledgeHistoryError || error instanceof ProjectKnowledgeError || error instanceof KnowledgeHierarchyQualityError) {
     return baseFailure(context, 3, error.code, error.message);
   }
   if (error instanceof ApprovedWikiProjectionError) {

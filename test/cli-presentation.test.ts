@@ -36,7 +36,8 @@ describe('CLI presentation and exit taxonomy', () => {
       expect(HELP_TEXT).toContain(`buildlore compile hierarchy ${command}`);
     }
     expect(HELP_TEXT).toContain('it never launches any agent process');
-    expect(HELP_TEXT).toContain('Records explicit human approval only; it does not activate');
+    expect(HELP_TEXT).toContain('Records explicit human approval and stages the activation bundle');
+    expect(HELP_TEXT).toContain('activation remains explicit');
   });
 
   it('maps closed hierarchy contract rejections to a value-free validation failure', () => {

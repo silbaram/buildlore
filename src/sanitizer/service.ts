@@ -492,11 +492,40 @@ function collectPathFindings(
   collectAbsolutePathFindings(state, body, httpUriRanges);
 }
 
+function isBasicCredentialValue(value: string): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) return false;
+  const decoded = Buffer.from(value, 'base64');
+  // Basic carries a user-id/password pair. Base64 letters alone also match ordinary words.
+  return decoded.includes(0x3a) &&
+    !decoded.some((byte) => byte < 32 || byte === 127) &&
+    decoded.toString('base64').replace(/=+$/u, '') === value.replace(/=+$/u, '');
+}
+
+function collectBasicCredentialFindings(state: ScanState, body: string): void {
+  const pattern = /\bBasic[ \t]+([A-Za-z0-9+/=]{1,512})/giu;
+  for (const match of body.matchAll(pattern)) {
+    const value = match[1];
+    if (value === undefined) continue;
+    const prefix = body.slice(Math.max(0, match.index - 128), match.index);
+    const authorizationValue = /\b(?:Proxy-)?Authorization["'`]?[ \t]*[:=][ \t]*["'`]?[ \t]*$/iu
+      .test(prefix);
+    // An explicit authorization field stays protected even if its value is malformed.
+    if (!authorizationValue && !isBasicCredentialValue(value)) continue;
+    const start = match.index + match[0].length - value.length;
+    addFinding(state, {
+      action: 'redact',
+      end: start + value.length,
+      replacement: CREDENTIAL_PLACEHOLDER,
+      ruleId: 'credential.basic',
+      start,
+    });
+  }
+}
+
 function collectCredentialFindings(state: ScanState, body: string): void {
   addMatches(state, body, /\bBearer[ \t]+([A-Za-z0-9._~+/=-]{8,512})/giu,
     'credential.bearer', CREDENTIAL_PLACEHOLDER, 1);
-  addMatches(state, body, /\bBasic[ \t]+([A-Za-z0-9+/=]{8,512})/giu,
-    'credential.basic', CREDENTIAL_PLACEHOLDER, 1);
+  collectBasicCredentialFindings(state, body);
   addMatches(state, body, /\bCookie[ \t]*:[ \t]*([^\r\n]{1,2048})/giu,
     'credential.cookie', CREDENTIAL_PLACEHOLDER, 1);
   addMatches(
@@ -571,12 +600,48 @@ function containsUnsafeCharacter(value: string): boolean {
   return false;
 }
 
+/** Recognize one literal branch, not the contents of an entire regex or code block. */
+function literalChoiceGroup(body: string, start: number, length: number): TextRange | null {
+  const windowStart = Math.max(0, start - 256);
+  const window = body.slice(windowStart, start + length + 256);
+  const localStart = start - windowStart;
+  const open = window.lastIndexOf('(', localStart);
+  const close = window.indexOf(')', localStart + length);
+  if (open < 0 || close < 0 || close - open > 256 || body[windowStart + open - 1] === '\\') return null;
+  const prefix = window.startsWith('(?:', open) ? 3 : 1;
+  const branches = window.slice(open + prefix, close).split('|');
+  if (branches.length < 2 || branches.some(branch =>
+    !/^[\p{L}][\p{L}\p{N}_-]*(?: [\p{L}][\p{L}\p{N}_-]*)*$/u.test(branch))) return null;
+  let offset = open + prefix;
+  for (const branch of branches) {
+    if (offset === localStart && branch.length === length) {
+      return { start: windowStart + open, end: windowStart + close + 1 };
+    }
+    offset += branch.length + 1;
+  }
+  return null;
+}
+
+function isRegexChoiceReference(body: string, match: RegExpExecArray): boolean {
+  const verb = match[1];
+  const target = match[2];
+  if (verb === undefined || target === undefined) return false;
+  const left = literalChoiceGroup(body, match.index, verb.length);
+  const right = literalChoiceGroup(body, match.index + match[0].length - target.length, target.length);
+  if (left === null || right === null || left.end >= right.start) return false;
+  // Only an unambiguous regex-operator bridge qualifies. Unknown syntax and prose
+  // retain normal detection. Doubled escapes also cover JSON/string serialization.
+  // Never execute a source-supplied pattern or suppress scanning its other text.
+  return /^(?:\\{1,2}[bBdDsSwWnrt]|\[\^?(?:\\{1,2}[bBdDsSwWnrt]|[A-Za-z0-9-])+\]|\.|\{[0-9]+(?:,[0-9]*)?\}|[?*+^$])+$/u
+    .test(body.slice(left.end, right.start));
+}
+
 function collectPromptFindings(state: ScanState, body: string): void {
   const normalized = body.normalize('NFKC');
   const patterns: ReadonlyArray<readonly [RegExp, string]> = [
     [/(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?)/giu,
       'prompt-injection.override-instructions'],
-    [/(?:send|exfiltrate|upload|reveal|print)\b[^\r\n]{0,120}\b(?:secret|token|credential|system prompt)/giu,
+    [/(send|exfiltrate|upload|reveal|print)\b[^\r\n]{0,120}?\b(secret|token|credential|system prompt)/giu,
       'prompt-injection.secret-exfiltration'],
     [/(?:system|developer)\s+(?:message|instruction|prompt)\s*:/giu,
       'prompt-injection.role-instruction'],
@@ -586,7 +651,12 @@ function collectPromptFindings(state: ScanState, body: string): void {
   for (const [pattern, ruleId] of patterns) {
     let match = pattern.exec(normalized);
     while (match !== null) {
-      addFinding(state, { action: 'quarantine', ruleId });
+      const patternReference = ruleId === 'prompt-injection.secret-exfiltration' &&
+        isRegexChoiceReference(normalized, match);
+      if (!patternReference) addFinding(state, { action: 'quarantine', ruleId });
+      // A recognized reference must not swallow another verb/real instruction on
+      // the same line, including one inside a different alternative or quotation.
+      if (patternReference) pattern.lastIndex = match.index + (match[1]?.length ?? 1);
       match = pattern.exec(normalized);
     }
   }
@@ -724,16 +794,19 @@ function safeEntropyToken(value: string): boolean {
     safeCredentialFreeHttpUri(value);
 }
 
-function collectEntropyCandidate(state: ScanState, value: string): void {
+function collectEntropyCandidate(state: ScanState, value: string, start: number, mask = false): void {
   if (value.length < 20) return;
   const classCount = [/[a-z]/u, /[A-Z]/u, /[0-9]/u, /[_+./=-]/u]
     .filter((pattern) => pattern.test(value)).length;
   if (classCount >= 3 && shannonEntropy(value) >= 4 && !safeEntropyToken(value)) {
-    addFinding(state, { action: 'block', ruleId: 'entropy.candidate' });
+    addFinding(state, mask
+      ? { action: 'redact', ruleId: 'entropy.masked', start, end: start + value.length,
+          replacement: '<REDACTED:SECRET>' }
+      : { action: 'block', ruleId: 'entropy.candidate' });
   }
 }
 
-function collectEntropyFindings(state: ScanState, body: string): void {
+function collectEntropyFindings(state: ScanState, body: string, mask = false): void {
   TOKEN_PATTERN.lastIndex = 0;
   let match = TOKEN_PATTERN.exec(body);
   while (match !== null) {
@@ -741,8 +814,9 @@ function collectEntropyFindings(state: ScanState, body: string): void {
     const assignmentSeparator = value.indexOf('=');
     const assignmentName = assignmentSeparator < 0 ? '' : value.slice(0, assignmentSeparator);
     if (safeEnvironmentVariableName(assignmentName)) {
-      collectEntropyCandidate(state, value.slice(assignmentSeparator + 1));
-    } else collectEntropyCandidate(state, value);
+      collectEntropyCandidate(state, value.slice(assignmentSeparator + 1),
+        match.index + assignmentSeparator + 1, mask);
+    } else collectEntropyCandidate(state, value, match.index, mask);
     match = TOKEN_PATTERN.exec(body);
   }
 }
@@ -806,6 +880,7 @@ function scan(
   homePath: string,
   knowledgeRoot: string,
   oversized = false,
+  maskSourceSecrets = false,
 ): Readonly<{ approvedBody?: string; report: SanitizationReport }> {
   const identity = sourceIdentitySha256(request.source);
   const classification = classificationFor(loaded.policy, request.sourceKind, identity);
@@ -822,12 +897,32 @@ function scan(
     collectPrivateKeyFindings(state, request.body);
     collectPromptFindings(state, request.body);
   }
-  const redacted = oversized || state.findingsOverflow
+  let redacted = oversized || state.findingsOverflow
     ? null
     : applyRedactions(state, request.body);
   if (redacted !== null) {
     collectResidualCredentialFinding(state, redacted);
-    collectEntropyFindings(state, redacted);
+    if (maskSourceSecrets) {
+      // Coordinates belong to the credential/path-redacted derivative, not the
+      // original. Never apply them together with original-coordinate findings.
+      const entropy = initialState();
+      collectEntropyFindings(entropy, redacted, true);
+      redacted = entropy.findingsOverflow ? null : applyRedactions(entropy, redacted);
+      for (const finding of entropy.findings) addFinding(state, finding);
+      if (entropy.findingsOverflow) state.findingsOverflow = true;
+      if (redacted !== null) {
+        // A full strict second pass must be stable, with no residual finding or
+        // override. Do not repeatedly redact until a dangerous input passes.
+        const checked = scan({ ...request, body: redacted, bodyDigest: sha256(redacted) },
+          loaded, homePath, knowledgeRoot);
+        if (checked.approvedBody !== redacted || checked.report.summaries.length > 0) {
+          addFinding(state, { action: 'block', ruleId: 'input.redaction-incomplete' });
+        }
+      }
+      if (state.findings.some((finding) => finding.action !== 'redact')) {
+        addFinding(state, { action: 'block', ruleId: 'input.redaction-incomplete' });
+      }
+    } else collectEntropyFindings(state, redacted);
   }
   if (state.findingsOverflow) {
     state.totals.set('input.finding-overflow', 1);
@@ -931,7 +1026,9 @@ export function createProjectSecurityService(
             const body = normalizeSecurityBody(request.body);
             return { ...request, body, bodyDigest: sha256(body) };
           })();
-      const outcome = scan(normalizedRequest, loaded, homePath, knowledgeRoot, oversized);
+      const maskSourceSecrets = options.sourceIngestion === true &&
+        loaded.policy.sourceSecretHandling === 'mask';
+      const outcome = scan(normalizedRequest, loaded, homePath, knowledgeRoot, oversized, maskSourceSecrets);
       if (outcome.approvedBody === undefined) return { ok: false, report: outcome.report };
       return {
         ok: true,

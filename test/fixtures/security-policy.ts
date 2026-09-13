@@ -26,6 +26,7 @@ export async function writeSecurityPolicy(
     readonly capabilities?: readonly SecurityEgressCapability[];
     readonly classification?: DataClassification;
     readonly overrides?: readonly SecurityOverride[];
+    readonly sourceSecretHandling?: 'reject' | 'mask';
   } = {},
 ): Promise<void> {
   const project = await showProject(knowledgeRoot, projectId);
@@ -39,6 +40,7 @@ export async function writeSecurityPolicy(
       capability,
     })),
     overrides: options.overrides ?? [],
+    ...(options.sourceSecretHandling === undefined ? {} : { sourceSecretHandling: options.sourceSecretHandling }),
   };
   await writeFile(
     join(knowledgeRoot, project.workspacePath, 'security-policy.json'),

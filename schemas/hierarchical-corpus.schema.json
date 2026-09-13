@@ -1466,7 +1466,7 @@
         "snapshotDigest": { "$ref": "#/$defs/digest" },
         "proposalDigest": { "$ref": "#/$defs/digest" },
         "sanitizerPolicyDigest": { "$ref": "#/$defs/digest" },
-        "sanitizerRulesVersion": { "const": "buildlore.sanitizer-rules.v5" },
+        "sanitizerRulesVersion": { "const": "buildlore.sanitizer-rules.v8" },
         "sanitizerInputDigest": { "$ref": "#/$defs/digest" },
         "generationActor": { "const": "current-agent-session" },
         "proposalOutputSanitized": { "const": true },

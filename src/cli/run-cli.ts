@@ -1,4 +1,6 @@
 import { join } from 'node:path';
+import { createProjectKnowledgeCompletenessWorkflow } from './project-knowledge-workflow.js';
+import type { CompletenessRole } from '../compiler/project-knowledge/completeness.js';
 
 import {
   createProjectCheck,
@@ -90,8 +92,9 @@ import {
   createHierarchicalWorkflowService,
   type HierarchicalWorkflowServicePort,
 } from './hierarchical-workflow.js';
-import { createProjectKnowledgeWorkflow } from './project-knowledge-workflow.js';
+import { createProjectKnowledgeWorkflow, type ProjectKnowledgeWorkflowService } from './project-knowledge-workflow.js';
 import { createKnowledgeWikiReader } from '../retrieval/project-knowledge-reader.js';
+import { hash, choice, invalid } from '../knowledge/project-knowledge/guards.js';
 import { HELP_TEXT } from './help.js';
 import { CliUsageError, inferCliCommand, parseCliArguments } from './parser.js';
 import { renderCliResult, writeRenderedCliResult } from './presentation.js';
@@ -140,6 +143,7 @@ export interface CliRuntime {
   readonly compiler?: CompilerStatusPort;
   readonly hierarchyActivation?: HierarchicalWikiActivationPort;
   readonly hierarchyWorkflow?: HierarchicalWorkflowServicePort;
+  readonly knowledgeInspection?: Pick<ProjectKnowledgeWorkflowService, 'inspect'>;
   /** @internal Fault seam for local registry integration tests. */
   readonly localProjectRegistryHooks?: LocalProjectRegistryHooks;
   readonly localModels?: LocalModelBindingPort;
@@ -315,7 +319,8 @@ type RoutedHierarchyWorkflow = {
   [K in keyof HierarchicalWorkflowServicePort]: (...args: Parameters<HierarchicalWorkflowServicePort[K]>) => Promise<unknown>;
 };
 
-function createDefaultHierarchyWorkflow(runtime: CliRuntime): RoutedHierarchyWorkflow {
+function createDefaultHierarchyWorkflow(runtime: CliRuntime, role?: CompletenessRole,
+  stageBound = false): RoutedHierarchyWorkflow {
   const legacy = createHierarchicalWorkflowService({
     compiler: createProjectSessionCompiler({
       hubRoot: runtime.cwd,
@@ -327,23 +332,36 @@ function createDefaultHierarchyWorkflow(runtime: CliRuntime): RoutedHierarchyWor
   });
   const knowledge = createProjectKnowledgeWorkflow({ hubRoot: runtime.cwd,
     knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+  const completeness = createProjectKnowledgeCompletenessWorkflow({ hubRoot: runtime.cwd,
+    knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
   return {
     async start(projectId, purposeFile) {
+      if (await completeness.handlesPurpose(projectId, purposeFile)) return completeness.start(projectId, purposeFile);
       return (await knowledge.handlesPurpose(projectId, purposeFile) ? knowledge : legacy).start(projectId, purposeFile);
     },
     async status(projectId, runId) {
+      if (await completeness.handlesRun(projectId, runId)) return completeness.status(projectId, runId, role);
+      if (role !== undefined) throw new CliUsageError('CLI_OPTION_UNSUPPORTED');
       return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).status(projectId, runId);
     },
     async submit(projectId, runId, inputFile, expected) {
       return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).submit(projectId, runId, inputFile, expected);
     },
     async review(projectId, runId) {
+      if (await completeness.handlesRun(projectId, runId)) return completeness.status(projectId, runId, role);
+      if (role !== undefined) throw new CliUsageError('CLI_OPTION_UNSUPPORTED');
       return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).review(projectId, runId);
     },
     async finalize(projectId, runId, inputFile, expected) {
+      if (await completeness.handlesRun(projectId, runId)) {
+        if (!stageBound) throw new CliUsageError('CLI_OPTION_MISSING');
+        return completeness.finalize(projectId, runId, inputFile, expected);
+      }
+      if (stageBound) throw new CliUsageError('CLI_OPTION_UNSUPPORTED');
       return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).finalize(projectId, runId, inputFile, expected);
     },
     async approve(projectId, runId, expected, confirmed) {
+      if (await completeness.handlesRun(projectId, runId)) return completeness.approve(projectId, runId, expected, confirmed);
       return (await knowledge.handlesRun(projectId, runId) ? knowledge : legacy).approve(projectId, runId, expected, confirmed);
     },
     resubmit: (...args) => legacy.resubmit(...args),
@@ -393,6 +411,10 @@ async function readWikiPage(
   projectId: string,
 ): Promise<unknown> {
   const pageRef = requiredStringOption(command, '--page');
+  if (command.options['--view'] === 'reader') {
+    if (runtime.localWiki !== undefined || runtime.wikiRead !== undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    return await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).readContext(projectId, pageRef) ?? invalid();
+  }
   if (runtime.localWiki === undefined && runtime.wikiRead === undefined) {
     const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).read(projectId, pageRef);
     if (knowledge !== null) return knowledge;
@@ -443,7 +465,8 @@ async function searchWithApprovedWiki(
     return runtime.retrieval.search({ mode, projectId, query });
   }
   if (runtime.retrieval === undefined && runtime.localWiki === undefined) {
-    const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).search(projectId, query, mode, intent);
+    const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge'), { hubRoot: runtime.cwd })
+      .search(projectId, query, mode, intent);
     if (knowledge !== null) return knowledge;
   }
   try {
@@ -708,6 +731,26 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       return readWikiCitations(command, runtime, projectId);
     }
+    case 'wiki.memory': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      if (runtime.localWiki !== undefined || runtime.wikiRead !== undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      return await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).readMemory(projectId) ?? invalid();
+    }
+    case 'wiki.packet': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      if (runtime.localWiki !== undefined || runtime.wikiRead !== undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      return await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).readPacket(projectId) ?? invalid();
+    }
+    case 'wiki.lookup': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      if (runtime.localWiki !== undefined || runtime.wikiRead !== undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      return createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).lookup(projectId,
+        hash(requiredStringOption(command, '--expect-generation')),
+        choice(requiredStringOption(command, '--kind'), ['evidence', 'fact']), hash(requiredStringOption(command, '--id')));
+    }
     case 'export': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
@@ -803,10 +846,24 @@ async function executeCommand(
     case 'compile.hierarchy.status': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
-      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).status(
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime, stringOption(command, '--role') as CompletenessRole | undefined)).status(
         projectId,
         requiredStringOption(command, '--run'),
       );
+    }
+    case 'compile.hierarchy.inspect': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const completeness = createProjectKnowledgeCompletenessWorkflow({ hubRoot: runtime.cwd,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+      if (runtime.knowledgeInspection === undefined && await completeness.handlesRun(projectId, requiredStringOption(command, '--run'))) {
+        return completeness.inspect(projectId, requiredStringOption(command, '--run'), requiredStringOption(command, '--input'),
+          requiredStringOption(command, '--expect-exchange') as HierarchySha256Digest);
+      }
+      const inspector = runtime.knowledgeInspection ?? createProjectKnowledgeWorkflow({ hubRoot: runtime.cwd,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+      return inspector.inspect(projectId, requiredStringOption(command, '--run'), requiredStringOption(command, '--input'),
+        requiredStringOption(command, '--expect-exchange') as HierarchySha256Digest);
     }
     case 'compile.hierarchy.submit': {
       const projectId = requiredStringOption(command, '--project');
@@ -842,7 +899,7 @@ async function executeCommand(
     case 'compile.hierarchy.review': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
-      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).review(
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime, stringOption(command, '--role') as CompletenessRole | undefined)).review(
         projectId,
         requiredStringOption(command, '--run'),
       );
@@ -850,12 +907,31 @@ async function executeCommand(
     case 'compile.hierarchy.finalize': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
-      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).finalize(
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime, undefined, command.options['--expect-stage'] !== undefined)).finalize(
         projectId,
         requiredStringOption(command, '--run'),
         requiredStringOption(command, '--input'),
-        requiredStringOption(command, '--expect-review') as HierarchySha256Digest,
+        requiredStringOption(command, command.options['--expect-stage'] === undefined ? '--expect-review' : '--expect-stage') as HierarchySha256Digest,
       );
+    }
+    case 'compile.hierarchy.completeness.shadow':
+    case 'compile.hierarchy.completeness.inventory':
+    case 'compile.hierarchy.completeness.inventory-review':
+    case 'compile.hierarchy.completeness.reconcile':
+    case 'compile.hierarchy.completeness.submit':
+    case 'compile.hierarchy.completeness.review':
+    case 'compile.hierarchy.completeness.source-review':
+    case 'compile.hierarchy.completeness.correct': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const service = createProjectKnowledgeCompletenessWorkflow({ hubRoot: runtime.cwd,
+        knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+      const action = command.command.slice('compile.hierarchy.completeness.'.length);
+      const names = ['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct'] as const;
+      const selected = names.find(name => name === action);
+      if (selected === undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      return service.write(selected, projectId, requiredStringOption(command, '--run'), requiredStringOption(command, '--input'),
+        requiredStringOption(command, '--expect-stage') as HierarchySha256Digest);
     }
     case 'compile.hierarchy.approve': {
       const projectId = requiredStringOption(command, '--project');

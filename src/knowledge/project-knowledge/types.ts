@@ -4,6 +4,7 @@ export type KnowledgeClassification = 'observed' | 'declared' | 'inferred';
 export type KnowledgeLifecycle = 'current' | 'historical' | 'superseded' | 'stale';
 export type KnowledgeReviewStatus = 'proposed' | 'accepted' | 'disputed';
 export type KnowledgePageRole = 'overview' | 'architecture' | 'decisions';
+export type KnowledgeRendererVersion = 'knowledge-markdown-v1' | 'knowledge-markdown-v2';
 
 export interface KnowledgeSourceV1 {
   readonly sourceId: string;
@@ -152,6 +153,6 @@ export interface KnowledgeGenerationV1 {
   readonly evidence: readonly KnowledgeEvidenceV1[];
   readonly pages: readonly KnowledgePageV1[];
   readonly reconciliationPolicyVersion: 'conservative-currentness-v1';
-  readonly rendererVersion: 'knowledge-markdown-v1';
+  readonly rendererVersion: KnowledgeRendererVersion;
   readonly generationDigest: KnowledgeDigest;
 }

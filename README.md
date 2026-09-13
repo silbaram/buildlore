@@ -319,6 +319,20 @@ source identity and exact source revision/content digest. Changing the selected
 bytes makes the old override stop matching. Never put the matched value or a secret
 in an override or `auditRef`. Omit any egress rule that the project does not need.
 
+To opt into source-only masking, add `"sourceSecretHandling": "mask"` after
+`overrides`. Omission or `"reject"` preserves existing security behavior. Intake
+masks detected credential and entropy spans, rescans the entire derivative, and
+uses only the approved derivative for sync and compilation. Original source files
+are not edited. After changing this digest-bound policy, resync and prepare a new
+Wiki generation run.
+
+Private keys, prompt injection (even with an override), ambiguous overlap, scan
+overflow, residual findings and unsafe citation metadata still fail closed. This
+option does not change AI proposal/review/evaluation validation or egress permissions.
+`<REDACTED:CREDENTIAL>` and `<REDACTED:SECRET>` denote unavailable values; affected
+lines are excluded from factual evidence in new knowledge snapshots. Masking
+handles detected risk; it does not guarantee detection of every secret.
+
 ### 6. Compile and verify the wiki
 
 Review mode writes generated pages to the compiler candidate queue without changing
@@ -380,14 +394,21 @@ overview, architecture and decisions. P2A is an optional source adapter, not the
 knowledge model. It is an opt-in development feature; protocol tests are not evidence
 that an independent AI can answer project questions correctly.
 
-Use this purpose file with the existing `compile hierarchy start` command:
+Use this question-bound purpose file with the existing `compile hierarchy start` command.
+Choose questions and source requirements for the selected project before drafting:
 
 ```json
 {
-  "schemaVersion": "buildlore.hierarchical-workflow-purpose-input.v2",
+  "schemaVersion": "buildlore.hierarchical-workflow-purpose-input.v3",
   "projectId": "example",
   "generationModel": "project-knowledge-v1",
-  "outputLanguage": "en"
+  "outputLanguage": "en",
+  "authoringQuestions": [{
+    "id": "storage", "role": "architecture",
+    "question": "Which storage setting is declared, and what does it control?",
+    "requirements": [{ "id": "storage-value", "sourceRef": "settings.json",
+      "jsonPointer": "/storage", "contentKind": "json-value" }]
+  }]
 }
 ```
 
@@ -399,7 +420,142 @@ sentence, title and section to supporting facts. Refer to
 [knowledge contracts](schemas/project-knowledge.schema.json) and
 [workflow contracts](schemas/project-knowledge-workflow.schema.json).
 
-For this mode the sequence is `sync` → `start` → `submit` → `review` → `finalize` →
+Purpose v3 emits exchange v2 with generic project instructions and the frozen questions.
+Submit `{ schemaVersion: "buildlore.knowledge-question-submission.v1", projectId,
+proposal, questionAnswers: [{ id: "storage", claimIds: ["storage-setting"] }] }`.
+The named claims must be in the question's assigned page and cite its required evidence.
+Start/status expose `sourceCoverage`; submit/review expose `questionCoverage`, including
+`semanticReviewRequired: true`. Missing mappings, wrong pages or uncited details block submission.
+Requirements and answer mappings survive restart and are rechecked before finalize/approval;
+editing the original purpose file cannot relax an existing run. `reviewViewDigest` binds the
+answer mapping as well as the proposal. The reviewer must assess whether the mapped claims
+actually answer each question: source coverage alone does not establish that.
+Purpose v2 and old runs retain their original input and exchange bytes for replay compatibility.
+
+Before drafting, purpose v3 runs support read-only, question-bound code inspection:
+
+```sh
+node dist/cli/bin.js compile hierarchy inspect --project example --run <run-id> --input inspection.json --expect-exchange <exchange-digest> --json
+```
+
+```json
+{
+  "schemaVersion": "buildlore.knowledge-authoring-inspection-request.v1",
+  "projectId": "example",
+  "questionId": "storage",
+  "operation": "find",
+  "contains": "storage"
+}
+```
+
+Start/status also return `inspectionArgs`; append `--input <request.json>`. Use `sources`
+to list selected source paths (optional `contains` filters paths), `find` for case-sensitive
+literal matches in evidence (optional exact `sourceRef`), and `read` with `sourceRef` to read
+that file's evidence in order. Unused `sourceRef`, `contains` and `cursor` may be omitted or
+`null`; `read` still requires a path and `find` still requires a non-empty search string.
+The public `compiler.parseKnowledgeAuthoringInspectionRequest` result can be passed directly
+to `session.inspect` or serialized as a CLI request. Follow entry points, named
+callees/callers, configuration, error handling and related tests with successive requests.
+This is an inspection aid, not an AST/call-graph analyzer, semantic search or code execution.
+
+Only previously selected, sanitized sources in the run's matching snapshot are disclosed.
+Undeclared paths, unknown questions, cross-project requests and source/authority drift fail
+without modifying the run. Additional source selection requires re-sync and a new authoring
+run; this command never expands collection. Results preserve evidence IDs, content digests
+and locators; line numbers refer to the sanitized projection unless explicit origin metadata
+exists. Code inspection and test definitions do not prove execution or a current test pass.
+
+The current AI compares documented intent with implementation and writes concise explanations
+of responsibilities, behavior, disagreements and unknowns, binding them through proposal
+facts and `questionAnswers`. Add relevant implementation/config/test paths to the question's
+requirements before start when those sources must be cited. A lookup receipt is not semantic
+approval: independent review still checks the explanation and both sides of disagreements.
+Missing decision reasons must not be invented from code. Inspection is available before
+finalization, does not modify the exchange, and is not a mandatory logged tool-call protocol.
+
+Pagination uses `cursor`, `limit` (1–50, default 10), and `maxBytes` (8,192–1,048,576,
+default 65,536). The byte limit covers the compact JSON inspection result, excluding the CLI
+envelope/pretty printing. No evidence is clipped or silently skipped: `item-too-large` returns
+an empty page, a retry cursor and `minimumRequiredBytes`; increase `maxBytes` and retry.
+Cursors bind the snapshot, question, operation and filter; changing a filter starts a new read.
+If the question/response metadata itself exceeds the budget, the CLI fails with
+`KNOWLEDGE_INSPECTION_BUDGET_EXCEEDED` and compact `data` containing `byteBudget`,
+`minimumRequiredBytes`, `maximumBytes` and `retryable`. The SDK throws the exported
+`compiler.KnowledgeAuthoringInspectionBudgetError` with the same `details`. When retryable,
+resend the same request/cursor with `maxBytes: minimumRequiredBytes`. Otherwise the complete
+question cannot fit the supported limit; revise the question grouping and start a new
+authoring run. No question requirements or evidence are silently dropped. Security checks
+still take precedence over budget recovery. This failure data uses
+`buildlore.knowledge-authoring-inspection-budget.v1`; successful result contracts are unchanged.
+The schema is also exported as `buildlore/schemas/project-knowledge-inspection.schema.json`.
+See [inspection contracts](schemas/project-knowledge-inspection.schema.json).
+
+
+### Inspect change impact before updating the Wiki
+
+A verified, previously approved knowledge generation is required. After selecting changed
+sources, run `sync`, start a new authoring run, and read its `status`. Save the previous
+`wiki memory` snapshot identifiers before updating: the request uses the baseline generation
+and snapshot digests, plus the new exchange and snapshot digests. A first-generation run
+without a baseline rejects the request with `KNOWLEDGE_INVALID`.
+
+```json
+{
+  "schemaVersion": "buildlore.knowledge-change-impact-request.v1",
+  "operation": "change-impact",
+  "projectId": "example",
+  "expectExchangeDigest": "<new exchange.exchangeDigest>",
+  "expectSnapshotDigest": "<new exchange.snapshot.snapshotDigest>",
+  "expectBaselineGenerationDigest": "<previous generationDigest>",
+  "expectBaselineSnapshotDigest": "<previous snapshotDigest>",
+  "limit": 10,
+  "maxBytes": 65536
+}
+```
+
+Replace each placeholder with its complete `sha256:…` digest and save as `impact.json`:
+
+```sh
+buildlore compile hierarchy inspect --project example --run <run-id> --input impact.json --expect-exchange <new-exchange-digest> --json
+```
+
+SDK callers use `session.inspectChangeImpact(request, session.exchange.exchangeDigest)`;
+`compiler.parseKnowledgeChangeImpactRequest` accepts raw JSON data and normalizes defaults.
+This operation also works on existing authoring runs without questions. It is available in
+`awaiting-proposal` and `review-ready`, and preserves existing exchange/status/run bytes.
+The standalone schema is exported as
+`buildlore/schemas/project-knowledge-change-impact.schema.json`.
+
+The report connects changed evidence to baseline current facts and their baseline Wiki claim
+locations. It retains all sibling evidence, including exact matches. Even a partial loss
+makes the fact stale under existing reconciliation unless it is re-proposed and reviewed.
+`summary` covers the full comparison, independent of pagination; evidence-link counts cover
+baseline current records, while historical/superseded/stale records have separate exclusions.
+
+`revision-metadata-changed` means the aligned excerpt and source content match but identity
+or revision metadata differs. `same-excerpt-source-changed` preserves the distinction between
+a matching excerpt and changed source bytes/location. Neither proves semantic equivalence or
+a passing test. `content-changed` identifies a changed structurally aligned excerpt, not a new
+accepted fact. `source-unselected` and `aligned-evidence-unavailable` are unknowns within the
+selection, not proof of deletion. Multiple structural candidates remain ambiguous. No lexical
+or semantic similarity, rename inference or checkout-wide discovery is performed.
+
+Use `cursor`, `limit` (1–50) and `maxBytes` (8,192–1,048,576) to paginate whole facts.
+`item-too-large` returns no clipped fact and keeps the same offset. When `retryable` is true,
+resend that cursor with `maxBytes: minimumRequiredBytes`; page size may change too. If false,
+the whole fact exceeds the supported maximum and cannot be skipped by this operation.
+The byte budget includes `resultDigest` in compact UTF-8 report JSON; it excludes the CLI
+envelope, pretty printing and trailing newline. Metadata overflow uses the value-free
+`KNOWLEDGE_CHANGE_IMPACT_BUDGET_EXCEEDED` error (`compiler.KnowledgeChangeImpactBudgetError.details`
+in the SDK). Wrong expected bindings or a stale cursor fail with `KNOWLEDGE_DRIFT`.
+
+Read actual sanitized evidence using the existing exchange/authoring inspection and canonical
+fact/evidence lookup. Write supported replacements and scoped supersessions/conflicts, then
+`submit` → independent `review`/`finalize` → explicit `approve` → `activationArgs`.
+The report neither edits knowledge nor grants approval. Ordinary `wiki memory` continues to
+describe the last approved snapshot until an updated generation is approved and activated.
+
+For this mode the sequence is `sync` → `start` → question-specific `inspect`/authoring → `submit` → `review` → `finalize` →
 `approve` → the returned `activationArgs`. `submit` uses `exchange.exchangeDigest`;
 `finalize` imports an independent `buildlore.knowledge-semantic-review.v1` and uses
 the returned `reviewViewDigest`. The reviewer must use a different session or be an
@@ -418,11 +574,68 @@ and `manifest.json`. JSON and Markdown are regenerable projections of the single
 The first legacy migration preserves an immutable authority backup in that store's
 `archives/<authority-digest>.json`; archives are never active search inputs.
 
+New project-knowledge approvals use `buildlore.approved-wiki-authority.v3` with a
+`knowledge-authority-extension.v2` reference. Each immutable generation lives in
+`.llmwiki/buildlore-hierarchy/knowledge-history/objects/<generation-digest>.json`
+inside the selected project. A small reference binds the head, genesis and canonical
+decimal count; there is no aggregate 16 MiB or 64-generation lifetime quota in this
+path. Each generation still has its own 16 MiB size and structural limits. Full
+history verification uses bounded records and a temporary digest-only spool; disk
+and verification time can grow with retained history.
+
+Approval stages screened immutable objects and writes an activation-input v2 bundle
+containing one candidate, its exact baseline and the approval proof. Activation is
+still explicit. Existing v1/v2 authorities remain readable without migration. During
+an explicit v2-to-v3 replacement, the original authority record bytes are preserved
+at `archives/<record-digest>.record.json`. Failed staging or pre-commit activation
+keeps the prior authority and Wiki; the existing publication journal handles retry.
+Activation does not rebuild the semantic index: run `index rebuild` explicitly.
+
+Reads recheck the active record and every referenced history object's actual bytes
+and confined file identity, including on cache hits. Historical semantic replay and
+current-policy screening cannot be replaced by stored digest or “verified” flags.
+Reads do not migrate, collect garbage, embed or rebuild an index. Missing, altered,
+cross-project and invalid history is rejected with structured, value-free errors.
+
+SDK consumers use `prepareCurrentApprovedWikiPublication` or the asynchronous
+publication reader for the `CurrentApprovedWikiAuthority` union, then
+`latestKnowledgeGeneration` and `knowledgeAuthorityHistory` for resolved access.
+Legacy synchronous parsers deliberately reject unresolved v3 pointers. Authoring
+accepts `previousHistory`; answer evaluation accepts `history`. These capabilities
+must come from the confined store and cannot be combined with legacy generation
+array inputs or recreated from serialized JSON.
+
+Regeneration replays the complete retained generation chain and screens all of its
+decoded text and metadata under the current security policy, including old source
+snapshots and review rationales no longer shown in the current Wiki. Field boundaries
+and real line breaks are preserved during screening; JSON serialization must not turn
+unrelated fields into one instruction. Individual values are never truncated, masked
+or split to pass this check. A rejected value blocks generation and leaves the active
+Wiki unchanged.
+
 ```sh
 node dist/cli/bin.js wiki read --project example --page overview --json
 node dist/cli/bin.js wiki citations --project example --page decisions --json
 node dist/cli/bin.js search --project example --query "storage decision" --mode lexical
 ```
+
+Project-knowledge search returns `buildlore.project-knowledge-search.v2` with
+`supportScope: "matched-section"`: each hit carries only that section's claims, facts and
+evidence. Child-summary support is attached only to the overview's first section, where those
+summaries occur. `wiki read`/`citations` still return the full page. After explicit index rebuilding,
+semantic/hybrid requests use the compatible local index. An unavailable or incompatible index/model
+causes a structured semantic error or an explicit hybrid lexical/graph fallback.
+
+Project-knowledge semantic candidates are filtered before fusion by the reported
+`semanticRelevancePolicy`. For the pinned multilingual-e5-small profile, the cosine floors are
+0.820646121668 for the same/unknown writing script and 0.765124142709 for detected cross-script prose (V2, calibration version 2); mixed technical
+prose retains substantial non-Latin text despite Latin identifiers. These are calibrated topical
+heuristics, not answerability guarantees or probabilities. Korean/English fixtures cover two generic
+projects; other languages and domains need evaluation. All-rejected semantic searches return empty
+hits, not a provider fallback; valid hybrid lexical/graph candidates remain. Legacy hierarchy search
+is unchanged. Reader instances reuse a deeply frozen verified publication only after checking confined
+paths and hashing the complete current file bytes; changed authority or security policy cannot reuse
+old approval. A new CLI process still pays the initial verification and model startup costs.
 
 Facts distinguish `observed` source literals, `declared` statements and `inferred`
 interpretations. Only reviewed `accepted` + `current` claims are current explanations;
@@ -434,9 +647,54 @@ changed selection is not deletion, and unreadable input blocks generation.
 Re-proposing a superseded fact cannot restore it to current or erase its replacement
 link; historical re-review retains that link. Further changes extend the replacement chain.
 
-Reads and citations return generation-bound facts and evidence. Unsupported semantic
-indexes explicitly fall back to existing lexical ranking, without mixing old caches;
-search honors the existing intent option. Overview search hits identify inherited
+New authoring runs use `knowledge-markdown-v2`: each cited source includes its exact escaped
+excerpt, original location and `heading` / `json-value` / `text` kind. Cite source assertions as
+`[evidence:sha256:<64 hex>]` and recorded knowledge state as `[fact:sha256:<64 hex>]`.
+The state section names replacement facts and evidence present/absent in the bound snapshot;
+this is provenance, not proof of running code or why an input disappeared.
+Existing v1 authorities, pending v1 runs and v1 evaluation records retain their original
+renderer/bytes. New v2 rendering needs a new reviewed generation and explicit activation;
+reading or upgrading the package does not rewrite the active Wiki.
+
+For authoring diagnostics, `compiler.createKnowledgeEvidenceCoverage(snapshot, requirements, projectId)`
+checks caller-declared `{ id, sourceRef, jsonPointer, contentKind }` requirements against the exact
+sanitized snapshot. `jsonPointer: null` matches the file; `contentKind` is `any`, `json-value`, or `text`.
+It reports `available`, `heading-only`, or `unavailable` plus matching evidence IDs. A missing
+field does not mean an empty array, and this helper neither collects omitted inputs nor changes adapters.
+For example, `{ id: "storage", sourceRef: "settings.json", jsonPointer: "/storage", contentKind: "json-value" }`
+requires the value, not just its heading. `compiler.inspectKnowledgeProposalGrounding(snapshot, proposal,
+projectId, previousGenerations?)` exposes the existing lexical-overlap check per claim before finalization.
+It does not change the threshold or replace semantic review; do not pad claims or unrelated evidence
+to satisfy it. Both helpers are pure codecs, not sanitizer or persistence boundaries: use the session's
+sanitized exchange as input. No producer-specific fields are hardcoded in these helpers.
+
+For each authoring question, `compiler.inspectKnowledgeQuestionCoverage(snapshot, proposal,
+questions, projectId, previousGenerations?)` checks the required sources against the claims assigned
+to that question. Each input is `{ id, claimIds, requirements }`, using the source requirements above.
+The report distinguishes `unavailable` / `heading-only` from `uncited` (source present, but not cited by
+those claims) and `covered`. A citation attached to a different question does not fill this gap.
+The report binds the snapshot, proposal and requirements digests. `covered` means the mapping exists;
+independent review still checks whether the prose actually explains the required knowledge.
+When calling the SDK directly, `session.submit(proposal, exchangeDigest, questions)` refuses incomplete
+coverage before accepting the proposal. This optional SDK diagnostic and purpose v2 remain supported;
+use purpose v3 above to enforce frozen question requirements throughout the public CLI workflow.
+Keep authoring requirements separate from the hidden evaluation oracle and never send the oracle to readers.
+
+If a summary adapter omits needed JSON fields, select the existing `buildlore.json` adapter with a
+user-defined extraction profile for those files. The executable [detail-profile example](test/fixtures/project-knowledge/source-details-example.json)
+retains verification arrays, task status and specification approval using ordinary JSON Pointers.
+Its field names are configuration, not knowledge-core vocabulary. The same file cannot be selected
+through both the summary adapter's input closure and a second generic declaration; choose one collection
+binding. Profile `required` pointers reject absent fields. Explicitly empty arrays remain `_Empty array._`
+with an origin pointer (a `text` excerpt); an omitted field is `unavailable`. All raw fields are still
+screened even when the profile does not display them.
+
+Reads and citations return generation-bound facts and evidence. After activation and
+an explicit `index rebuild --project <id>`, project-knowledge `search --mode semantic`
+and `--mode hybrid` use the same compatible project-local index as hierarchical Wiki search.
+Semantic mode reports a structured failure for a missing, stale or incompatible index/provider;
+hybrid mode explicitly falls back to lexical/graph retrieval without mixing old caches.
+Search honors the existing intent option. Overview search hits identify inherited
 child claims separately. Ranking uses reviewed fact states for each cited section,
 including inherited summaries, without rewriting the stored corpus or changing the
 legacy ranking policy. Shared evidence does not transfer currentness between sections.
@@ -446,6 +704,151 @@ Direct edits to managed Markdown cause drift and block
 overwriting. Restore reviewed bytes from Git/backup before retrying activation; do not
 edit or rehash authority records to repair them. Rebinding fresh-clone source inputs
 is needed for new authoring, not for reading portable approved knowledge.
+
+The SDK also provides [answer evaluation audit contracts](schemas/project-knowledge-answers.schema.json).
+Freeze independently reviewed questions/criteria with `compiler.createAnswerEvaluationContract`
+before authoring. `compiler.createKnowledgeAnswerEvaluationService({ knowledgeRoot }).prepare`
+accepts that contract, the same-project generation chain and optional `runtimeContext`.
+It screens decoded text before returning a reader packet containing instructions, five questions
+and the three actual Markdown pages; oracle criteria and writing history are not included.
+`session.lookup(questionId, evidenceIds)` returns only generation-bound sanitized evidence and
+enforces 10 lookups / 16,384 cumulative UTF-8 bytes, including repeated requests.
+With v2 generations, `session.lookupFacts(questionId, factIds)` returns the fact record, generation lineage
+and current-snapshot evidence membership under that same shared budget. `retrieval.createKnowledgeWikiReader`
+also exposes `fact(projectId, expectedGenerationDigest, factId)` for screened active-generation state lookup.
+V2 answer claims require separate `evidenceIds` and `factIds` arrays matching the exact typed citations
+in their text; a fact ID cannot stand in for a source ID. Source and state lookups each request one kind.
+The five questions and byte limits are unchanged. V1 reports keep their original citation rules.
+`session.serializeReport(input)` checks the actual lookup history and returns screened audit JSON;
+the caller owns any local audit-file write. These are SDK methods, not a new CLI command or AI launcher.
+
+For a new evaluation, opt into `compiler.createReaderAnswerEvaluationContract` using the same contract
+inputs, frozen before authoring. This creates a different contract digest (`knowledge-answer-contract.v2`,
+`contextFormat: "knowledge-reader-v1"`), requiring `knowledge-markdown-v2` generations. Initial input retains
+all authored Wiki prose, fact scope/state and typed citation IDs; complete source excerpts and full fact
+provenance are fetched on demand. Stored Wiki Markdown and old contracts/reports are unchanged. Do not
+retroactively switch an existing evaluation's contract and call it a pass under its old benchmark.
+Under this contract, `session.lookup` returns `knowledge-evidence-context.v1`: exact evidence plus enclosing
+ATX/Setext Markdown headings from the same sanitized snapshot. Fenced examples are excluded. Missing
+historical source context or redacted headings are explicitly unavailable/partial, not reconstructed.
+This is heading context, not full surrounding paragraphs or semantic proof. The entire response, including
+headings and metadata, consumes the shared lookup budget. A source citation without a source lookup for
+that question or an earlier one makes the evaluation fail; a listed ID or fact lookup is not source access.
+
+### Development memory for a coding agent
+
+`buildlore wiki memory --project example --json` returns the approved project's Wiki prose,
+fact state, source references and revision context as `buildlore.knowledge-development-memory.v1`.
+The SDK equivalent is `retrieval.createKnowledgeWikiReader(knowledgeRoot).readMemory('example')`.
+It works without embeddings, model calls, reindexing or knowledge writes. Detailed fact records
+and source excerpts use the existing `wiki lookup --expect-generation` command; an evidence ID
+in the memory does not mean the source has been read. Development guidance permits code inspection,
+changes and tests within the host's authorization and keeps historical results distinct from current
+verification. It grants no tool permissions or automatic source collection.
+
+For authoring, opt into five explicit knowledge axes with `compiler.createDevelopmentMemoryQuestions`:
+
+```js
+import { compiler } from 'buildlore';
+
+const authoringQuestions = compiler.createDevelopmentMemoryQuestions({
+  purpose: [{ id: 'purpose-source', sourceRef: 'docs/README.md', jsonPointer: null, contentKind: 'text' }],
+  architecture: [],
+  decisions: [],
+  'current-state': [],
+  'failures-open-work': [],
+});
+```
+
+Pass these questions in the existing purpose v3 input. Replace empty lists with explicit requirements
+from your selected sources as appropriate. Each question carries a `development-memory-v1` profile
+marker. An empty axis stays **unassessed** and must map zero claims; it does not assert missing project
+knowledge. Selected axes require grounded claim mappings and complete declared-source coverage.
+The source-coverage view uses `coverage: null` for unassessed axes.
+
+Submission and review expose `developmentMemoryInspection` with all five axes, exact page/claim
+locations and fact/evidence links. Its digest is bound into the existing review view, including after
+resume. The SDK also exposes `inspectDevelopmentMemoryContent` and its verified-history counterpart.
+The report checks declared structure; `semanticReviewRequired` always remains true. Source-support
+review and separate content/task evaluation must assess correctness and sufficiency. The report stays
+in the authoring/review flow and is not inferred for old generations. Existing generic questions,
+evaluation packets and generation formats retain their behavior.
+
+### Development handoff and CLI reader evaluation
+
+`compiler.createDevelopmentHandoffQuestions(requirements)` creates five ordinary authoring questions:
+`purpose`, `architecture`, `current-state`, `decisions`, and `changes`. Supply an object with those five
+keys, each holding the existing `{ id, sourceRef, jsonPointer, contentKind }` requirement array, and put
+the returned questions into a purpose v3 `authoringQuestions`. Source selection stays caller-owned;
+there is no required producer, language or P2A adapter. Custom question sets remain supported.
+
+New handoff questions require actors and pre-transfer/persistence checks in the relevant answer,
+changed **and preserved** normal/error behavior, and version-specific verification scope.
+Inspection guidance asks independent reviewers to check these details against the selected evidence;
+it does not automatically certify their meaning. Fresh factory calls use the improved wording;
+previously saved questions, exchange instructions/digests and caller-defined questions are not rewritten.
+The per-answer topic check includes supported documentation, authoring-guidance and development-process
+changes, not only runtime features. Authors inventory relevant topics, map them to cited sentences in
+that answer, and reconcile omissions before submission; mentioning a topic in another answer is insufficient.
+This guidance supports independent review, not automatic semantic acceptance.
+
+Before drafting, use the existing inspection request with `operation: "coverage"` and a question ID
+(omit `sourceRef` and `contains`). It returns paginated requirement statuses: `available`, `heading-only`,
+`source-not-selected`, or `detail-unavailable`. These describe the sanitized snapshot, not the raw
+repository or the cause of an omission. They neither prove semantic support nor attest that an author
+read an excerpt. Post-submission `questionCoverage` separately identifies uncited requirements.
+Inspection guidance asks the author to connect previous/current behavior, recorded reasons, impact,
+verification and unresolved work, and to follow relevant code contracts, callers, failure paths and tests.
+Read supplementary selected evidence where needed. Unknowns must not be invented or counted as fully
+answering a mandatory question whose answer is available. Safety and existing submission gates remain.
+
+```sh
+node dist/cli/bin.js wiki read --project example --page architecture --view reader --json
+node dist/cli/bin.js wiki lookup --project example --kind evidence --id <evidence-digest> --expect-generation <generation-digest> --json
+node dist/cli/bin.js wiki lookup --project example --kind fact --id <fact-digest> --expect-generation <generation-digest> --json
+```
+
+The opt-in reader returns all authored prose, fact state/scope and lookup IDs without duplicating raw
+excerpts. Omit `--view` or use `--view full` for the unchanged full response. Reader mode requires an
+active project-knowledge generation; it never silently falls back to legacy pages. Each lookup requests
+one ID, includes exact evidence and heading context or full fact state, and rejects a changed generation.
+No source synchronization, regeneration or activation occurs during reading.
+
+For new evaluations, `compiler.createCliReaderAnswerEvaluationContract` freezes
+`contextFormat: "knowledge-cli-reader-v1"`. Initial Wiki and lookup context are canonical JSON of the
+same complete CLI `data` objects, including generation metadata. The existing questions, byte budgets,
+evidence-read checks and independent judgment requirements are unchanged. CLI/tool envelopes and known
+session framing belong in `runtimeContext`; do not omit them and claim a measured total. Legacy evaluation
+formats retain their original bytes/digests. Passing protocol tests is not a live Wiki quality result.
+See [reader data schema](schemas/project-knowledge-reader.schema.json).
+
+`compiler.createKnowledgeAnswerEvaluationService({ knowledgeRoot }).inspect` accepts the same input as
+`prepare` and returns screened byte contributions, known initial bytes, whether runtime context is known,
+the initial limit and `exceedsBudget`, without disclosing content. It works for over-budget inputs;
+`prepare` still rejects them without truncation. This is an input-size diagnostic, not a quality judgment.
+The 32,768 bytes are a fixed comparison budget, not a model context-window size, a token count, or a limit
+on the complete stored Wiki. Suitability for real AI answers still needs independent evaluation.
+
+Retained history is structurally replayed and security-screened separately from reader context.
+All snapshots, reviews and metadata remain in scope, including decoded JSON source keys and values.
+Whole fields are deduplicated and scanned in bounded batches; individual values are never split to
+evade a detector or size limit. The sanitizer's 8 MiB per-scan cap and existing structural limits remain
+unchanged. Actual initial context, lookups and reports still require their own security screening.
+Value-free errors distinguish `KNOWLEDGE_SECURITY_INPUT_TOO_LARGE`, `KNOWLEDGE_SECURITY_BLOCKED`
+and `KNOWLEDGE_CONTEXT_BUDGET_EXCEEDED`; malformed or structurally oversized inputs remain
+`KNOWLEDGE_INVALID`. No partial context or size diagnostics escape a failed security check.
+
+All answer text must be covered by ordered UTF-8 byte spans with independent claim/criterion
+judgments. Valid evidence IDs do not establish semantic support. Context has a 32,768-byte budget;
+each answer has an 8,192-byte budget. Oversized answer records fail without silent truncation.
+`runtimeContext` accounts for known additional session instructions/framing. If it is unavailable,
+the full initial-context total is `null`, the known provided bytes remain visible, and live evaluation
+is incomplete. Do not export private/hidden provider instructions to fill that gap.
+Token counts are separately `measured` or `unavailable` with null counts and a reason, never estimated
+from bytes. `recorded-pass` only summarizes supplied judgments and session attestations; it is not
+proof that independent AI sessions ran. `fixture-only` cannot satisfy real AI quality acceptance.
+An initial independent two-sample evaluation found citation and coverage failures. The v2 code changes
+have not yet passed a fresh independent AI evaluation; codec tests are not a quality acceptance result.
 
 #### Recommended legacy hierarchical CLI workflow
 
@@ -845,3 +1248,25 @@ See [PLAN2AGENT.md](PLAN2AGENT.md).
 Working architecture decisions and their trade-offs may be kept under the local,
 Git-ignored `plans/adr/` directory before being projected into the project knowledge
 repository.
+
+### Complete reader packet
+
+Use `buildlore wiki packet --project <id> --json` for the opt-in `buildlore.knowledge-reader-packet.v1` data surface. It preserves all Wiki prose and fact scope/state while deduplicating references. Resolve display aliases through the registries to obtain canonical IDs. Each entry advertises the complete single-ID lookup cost in compact UTF-8 JSON with a final newline; a listed source has not been read. Existing `wiki read` and `wiki lookup --expect-generation` responses are unchanged.
+
+The SDK provides `readPacket(projectId)` and `createPacketAnswerEvaluationContract`. The latter binds `knowledge-reader-packet-v1` to answer contract v3 with the existing 32,768-byte initial context, 16,384-byte/10-call lookup and 8,192-byte per-answer limits. The entire data object and question text count toward the budget. Source citations require an actual lookup for the same or an earlier question. Unmeasured runtime framing remains unavailable; content completeness is reported separately from full live certification. Older contract/report encodings remain supported. Packets require a `knowledge-markdown-v2` generation.
+
+The pinned local embedding profile uses a versioned topical admission policy (`semanticRelevancePolicy` in search results). V2 was selected by a deterministic midpoint between the weakest required positive and strongest unrelated candidate for each script relationship, using frozen calibration and known regressions. Scores are not answer probabilities. Independent holdout results must be reported separately; an infeasible interval or failed holdout is a failed calibration attempt, not permission to relabel queries. Calibration fixtures and profile provenance are in `test/fixtures/semantic-relevance-*-v2.json`. The offline `calibrateSemanticRelevance` helper rejects missing classes, invalid scores and overlapping intervals.
+
+### Completeness authoring and knowledge limits
+
+The opt-in `completeness-v1` workflow maps reviewed inventory items to exact Wiki claims and requires both source/currentness review and omission review. A known unknown must be explained in the mapped prose; a citation or inventory label alone is insufficient.
+
+A supported current statement such as “the selected evidence does not establish production performance” uses `current` presentation. The unknown concerns the measurement, while the statement of the evidence limit is supported. `uncertainty` presentation remains reserved for claims referencing uncertain facts; do not fabricate stale or disputed records to use it. Stage views provide this guidance without changing stored exchange bindings.
+
+Missing declared required sources still block finalization. Scope limits supported by selected sources may be recorded as known unknowns. Review all categories without inventing complete project history or repeating identical propositions within a question and category. These instructions and automated checks do not establish higher document or reader scores; independent evaluation is required.
+
+The question’s own prose should carry documented decision reasons, revision-specific changes, defaults, exceptions and compatibility obligations. Distinguish generated output, implemented behavior and executed verification. Omission reviewers assess those substantive qualifiers, not just item IDs or citations.
+
+After prose submission, author and omission-review stage views may include a read-only `material.reviewPacket` joining each frozen question and required item to its exact current claims, with shared prose, fact and evidence records. It carries proposal, inventory and mapping bindings, but grants no verdict or approval. The source reviewer does not receive it. If the complete packet exceeds 256 KiB of compact JSON or would exceed the existing stage-view limit, it is omitted in full; the original separately accessible material remains available. Reads do not alter stored runs or history.
+
+Inventory admission errors retain `KNOWLEDGE_INVALID` and include a bounded, zero-based question/category/item location with a fixed rule and whole-draft digest. Each requirement link needs matching current-source evidence; history alone does not satisfy it. `compiler.repairKnowledgeCompletenessInventoryDraft(draft, exchange, role, { draftDigest, questionIndex, categoryIndex, itemIndex, replacement })` replaces one caller-owned draft item, preserves its identity, and validates the complete result. Submit that result through the existing shadow/inventory command with the current stage digest. The helper does not write session state or edit accepted inventories. Role guidance includes the existing coverage inspection request shape.

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "buildlore.semantic-relevance-fixture.v1",
+  "modelProfile": "multilingual-e5-small",
+  "scope": "Topical retrieval, not proof that a candidate answers every detail. Synthetic generic project documentation; no BuildLore or producer-specific assumptions.",
+  "documents": [
+    { "id": "parcel-config", "project": "parcel", "text": "Parcel reads Markdown and JSON files from directories declared in sources.json. Recursive directory collection is enabled with recursive=true. Undeclared folders are never scanned. Changing the source manifest requires running sync before rebuilding the local documentation." },
+    { "id": "parcel-security", "project": "parcel", "text": "Parcel keeps project data isolated in separate local directories. Before saving a document it scans for credentials and rejects suspected secrets. Source-only masking replaces detected spans, rescans the derivative, and leaves the original file unchanged." },
+    { "id": "parcel-search", "project": "parcel", "text": "Parcel builds a local semantic search index from approved documents. An embedding model runs on the CPU without network access. Replacing approved documents invalidates the old index. Rebuild the index after activation. Keyword search still works when the model is unavailable." },
+    { "id": "grove-storage", "project": "grove", "text": "Grove 메모 앱은 문서를 UTF-8 Markdown 파일로 로컬 디스크에 저장한다. 문서 변경 이력은 Git 커밋으로 관리한다. 중앙 데이터베이스나 상시 서버를 필요로 하지 않으며, 사용자별 저장 폴더를 설정할 수 있다." },
+    { "id": "grove-build", "project": "grove", "text": "Grove 개발 검증 명령은 npm run build, npm test, npm run lint, npm run typecheck다. 저장 모듈을 변경하면 파일 저장과 이전 버전 복원 테스트를 함께 실행한다. 테스트는 임시 디렉터리를 사용하며 외부 네트워크에 연결하지 않는다." },
+    { "id": "grove-architecture", "project": "grove", "text": "Grove는 CLI 입력 처리, 문서 파싱, 파일 저장 모듈로 나뉜다. CLI는 명령을 해석하고 파서가 Markdown 제목과 본문을 분리한 후 저장 모듈을 호출한다. 저장 모듈은 임시 파일을 먼저 기록한 뒤 원자적으로 이름을 바꾸어 기존 문서 손상을 방지한다." }
+  ],
+  "queries": [
+    { "id": "cal-config-en", "split": "calibration", "project": "parcel", "query": "Where do I choose the folders that are collected?", "expected": ["parcel-config"] },
+    { "id": "cal-security-en", "split": "calibration", "project": "parcel", "query": "What happens when a document contains a secret?", "expected": ["parcel-security"] },
+    { "id": "cal-search-ko", "split": "calibration", "project": "parcel", "query": "문서를 교체한 뒤 의미검색을 갱신하려면 어떻게 해야 하나요?", "expected": ["parcel-search"] },
+    { "id": "cal-storage-ko", "split": "calibration", "project": "grove", "query": "메모 데이터는 어디에 저장되고 이력은 어떻게 관리되나요?", "expected": ["grove-storage"] },
+    { "id": "cal-build-ko", "split": "calibration", "project": "grove", "query": "저장 기능 수정 후 실행해야 하는 개발 검증은?", "expected": ["grove-build"] },
+    { "id": "cal-architecture-en", "split": "calibration", "project": "grove", "query": "How are the CLI, parser and storage modules connected?", "expected": ["grove-architecture"] },
+    { "id": "cal-unrelated-space", "split": "calibration", "project": "parcel", "query": "달 탐사선의 연료 탱크 용량은 몇 리터인가?", "expected": [] },
+    { "id": "cal-unrelated-food", "split": "calibration", "project": "grove", "query": "What temperature should I bake sourdough bread at?", "expected": [] },
+    { "id": "cal-unrelated-sea", "split": "calibration", "project": "parcel", "query": "태평양 심해 생물의 먹이 사슬을 설명해줘", "expected": [] },
+    { "id": "cal-unrelated-sport", "split": "calibration", "project": "grove", "query": "Who won the last international football tournament?", "expected": [] },
+    { "id": "hold-config-ko", "split": "holdout", "project": "parcel", "query": "디렉터리 안의 파일을 재귀적으로 수집하도록 설정하는 방법", "expected": ["parcel-config"] },
+    { "id": "hold-security-ko", "split": "holdout", "project": "parcel", "query": "민감정보 마스킹이 원본 파일도 바꾸는가?", "expected": ["parcel-security"] },
+    { "id": "hold-search-en", "split": "holdout", "project": "parcel", "query": "Does searching documents require an online AI service?", "expected": ["parcel-search"] },
+    { "id": "hold-storage-en", "split": "holdout", "project": "grove", "query": "Does this notes application need a central database?", "expected": ["grove-storage"] },
+    { "id": "hold-build-en", "split": "holdout", "project": "grove", "query": "Which commands check the project before shipping a change?", "expected": ["grove-build"] },
+    { "id": "hold-architecture-ko", "split": "holdout", "project": "grove", "query": "문서를 저장하다 실패하면 기존 파일이 손상되지 않도록 어떻게 처리해?", "expected": ["grove-architecture"] },
+    { "id": "hold-unrelated-orbit", "split": "holdout", "project": "parcel", "query": "What is the orbital period of Neptune?", "expected": [] },
+    { "id": "hold-unrelated-music", "split": "holdout", "project": "grove", "query": "바이올린 현악 사중주의 악기 구성은?", "expected": [] },
+    { "id": "hold-unrelated-garden", "split": "holdout", "project": "parcel", "query": "When should tomato plants be watered in summer?", "expected": [] },
+    { "id": "hold-unrelated-history", "split": "holdout", "project": "grove", "query": "고대 이집트 피라미드는 어떻게 건설되었어?", "expected": [] }
+  ]
+}

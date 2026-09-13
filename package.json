@@ -14,8 +14,14 @@
     "buildlore": "./dist/cli/bin.js"
   },
   "exports": {
+    "./schemas/project-knowledge-completeness.schema.json": "./schemas/project-knowledge-completeness.schema.json",
+    "./schemas/project-knowledge-change-impact.schema.json": "./schemas/project-knowledge-change-impact.schema.json",
+    "./schemas/project-knowledge-history.schema.json": "./schemas/project-knowledge-history.schema.json",
+    "./schemas/project-knowledge-reader.schema.json": "./schemas/project-knowledge-reader.schema.json",
+    "./schemas/project-knowledge-answers.schema.json": "./schemas/project-knowledge-answers.schema.json",
     "./schemas/project-knowledge.schema.json": "./schemas/project-knowledge.schema.json",
     "./schemas/project-knowledge-workflow.schema.json": "./schemas/project-knowledge-workflow.schema.json",
+    "./schemas/project-knowledge-inspection.schema.json": "./schemas/project-knowledge-inspection.schema.json",
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"

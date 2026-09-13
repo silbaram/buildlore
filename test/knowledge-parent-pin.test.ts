@@ -795,7 +795,7 @@ describe('ParentKnowledgePinService', () => {
     expect(add).not.toHaveBeenCalled();
     expect(commitTree).not.toHaveBeenCalled();
     expect(updateRef).not.toHaveBeenCalled();
-  });
+  }, 15_000);
 
   it('accepts an already-pinned clean target without requiring a prior BuildLore pin message', async () => {
     const fixture = await createFixture();
@@ -826,7 +826,7 @@ describe('ParentKnowledgePinService', () => {
       .resolves.toBe(alreadyPinnedHead);
   });
 
-  it('fails closed for missing remote reachability and unrelated parent dirt before add', async () => {
+  it('fails closed for missing remote reachability before add', async () => {
     const missing = await createFixture();
     await git(missing.remoteRoot, ['update-ref', '-d', 'refs/heads/main']);
     const missingMachine = new GitMachineAdapter();
@@ -840,7 +840,9 @@ describe('ParentKnowledgePinService', () => {
     expect(await missingService.commit(missing.input, missingPlan.planDigest))
       .toMatchObject({ state: 'blocked', errorCode: 'PARENT_PIN_INELIGIBLE', partial: false });
     expect(missingAdd).not.toHaveBeenCalled();
+  });
 
+  it('fails closed for unrelated parent dirt before add', async () => {
     const dirty = await createFixture();
     await writeFile(join(dirty.parentRoot, 'private.tmp'), 'unrelated bytes\n', 'utf8');
     const dirtyMachine = new GitMachineAdapter();

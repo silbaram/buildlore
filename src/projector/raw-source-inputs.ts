@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
+import type { CollectionCandidate } from './collection-adapters.js';
 
 import { consumePreparedSource } from '../sanitizer/approval.js';
 import type {
@@ -16,23 +18,55 @@ export const RAW_SOURCE_PATH_REDACTION_RULE_IDS = Object.freeze([
 export interface RawSourceInputV1 {
   readonly allowedRedactionRuleIds: readonly string[];
   readonly body: string;
+  /** Decode all JSON keys/scalars before permitting the masking exception. */
+  readonly maskingPreflightBody?: string;
 }
 
 const RAW_SOURCE_INPUTS = new WeakMap<object, readonly RawSourceInputV1[]>();
+
+/** Provenance cannot be redacted without changing what a citation identifies. */
+export function sourceProvenanceSecurityBody(candidate: CollectionCandidate): string {
+  // Generated source URIs bind encoded paths and digests and are validated by
+  // the source contracts. Scan their user-authored constituents, not an encoded
+  // concatenation which is itself an entropy false positive.
+  return serializeCanonicalJson({ sourceRef: candidate.sourceRef,
+    metadata: candidate.descriptor?.metadata ?? null,
+    jsonOrigins: candidate.jsonOrigins?.map(({ origin }) => ({
+      sourceRef: origin.sourceRef, jsonPointer: origin.jsonPointer,
+    })) ?? null });
+}
 
 function rawSourceInput(value: string | RawSourceInputV1): RawSourceInputV1 {
   if (typeof value === 'string') {
     return Object.freeze({ allowedRedactionRuleIds: Object.freeze([]), body: value });
   }
   const allowed = [...value.allowedRedactionRuleIds];
-  if (typeof value.body !== 'string' || new Set(allowed).size !== allowed.length ||
+  if (typeof value.body !== 'string' ||
+      (value.maskingPreflightBody !== undefined && typeof value.maskingPreflightBody !== 'string') ||
+      new Set(allowed).size !== allowed.length ||
       allowed.some((ruleId) => !RAW_SOURCE_PATH_REDACTION_RULE_IDS.includes(
         ruleId as (typeof RAW_SOURCE_PATH_REDACTION_RULE_IDS)[number],
       ))) {
     throw new Error('Raw source input policy is invalid.');
   }
   allowed.sort();
-  return Object.freeze({ allowedRedactionRuleIds: Object.freeze(allowed), body: value.body });
+  return Object.freeze({ allowedRedactionRuleIds: Object.freeze(allowed), body: value.body,
+    ...(value.maskingPreflightBody === undefined ? {} : { maskingPreflightBody: value.maskingPreflightBody }) });
+}
+
+/** JSON serialization can hide a detector boundary behind an escape sequence. */
+export function decodedJsonSecurityText(value: unknown): string {
+  const parts: string[] = [];
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const item = pending.pop();
+    if (typeof item === 'string') parts.push(item);
+    else if (Array.isArray(item)) { for (const child of item) pending.push(child); }
+    else if (typeof item === 'object' && item !== null) {
+      for (const [key, child] of Object.entries(item)) { parts.push(key); pending.push(child); }
+    }
+  }
+  return parts.join('\n');
 }
 
 export function bindRawSourceInputs<T extends object>(
@@ -46,20 +80,26 @@ export function bindRawSourceInputs<T extends object>(
   return candidate;
 }
 
-export function inspectRawSourceInputs(candidate: object): readonly RawSourceInputV1[] {
-  return RAW_SOURCE_INPUTS.get(candidate) ?? Object.freeze([]);
+export function inspectRawSourceInputs(candidate: object, maskSecrets = false): readonly RawSourceInputV1[] {
+  const inputs = RAW_SOURCE_INPUTS.get(candidate) ?? Object.freeze([]);
+  if (!maskSecrets) return inputs;
+  return Object.freeze(inputs.flatMap((input) => input.maskingPreflightBody === undefined ? [input] :
+    [input, Object.freeze({ body: input.maskingPreflightBody,
+      allowedRedactionRuleIds: RAW_SOURCE_PATH_REDACTION_RULE_IDS })]));
 }
 
 export function rawSourceInputSanitizationIsSafe(
   input: RawSourceInputV1,
   approvedBody: string,
   summaries: readonly SecurityRuleSummary[],
+  maskSecrets = false,
 ): boolean {
   const allowed = new Set(input.allowedRedactionRuleIds);
   if (summaries.length === 0) return approvedBody === input.body;
   return summaries.every((summary) =>
     summary.action === 'redact' && summary.count > 0 && summary.overriddenCount === 0 &&
-    allowed.has(summary.ruleId));
+    (allowed.has(summary.ruleId) || (maskSecrets &&
+      (summary.ruleId.startsWith('credential.') || summary.ruleId === 'entropy.masked'))));
 }
 
 function sha256(value: string): `sha256:${string}` {
@@ -79,9 +119,10 @@ export async function boundRawSourceInputsAreSafe(
     source: string;
     sourceKind: SecuritySourceKind;
     sourceRevision: `sha256:${string}`;
+    maskSecrets?: boolean;
   }>,
 ): Promise<boolean> {
-  for (const rawInput of inspectRawSourceInputs(owner)) {
+  for (const rawInput of inspectRawSourceInputs(owner, input.maskSecrets)) {
     const bodyDigest = sha256(rawInput.body);
     const result = await input.security.prepareSource({
       body: rawInput.body,
@@ -106,6 +147,7 @@ export async function boundRawSourceInputsAreSafe(
           rawInput,
           prepared.approvedBody,
           result.report.summaries,
+          input.maskSecrets,
         )) return false;
   }
   return true;

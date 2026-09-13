@@ -28,6 +28,7 @@ const RULE_DESCRIPTORS = [
   { action: 'redact', overridable: false, priority: 56, ruleId: 'credential.provider.google' },
   { action: 'block', overridable: false, priority: 60, ruleId: 'private-key.pem' },
   { action: 'block', overridable: true, priority: 70, ruleId: 'entropy.candidate' },
+  { action: 'redact', overridable: false, priority: 71, ruleId: 'entropy.masked' },
   { action: 'quarantine', overridable: true, priority: 80, ruleId: 'prompt-injection.override-instructions' },
   { action: 'quarantine', overridable: true, priority: 81, ruleId: 'prompt-injection.secret-exfiltration' },
   { action: 'quarantine', overridable: true, priority: 82, ruleId: 'prompt-injection.role-instruction' },

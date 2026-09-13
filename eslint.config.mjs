@@ -14,6 +14,8 @@ export default tseslint.config(
       'dist/**',
       'eslint.config.mjs',
       'node_modules/**',
+      // Local-only planning/evaluation artifacts are outside the product TypeScript project.
+      'plans/**',
     ],
   },
   js.configs.recommended,
@@ -23,7 +25,7 @@ export default tseslint.config(
       globals: globals.node,
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['scripts/*.mjs'],
+          allowDefaultProject: ['scripts/*.mjs', 'vitest.config.mjs'],
         },
         tsconfigRootDir: import.meta.dirname,
       },

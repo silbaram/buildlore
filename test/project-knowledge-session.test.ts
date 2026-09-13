@@ -16,6 +16,8 @@ import { prepareApprovedWikiPublication, verifyApprovedWikiAuthority } from '../
 import { createHierarchicalMarkdownPublication, type HierarchicalMarkdownRepositoryLeasePort } from '../src/retrieval/hierarchical-markdown-publication.js';
 import { parseHierarchicalMarkdownManifest, renderHierarchicalMarkdown } from '../src/retrieval/hierarchical-markdown.js';
 import { createKnowledgeWikiReader } from '../src/retrieval/project-knowledge-reader.js';
+import { createLocalWikiOperator } from '../src/retrieval/local-wiki-operator.js';
+import { knowledgeSemanticProvider } from './helpers/knowledge-semantic-provider.js';
 import { writeSecurityPolicy } from './fixtures/security-policy.js';
 import { fixtureFact, fixtureProposal, fixtureReview, knowledgeFixtureSnapshot, TEST_KNOWLEDGE_ACTOR } from './helpers/project-knowledge-fixture.js';
 
@@ -27,14 +29,21 @@ const testLease: HierarchicalMarkdownRepositoryLeasePort = {
 };
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
-async function sessionFixture() {
+async function sessionFixture(includeAggregationProbe = false) {
   const root = await mkdtemp(join(tmpdir(), 'buildlore-knowledge-session-'));
   roots.push(root);
   await addProject(root, { projectId: 'parcel', displayName: 'Parcel', sourceRepository: 'https://example.test/parcel.git' });
   await writeSecurityPolicy(root, 'parcel', { capabilities: [] });
   const security = createProjectSecurityService({ knowledgeRoot: root });
   const sourceSnapshot = await knowledgeFixtureSnapshot();
-  const sources = await Promise.all(sourceSnapshot.sources.map(async (source) => {
+  const aggregationProbe = includeAggregationProbe ? [{
+    sourceId: 'reveal-probe',
+    sourceRef: 'secret.md',
+    content: 'Harmless documentation fixture.\n',
+    sourceContentDigest: sha256('Harmless documentation fixture.\n'), sourceRevision: 'R1',
+    codeRevision: null, tracked: true, format: 'markdown' as const,
+  }] : [];
+  const sources = await Promise.all([...sourceSnapshot.sources, ...aggregationProbe].map(async (source) => {
     const result = await security.prepareSource({ projectId: 'parcel', source: source.sourceRef,
       sourceKind: source.format, body: source.content, bodyDigest: sha256(source.content),
       sourceRevisionOrContentSha256: source.sourceContentDigest });
@@ -46,8 +55,63 @@ async function sessionFixture() {
 }
 
 describe('project knowledge current-session handoff', () => {
-  it('bridges independently reviewed text through existing hierarchy receipts and integrity', async () => {
+  it('renders Basic prose after rejecting a credential in the same Wiki handoff', async () => {
     const fixture = await sessionFixture();
+    const session = await fixture.service.prepare(fixture.input);
+    const value = Buffer.from(['fixture', 'synthetic-pass'].join(':')).toString('base64');
+    const unsafe = fixtureProposal(session.exchange.snapshot, [fixtureFact(session.exchange.snapshot,
+      `Basic ${value}`)]);
+    await expect(session.submit(unsafe, session.exchange.exchangeDigest)).rejects.toThrow(ProjectKnowledgeError);
+    expect(session.reviewTargets()).toEqual([]);
+    const statement = 'Basic information: Parcel prepares local delivery manifests.';
+    const proposal = fixtureProposal(session.exchange.snapshot, [fixtureFact(session.exchange.snapshot, statement)]);
+    await session.submit(proposal, session.exchange.exchangeDigest);
+    const generation = await session.finalize(fixtureReview(proposal), proposal.proposalDigest);
+    const pages = renderKnowledgeFiles(generation).filter(file => file.path.endsWith('.md'));
+    expect(pages).toHaveLength(3);
+    for (const page of pages) {
+      expect(page.body).toContain(statement);
+      expect(page.body).not.toContain('<REDACTED:CREDENTIAL>');
+      expect(page.body.includes(value)).toBe(false);
+    }
+  });
+
+  it('requires completeness boundaries in the v2 authoring instructions', async () => {
+    const fixture = await sessionFixture();
+    const session = await fixture.service.prepare(fixture.input);
+    const instructions = session.exchange.instructions.join('\n');
+    expect(instructions).toContain('Include unresolved development context');
+    expect(instructions).toContain('sanitized evidence is read by the current AI session');
+    expect(instructions).toContain('compiler/project-knowledge/session.ts');
+    expect(instructions).toContain('exact detected credential or entropy-risk spans');
+    expect(instructions).toContain('before the first migration of an existing Wiki');
+    expect(instructions).toContain('unknown-full-history');
+  });
+
+  it('rejects a proposal with missing caller-required question coverage before accepting it', async () => {
+    const fixture = await sessionFixture();
+    const session = await fixture.service.prepare(fixture.input);
+    const proposal = fixtureProposal(session.exchange.snapshot);
+    const question = { id: 'purpose', claimIds: ['claim-overview'], requirements: [
+      { id: 'scope', sourceRef: 'README.md', jsonPointer: null, contentKind: 'text' },
+    ] };
+    await expect(session.submit(proposal, session.exchange.exchangeDigest,
+      [{ ...question, claimIds: [] }])).rejects.toThrow(ProjectKnowledgeError);
+    expect(session.reviewTargets()).toEqual([]);
+    await expect(session.finalize(fixtureReview(proposal), proposal.proposalDigest)).rejects.toThrow(ProjectKnowledgeError);
+    const sentinel = `ghp_${'1234567890'.repeat(3)}123456`;
+    const unsafe = session.submit(proposal, session.exchange.exchangeDigest, [{ ...question, id: sentinel }]);
+    await expect(unsafe).rejects.toThrow(ProjectKnowledgeError);
+    await unsafe.catch((error: unknown) => { expect(String(error)).not.toContain(sentinel); });
+    expect(session.reviewTargets()).toEqual([]);
+    await session.submit(proposal, session.exchange.exchangeDigest, [question]);
+    expect(session.reviewTargets().length).toBeGreaterThan(0);
+    const result = await session.finalize(fixtureReview(proposal), proposal.proposalDigest);
+    expect(result.proposal.proposalDigest).toBe(proposal.proposalDigest);
+  });
+
+  it('bridges independently reviewed text through existing hierarchy receipts and integrity', async () => {
+    const fixture = await sessionFixture(true);
     const session = await fixture.service.prepare(fixture.input);
     const snapshot = session.exchange.snapshot;
     const roles = ['overview', 'architecture', 'decisions'] as const;
@@ -79,6 +143,19 @@ describe('project knowledge current-session handoff', () => {
     }) };
     await session.submit(proposal, session.exchange.exchangeDigest);
     const generation = await session.finalize({ ...reviewInput, reviewDigest: digest(reviewInput) }, proposal.proposalDigest);
+    const serializedGeneration = JSON.stringify(generation);
+    const serializedDigest = sha256(serializedGeneration);
+    const aggregateScan = await fixture.security.prepareSource({ projectId: 'parcel',
+      source: 'project-knowledge-reader.md', sourceKind: 'wiki', body: serializedGeneration,
+      bodyDigest: serializedDigest, sourceRevisionOrContentSha256: serializedDigest });
+    expect(aggregateScan.ok).toBe(false);
+    expect(aggregateScan.report.summaries).toContainEqual(expect.objectContaining({
+      ruleId: 'prompt-injection.secret-exfiltration', action: 'quarantine',
+    }));
+    const nextFixture = await sessionFixture(true);
+    const resumed = await nextFixture.service.prepare({ ...nextFixture.input, previousGenerations: [generation] });
+    expect(resumed.exchange.baselineGenerationDigest).toBe(generation.generationDigest);
+    expect(resumed.exchange.previousRecords).toEqual(generation.records);
     const bridge = await bridgeKnowledgeToHierarchy({ knowledgeRoot: fixture.root, generation,
       baselineGenerationDigest: null, baselineProposals: [] });
     expect(bridge.pageMappings.map((m) => m.role).sort()).toEqual([...roles].sort());
@@ -123,7 +200,7 @@ describe('project knowledge current-session handoff', () => {
     expect(overview).toMatchObject({ generationDigest: generation.generationDigest });
     expect(overview?.facts).toEqual(expect.arrayContaining([expect.objectContaining({ classification: 'declared', reviewStatus: 'accepted' })]));
     expect(await reader.search('parcel', 'documented processing path', 'hybrid')).toMatchObject({
-      effectiveMode: 'lexical', fallback: { reasonCode: 'project-knowledge-semantic-index-unavailable' },
+      effectiveMode: 'lexical-graph', fallback: { reasonCode: 'semantic-index-unavailable' },
       generationDigest: generation.generationDigest });
     const current = await reader.search('parcel', 'local', 'lexical', 'current');
     const historical = await reader.search('parcel', 'local', 'lexical', 'historical');
@@ -133,8 +210,25 @@ describe('project knowledge current-session handoff', () => {
       expect(hits.map(record).find((hit) => hit.role === 'decisions'))
         .toMatchObject({ meaningAdjustment: { authority: expected } });
     }
+    const provider = knowledgeSemanticProvider();
+    const identity = provider.activeIdentity();
+    if (!identity) throw new Error('Missing fixture embedding identity.');
+    await createLocalWikiOperator({ hubRoot: fixture.root, knowledgeRoot: fixture.root,
+      provider, embeddingIdentity: identity, repositoryLease: testLease }).rebuildIndex({ projectId: 'parcel' });
+    const semanticReader = createKnowledgeWikiReader(fixture.root, { provider });
+    for (const mode of ['semantic', 'hybrid'] as const) {
+      for (const [intent, expected] of [['current', -0.0015], ['historical', 0.0015]] as const) {
+        const result = await semanticReader.search('parcel', 'local', mode, intent);
+        expect(result).toMatchObject({ effectiveMode: mode, fallback: null });
+        if (!Array.isArray(result?.hits)) throw new Error('Missing fixture semantic results.');
+        const hits: readonly unknown[] = result.hits;
+        expect(hits.map(record).find(hit => hit.role === 'decisions'))
+          .toMatchObject({ meaningAdjustment: { authority: expected } });
+      }
+    }
     await expect(reader.evidence('parcel', digest('stale-generation'), generation.evidence[0]?.evidenceId ?? digest('missing'))).rejects.toThrow(ProjectKnowledgeError);
-  });
+  // Publication plus repeated integrity-checked file reads is an integration path, not a 5s unit test.
+  }, 15_000);
 
   it('uses real sanitizer capabilities and produces three deterministic Markdown pages without provider calls', async () => {
     const fixture = await sessionFixture();

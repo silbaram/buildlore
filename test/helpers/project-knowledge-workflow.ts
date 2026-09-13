@@ -31,7 +31,8 @@ export interface KnowledgeWorkflowFixture {
   cleanup(): Promise<void>;
 }
 
-export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' | 'optional-p2a'): Promise<KnowledgeWorkflowFixture> {
+export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' | 'optional-p2a',
+  options: Readonly<{ sourceDetails?: boolean }> = {}): Promise<KnowledgeWorkflowFixture> {
   const root = await mkdtemp(join(tmpdir(), 'buildlore-knowledge-e2e-'));
   const sourceRoot = join(root, 'source');
   const hubRoot = join(root, 'hub');
@@ -73,12 +74,17 @@ export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' |
     await initializeSingleProjectQuickstart(hubRoot, { branch: 'main', knowledgeRepository: '../knowledge.git',
       projectId, sourceRepository: `https://example.test/${projectId}.git`, sourceRoot });
     const p2a = p2aRunJsonKnowledgeAdapter();
+    const details: unknown = options.sourceDetails === true
+      ? JSON.parse(await readFile(join(fixtureRoot, '../../source-details-example.json'), 'utf8')) : [];
+    if (!Array.isArray(details)) throw new Error('Invalid fixture source declarations.');
+    const detailDeclarations: readonly unknown[] = details;
     await writeFile(join(sourceRoot, '.buildlore/sources.json'), serializeCanonicalJson(parseSourceCollectionManifestV2({ schemaVersion: 'buildlore.sources.v2',
       projectId, sourceRepository: `https://example.test/${projectId}.git`, sources: [
         { adapterId: 'buildlore.generic', adapterVersion: 1, id: 'docs', kind: 'markdown', path: 'docs', pathType: 'directory', recursive: true },
         { adapterId: 'buildlore.json', adapterVersion: 1, id: 'settings', kind: 'json', path: 'settings.json', pathType: 'file' },
-        ...(sample === 'optional-p2a' ? [{ adapterId: p2a.registration.adapterId, adapterVersion: 1,
+        ...(sample === 'optional-p2a' && options.sourceDetails !== true ? [{ adapterId: p2a.registration.adapterId, adapterVersion: 1,
           id: 'execution-history', kind: 'json', path: 'artifacts/runs/run-index.json', pathType: 'file' }] : []),
+        ...detailDeclarations,
       ] }, createBuiltInSourceAdapterRegistry({ registrations: sample === 'optional-p2a' ? [p2a] : [] }))));
     await writeFile(join(knowledgeRoot, 'projects', projectId, 'profile-binding.json'),
       serializeCanonicalJson(createProfileBindingV2('general', 'en', sample === 'optional-p2a' ? [p2a] : [])));

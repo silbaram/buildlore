@@ -1,6 +1,7 @@
+import { latestKnowledgeGeneration } from './project-knowledge-authority.js';
 import { invalid } from '../knowledge/project-knowledge/guards.js';
 import type { KnowledgeRecordV1 } from '../knowledge/project-knowledge/types.js';
-import type { KnowledgeAuthorityExtensionV1 } from './project-knowledge-authority.js';
+import type { KnowledgeAuthorityExtension } from './project-knowledge-authority.js';
 import type { ApprovedWikiMeaningSignalV1, ApprovedWikiRetrievalCorpusV1,
   HierarchicalRetrievalLocatorV1 } from './hierarchical.js';
 
@@ -18,10 +19,10 @@ function stateSignal(facts: readonly KnowledgeRecordV1[], sourceId: string): App
 }
 
 /** @internal Both inputs come from one verified publication. Do not rewrite its stored projection. */
-export function createKnowledgeRankingSignals(extension: KnowledgeAuthorityExtensionV1,
+export function createKnowledgeRankingSignals(extension: KnowledgeAuthorityExtension,
   corpus: ApprovedWikiRetrievalCorpusV1,
 ): (locator: HierarchicalRetrievalLocatorV1) => readonly ApprovedWikiMeaningSignalV1[] {
-  const generation = extension.generations.at(-1);
+  const generation = latestKnowledgeGeneration(extension);
   if (!generation || generation.projectId !== corpus.projectId || generation.generationDigest !== extension.generationDigest) invalid();
   const records = new Map(generation.records.map((fact) => [fact.id, fact]));
   const evidenceByCitation = new Map(extension.evidenceMappings.map((mapping) => [mapping.citationId, mapping.evidenceId]));

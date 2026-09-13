@@ -1,6 +1,11 @@
+import { createKnowledgeGenerationHistoryStore } from './project-knowledge-history-store.js';
+import { constants as fsConstants } from 'node:fs';
+import { screenRetainedKnowledgeHistory, screenRetainedKnowledgeValue } from '../compiler/project-knowledge/history-security.js';
+import { latestKnowledgeGeneration } from './project-knowledge-authority.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
+  link,
   mkdir,
   open,
   readFile,
@@ -30,9 +35,11 @@ import {
 import {
   ApprovedWikiProjectionError,
   createApprovedWikiProjectionStore,
-  prepareApprovedWikiPublication,
+  createApprovedWikiPublicationReader,
+  prepareCurrentApprovedWikiPublication,
   readApprovedWikiPublicationSnapshot,
-  type ApprovedWikiAuthorityV1,
+  readVerifiedLegacyAuthorityRecordBytes,
+  type CurrentApprovedWikiAuthority,
   type ApprovedWikiProjectionStorePort,
   type ApprovedWikiPublicationSnapshotV1,
   type ApprovedWikiRetrievalProjectionV1,
@@ -44,7 +51,7 @@ import {
   HIERARCHICAL_MARKDOWN_NAMESPACE,
   HIERARCHICAL_MARKDOWN_RENDERER_DIGEST,
   KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION,
-  KNOWLEDGE_MARKDOWN_RENDERER_DIGEST,
+  knowledgeMarkdownRendererDigest,
   HIERARCHICAL_MARKDOWN_STATUS_SCHEMA_VERSION,
   HierarchicalMarkdownMaterializationError,
   parseHierarchicalMarkdownManifest,
@@ -88,7 +95,7 @@ export interface HierarchicalMarkdownPublicationResultV1 {
 
 export interface HierarchicalMarkdownPublicationPort {
   publish(input: Readonly<{
-    readonly authority: ApprovedWikiAuthorityV1;
+    readonly authority: CurrentApprovedWikiAuthority;
     readonly preserveAuthority?: true;
     readonly projectId: string;
   }>): Promise<HierarchicalMarkdownPublicationResultV1>;
@@ -115,6 +122,8 @@ export interface HierarchicalMarkdownPublicationTestHooks {
   readonly afterNewGenerationMove?: () => Promise<void> | void;
   readonly afterPreviousGenerationMove?: () => Promise<void> | void;
   readonly beforeAuthorityCommit?: () => Promise<void> | void;
+  readonly beforeLegacyArchive?: () => Promise<void> | void;
+  readonly afterLegacyArchive?: () => Promise<void> | void;
   readonly beforeStageWrite?: () => Promise<void> | void;
 }
 
@@ -595,8 +604,11 @@ async function inspectNamespace(
     )) return Object.freeze({ manifest, state: 'drifted' as const });
     if (expected !== null) {
       const knowledgeMode = expected.authority.knowledgeGeneration !== undefined;
+      const generation = expected.authority.knowledgeGeneration === undefined ? undefined : latestKnowledgeGeneration(expected.authority.knowledgeGeneration);
+      const expectedRenderer = generation === undefined ? HIERARCHICAL_MARKDOWN_RENDERER_DIGEST
+        : knowledgeMarkdownRendererDigest(generation.rendererVersion);
       if (manifest.schemaVersion !== (knowledgeMode ? KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION : HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION) ||
-          manifest.rendererDigest !== (knowledgeMode ? KNOWLEDGE_MARKDOWN_RENDERER_DIGEST : HIERARCHICAL_MARKDOWN_RENDERER_DIGEST)) {
+          manifest.rendererDigest !== expectedRenderer) {
         return Object.freeze({ manifest, state: 'renderer-outdated' as const });
       }
       if (knowledgeMode && manifest.materializationDigest !== renderVerifiedHierarchicalMarkdown({ publication: expected }).manifest.materializationDigest) {
@@ -683,6 +695,68 @@ async function scanFinalBytes(
       fail('HIERARCHICAL_MARKDOWN_SECURITY_DENIED');
     }
   }
+}
+
+/** Preserve the original v2 record bytes; migration never rewrites or truncates retained evidence. */
+async function preserveLegacyKnowledgeRecord(paths: HierarchyPaths, previous: ApprovedWikiPublicationSnapshotV1,
+  knowledgeRoot: string, projectId: string, policyDigest: `sha256:${string}`, security: ProjectSecurityService): Promise<void> {
+  if (previous.authority.schemaVersion !== 'buildlore.approved-wiki-authority.v2' || !previous.authority.knowledgeGeneration) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+  const screen = async (body: string): Promise<void> => {
+    const bodyDigest = digestText(body);
+    const result = await security.prepareSource({ body, bodyDigest, projectId, sourceKind: 'wiki',
+      source: 'buildlore-hierarchy/legacy-record.json', sourceRevisionOrContentSha256: bodyDigest });
+    const prepared = result.ok ? consumePreparedSource(result.prepared) : null;
+    if (!prepared || prepared.approvedBody !== body || prepared.policyDigest !== policyDigest || prepared.untrustedData) fail('HIERARCHICAL_MARKDOWN_SECURITY_DENIED');
+  };
+  const { knowledgeGeneration, ...hierarchy } = previous.authority;
+  await screenRetainedKnowledgeHistory(knowledgeGeneration.generations, screen);
+  const { generations: excluded, ...metadata } = knowledgeGeneration;
+  void excluded;
+  await screenRetainedKnowledgeValue({ hierarchy, metadata }, screen);
+  const bytes = await readVerifiedLegacyAuthorityRecordBytes(knowledgeRoot, projectId, previous.recordDigest);
+  await assertStoreParentIdentities(paths);
+  const directory = join(paths.storeRoot, 'archives');
+  try { await mkdir(directory, { mode: 0o700 }); await syncDirectory(paths.storeRoot); }
+  catch (error) { if (!isNodeError(error) || error.code !== 'EEXIST') throw error; }
+  const identity = await assertSafeDirectory(directory);
+  const path = join(directory, `${previous.recordDigest.slice(7)}.record.json`);
+  const temporary = join(directory, `.archive-${randomUUID()}.tmp`);
+  const handle = await open(temporary, 'wx', 0o600);
+  const status = await handle.stat();
+  try {
+    await assertDirectoryIdentity(identity);
+    if (!status.isFile() || await realpath(temporary) !== temporary) fail('HIERARCHICAL_MARKDOWN_DRIFT');
+    await handle.writeFile(bytes);
+    await handle.sync();
+    await assertDirectoryIdentity(identity);
+    try { await link(temporary, path); }
+    catch (error) { if (!isNodeError(error) || error.code !== 'EEXIST') throw error; }
+  } finally {
+    await handle.close();
+    await assertDirectoryIdentity(identity);
+    const owned = await lstat(temporary);
+    if (owned.dev === status.dev && owned.ino === status.ino) await unlink(temporary);
+  }
+  await syncDirectory(directory);
+  const stored = await lstat(path);
+  if (!stored.isFile() || stored.isSymbolicLink() || stored.nlink !== 1 || stored.size !== bytes.length ||
+      await realpath(path) !== path) fail('HIERARCHICAL_MARKDOWN_DRIFT');
+  const archived = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  try {
+    const opened = await archived.stat();
+    if (!opened.isFile() || opened.dev !== stored.dev || opened.ino !== stored.ino || opened.size !== bytes.length) fail('HIERARCHICAL_MARKDOWN_DRIFT');
+    const chunk = Buffer.alloc(64 * 1024);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await archived.read(chunk, 0, Math.min(chunk.length, bytes.length - offset), offset);
+      if (bytesRead === 0 || !chunk.subarray(0, bytesRead).equals(bytes.subarray(offset, offset + bytesRead))) fail('HIERARCHICAL_MARKDOWN_DRIFT');
+      offset += bytesRead;
+    }
+    const [after, named] = await Promise.all([archived.stat(), lstat(path)]);
+    if (after.size !== stored.size || after.mtimeMs !== stored.mtimeMs || after.ctimeMs !== stored.ctimeMs ||
+        named.dev !== stored.dev || named.ino !== stored.ino || named.nlink !== 1 || await realpath(path) !== path) fail('HIERARCHICAL_MARKDOWN_DRIFT');
+  } finally { await archived.close(); }
+  await assertDirectoryIdentity(identity);
 }
 
 /** Called under the same repository lease and hierarchy lock before a legacy swap. */
@@ -968,6 +1042,9 @@ async function inspectStatus(
 export function createHierarchicalMarkdownPublication(
   options: CreateHierarchicalMarkdownPublicationOptions,
 ): HierarchicalMarkdownPublicationPort {
+  const publications = createApprovedWikiPublicationReader(options.knowledgeRoot);
+  const historyStore = createKnowledgeGenerationHistoryStore({ knowledgeRoot: options.knowledgeRoot });
+  const currentAuthority = (_root: string, projectId: string): Promise<ApprovedWikiPublicationSnapshotV1 | null> => publications.read(projectId);
   const corpusStore = options.corpusStore ?? createApprovedWikiProjectionStore(options.knowledgeRoot);
   const hooks = options.hooks ?? {};
   const lease = options.lease;
@@ -982,7 +1059,7 @@ export function createHierarchicalMarkdownPublication(
       }
       let publication: ApprovedWikiPublicationSnapshotV1;
       try {
-        publication = prepareApprovedWikiPublication(input.authority, input.projectId);
+        publication = await prepareCurrentApprovedWikiPublication(input.authority, input.projectId, options.knowledgeRoot, historyStore);
       } catch (error) {
         const stored = await currentAuthority(options.knowledgeRoot, input.projectId)
           .catch(() => null);
@@ -1013,6 +1090,9 @@ export function createHierarchicalMarkdownPublication(
               fail('HIERARCHICAL_MARKDOWN_DRIFT');
             }
             const previous = await currentAuthority(options.knowledgeRoot, input.projectId);
+            if (publication.authority.schemaVersion === 'buildlore.approved-wiki-authority.v3' &&
+                previous?.recordDigest !== publication.recordDigest &&
+                publication.authority.baselineRecordDigest !== (previous?.recordDigest ?? null)) fail('HIERARCHICAL_MARKDOWN_DRIFT');
             if (input.preserveAuthority === true &&
                 previous?.recordDigest !== publication.recordDigest) {
               fail('HIERARCHICAL_MARKDOWN_DRIFT');
@@ -1022,9 +1102,14 @@ export function createHierarchicalMarkdownPublication(
             if (publication.authority.knowledgeGeneration !== undefined) {
               await assertKnowledgeNamespaceOwnership(paths, input.projectId, previous);
             }
-            if (publication.authority.knowledgeGeneration !== undefined && previous !== null &&
-                previous.authority.knowledgeGeneration === undefined && input.preserveAuthority !== true) {
-              await preserveLegacyAuthority(paths, previous, input.projectId, policy.digest, security);
+            if (publication.authority.knowledgeGeneration !== undefined && previous !== null && input.preserveAuthority !== true) {
+              if (previous.authority.knowledgeGeneration === undefined) {
+                await preserveLegacyAuthority(paths, previous, input.projectId, policy.digest, security);
+              } else if (publication.authority.schemaVersion === 'buildlore.approved-wiki-authority.v3' && previous.authority.schemaVersion !== 'buildlore.approved-wiki-authority.v3') {
+                await hooks.beforeLegacyArchive?.();
+                await preserveLegacyKnowledgeRecord(paths, previous, options.knowledgeRoot, input.projectId, policy.digest, security);
+                await hooks.afterLegacyArchive?.();
+              }
             }
             const previousNamespace = await inspectNamespace(paths.finalRoot, input.projectId, null);
             const journal: JournalV1 = Object.freeze({

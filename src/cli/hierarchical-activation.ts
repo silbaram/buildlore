@@ -1,3 +1,5 @@
+import { latestKnowledgeGeneration, verifyKnowledgeHistoryAppend } from '../retrieval/project-knowledge-authority.js';
+import { createKnowledgeGenerationHistoryStore } from '../retrieval/project-knowledge-history-store.js';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
@@ -16,6 +18,7 @@ import { createSourceCollectionAdapter } from '../projector/collection-adapters.
 import type { RegisteredJsonKnowledgeAdapterV1 } from '../projector/json-knowledge-adapter.js';
 import {
   boundRawSourceInputsAreSafe,
+  sourceProvenanceSecurityBody,
   inspectRawSourceInputs,
   rawSourceInputSanitizationIsSafe,
 } from '../projector/raw-source-inputs.js';
@@ -33,9 +36,9 @@ import {
 import {
   APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION,
   readApprovedWikiPublicationSnapshot,
-  type ApprovedWikiAuthorityV1,
+  type CurrentApprovedWikiAuthority,
 } from '../retrieval/index.js';
-import { verifyApprovedWikiAuthority } from '../retrieval/approved-corpus-store.js';
+import { prepareCurrentApprovedWikiPublication } from '../retrieval/approved-corpus-store.js';
 import {
   createHierarchicalMarkdownPublication,
   type HierarchicalMarkdownPublicationPort,
@@ -76,7 +79,7 @@ export class HierarchicalWikiActivationError extends Error {
 }
 
 export interface HierarchicalWikiLiveSnapshotVerifierPort {
-  verify(authority: ApprovedWikiAuthorityV1, projectId: string): Promise<void>;
+  verify(authority: CurrentApprovedWikiAuthority, projectId: string): Promise<void>;
 }
 
 export interface HierarchicalWikiActivationResultV2 {
@@ -122,13 +125,14 @@ function sha256(value: string): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
 }
 
-function parseActivation(value: unknown, projectId: string): ApprovedWikiAuthorityV1 {
-  const expectedKeys = ['authority', 'projectId', 'schemaVersion'].sort();
+function parseActivation(value: unknown, projectId: string): CurrentApprovedWikiAuthority {
+  const expectedKeys = ['authority', 'projectId', 'schemaVersion', ...(isRecord(value) && value.schemaVersion === 'buildlore.hierarchical-wiki-activation-input.v2' ? ['historyAppend'] : [])].sort();
   if (!isRecord(value) || Object.keys(value).sort().join('\0') !== expectedKeys.join('\0') ||
-      value.schemaVersion !== HIERARCHICAL_WIKI_ACTIVATION_INPUT_SCHEMA_VERSION ||
+      ![HIERARCHICAL_WIKI_ACTIVATION_INPUT_SCHEMA_VERSION, 'buildlore.hierarchical-wiki-activation-input.v2'].includes(String(value.schemaVersion)) ||
       typeof value.projectId !== 'string' || !isRecord(value.authority) ||
       (value.authority.schemaVersion !== APPROVED_WIKI_AUTHORITY_SCHEMA_VERSION &&
-        value.authority.schemaVersion !== 'buildlore.approved-wiki-authority.v2') ||
+        value.authority.schemaVersion !== 'buildlore.approved-wiki-authority.v2' && value.authority.schemaVersion !== 'buildlore.approved-wiki-authority.v3') ||
+      ((value.schemaVersion === 'buildlore.hierarchical-wiki-activation-input.v2') !== (value.authority.schemaVersion === 'buildlore.approved-wiki-authority.v3')) ||
       !isRecord(value.authority.liveSnapshot) ||
       !isRecord(value.authority.humanActivationApproval) ||
       typeof value.authority.humanActivationApproval.approvalDigest !== 'string' ||
@@ -138,11 +142,11 @@ function parseActivation(value: unknown, projectId: string): ApprovedWikiAuthori
   if (value.projectId !== projectId || value.authority.projectId !== projectId) {
     invalid('HIERARCHICAL_WIKI_ACTIVATION_PROJECT_MISMATCH');
   }
-  return value.authority as unknown as ApprovedWikiAuthorityV1;
+  return value.authority as unknown as CurrentApprovedWikiAuthority;
 }
 
 async function replayProposalSecurity(
-  authority: ApprovedWikiAuthorityV1,
+  authority: CurrentApprovedWikiAuthority,
   projectId: string,
   security: ProjectSecurityService,
 ): Promise<void> {
@@ -186,13 +190,17 @@ function createLiveSnapshotVerifier(options: Readonly<{
   readonly knowledgeRoot: string;
 }>): HierarchicalWikiLiveSnapshotVerifierPort {
   return Object.freeze({
-    async verify(authority: ApprovedWikiAuthorityV1, projectId: string) {
+    async verify(authority: CurrentApprovedWikiAuthority, projectId: string) {
       try {
         if (authority.knowledgeGeneration !== undefined) {
-          const generation = authority.knowledgeGeneration.generations.at(-1);
+          const generation = latestKnowledgeGeneration(authority.knowledgeGeneration);
           if (!generation) invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
           const { session } = await preparePlannedKnowledgeSession({ ...options, projectId,
-            previousGenerations: authority.knowledgeGeneration.generations.slice(0, -1) });
+            rendererVersion: generation.rendererVersion,
+            ...(authority.knowledgeGeneration.schemaVersion === 'buildlore.knowledge-authority-extension.v1'
+              ? { previousGenerations: authority.knowledgeGeneration.generations.slice(0, -1) }
+              : authority.knowledgeGeneration.baselineHistory === null ? {} : { previousHistory:
+                await createKnowledgeGenerationHistoryStore({ knowledgeRoot: options.knowledgeRoot }).verify(authority.knowledgeGeneration.baselineHistory, projectId) }) });
           if (session.exchange.snapshot.snapshotDigest !== generation.snapshot.snapshotDigest) {
             invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
           }
@@ -239,8 +247,9 @@ function createLiveSnapshotVerifier(options: Readonly<{
               entry.decision === 'quarantine')) {
           invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
         }
-        const security = createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot });
+        const security = createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot, sourceIngestion: true });
         if (!await boundRawSourceInputsAreSafe(collected, {
+          maskSecrets: policy.policy.sourceSecretHandling === 'mask',
           policyDigest: policy.digest,
           projectId,
           security,
@@ -254,6 +263,16 @@ function createLiveSnapshotVerifier(options: Readonly<{
           readonly sourceRevision: `sha256:${string}`;
         }>> = [];
         for (const candidate of collected.candidates) {
+          if (policy.policy.sourceSecretHandling === 'mask') {
+            const metadata = sourceProvenanceSecurityBody(candidate);
+            const checked = await security.prepareSource({ body: metadata, bodyDigest: sha256(metadata),
+              projectId, source: candidate.sourceUri, sourceKind: candidate.sourceKind,
+              sourceRevisionOrContentSha256: candidate.sourceRevision });
+            const bound = checked.ok ? consumePreparedSource(checked.prepared) : null;
+            if (bound === null || bound.policyDigest !== policy.digest || bound.approvedBody !== metadata) {
+              invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
+            }
+          }
           const result = await security.prepareSource({
             body: candidate.body,
             bodyDigest: sha256(candidate.body),
@@ -276,7 +295,7 @@ function createLiveSnapshotVerifier(options: Readonly<{
               result.report.policyDigest !== snapshot.sanitizerPolicyDigest) {
             invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
           }
-          for (const rawInput of inspectRawSourceInputs(candidate)) {
+          for (const rawInput of inspectRawSourceInputs(candidate, policy.policy.sourceSecretHandling === 'mask')) {
             const rawDigest = sha256(rawInput.body);
             const rawResult = await security.prepareSource({
               body: rawInput.body,
@@ -298,6 +317,7 @@ function createLiveSnapshotVerifier(options: Readonly<{
                   rawInput,
                   rawPrepared.approvedBody,
                   rawResult.report.summaries,
+                  policy.policy.sourceSecretHandling === 'mask',
                 )) invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
           }
           const canonical = createSourceDocument({
@@ -400,14 +420,16 @@ export function createHierarchicalWikiActivationService(options: Readonly<{
         options.hubRoot,
         input.inputFile ?? DEFAULT_HIERARCHICAL_WIKI_ACTIVATION_INPUT,
       );
-      let authority: ApprovedWikiAuthorityV1;
+      let authority: CurrentApprovedWikiAuthority;
+      let activationInput: unknown;
       try {
-        authority = parseActivation(parseJsonStrict(await readConfinedSessionUtf8(
+        activationInput = parseJsonStrict(await readConfinedSessionUtf8(
           path,
           options.hubRoot,
           MAXIMUM_ACTIVATION_BYTES,
           input.projectId,
-        )), input.projectId);
+        ));
+        authority = parseActivation(activationInput, input.projectId);
       } catch (error) {
         if (error instanceof HierarchicalWikiActivationError) throw error;
         invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
@@ -415,7 +437,11 @@ export function createHierarchicalWikiActivationService(options: Readonly<{
       if (input.confirmationDigest !== authority.humanActivationApproval.approvalDigest) {
         invalid('HIERARCHICAL_WIKI_ACTIVATION_APPROVAL_MISMATCH');
       }
-      verifyApprovedWikiAuthority(authority, input.projectId);
+      authority = (await prepareCurrentApprovedWikiPublication(authority, input.projectId, options.knowledgeRoot)).authority;
+      if (authority.schemaVersion === 'buildlore.approved-wiki-authority.v3') {
+        if (!isRecord(activationInput)) invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
+        verifyKnowledgeHistoryAppend(activationInput.historyAppend, authority);
+      }
       await verifier.verify(authority, input.projectId);
       const published = await markdownPublication.publish({
         authority,

@@ -14,8 +14,8 @@ import {
   createApprovedWikiProjectionStore,
   ApprovedWikiProjectionError,
   readApprovedWikiPublicationSnapshot,
-  verifyApprovedWikiAuthority,
-  type ApprovedWikiAuthorityV1,
+  prepareCurrentApprovedWikiPublication,
+  type CurrentApprovedWikiAuthority,
   type ApprovedWikiRetrievalProjectionV1,
   type ApprovedWikiProjectionStatusV1,
   type ApprovedWikiProjectionStorePort,
@@ -454,7 +454,7 @@ function cursorOffset(
 }
 
 function authorityProjection(
-  authority: ApprovedWikiAuthorityV1,
+  authority: CurrentApprovedWikiAuthority,
   projectId: string,
 ): ApprovedWikiRetrievalProjectionV1 {
   const inheritedCitationAuthorizations = Object.freeze(authority.finalization.generationHandoffs
@@ -484,7 +484,7 @@ function authorityProjection(
 }
 
 function globalCitationAnchors(
-  authority: ApprovedWikiAuthorityV1,
+  authority: CurrentApprovedWikiAuthority,
   projectId: string,
 ): ReadonlyMap<string, EvidenceCitationAnchorV1> {
   const anchors = new Map<string, EvidenceCitationAnchorV1>();
@@ -554,11 +554,11 @@ export function createLocalWikiOperator(
   async function matchingAuthority(
     projection: ApprovedWikiRetrievalProjectionV1,
     projectId: string,
-  ): Promise<ApprovedWikiAuthorityV1> {
-    let authority: ApprovedWikiAuthorityV1;
+  ): Promise<CurrentApprovedWikiAuthority> {
+    let authority: CurrentApprovedWikiAuthority;
     try {
       authority = immutableSnapshot(await corpusStore.readAuthority(projectId), projectId);
-      verifyApprovedWikiAuthority(authority, projectId);
+      authority = (await prepareCurrentApprovedWikiPublication(authority, projectId, options.knowledgeRoot)).authority;
       const expectedProjection = authorityProjection(authority, projectId);
       if (!sameValue(expectedProjection, projection)) projectionInvalid(projectId);
       const policy = await readSecurityPolicy(options.knowledgeRoot, projectId);

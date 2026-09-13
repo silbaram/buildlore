@@ -178,6 +178,15 @@ function evidenceSupportBasisPoints(
   return weightedCoverageBasisPoints(claimTokens, evidenceTokens);
 }
 
+/** Internal diagnostic reuses the exact gate calculation; it is never a semantic verdict. */
+export function inspectClaimEvidenceOverlap(claimText: string, evidenceContents: readonly string[]): Readonly<{
+  overlapBasisPoints: number; minimumBasisPoints: number; lexicalCheckPassed: boolean;
+}> {
+  const overlapBasisPoints = evidenceSupportBasisPoints(claimText, evidenceContents);
+  return Object.freeze({ overlapBasisPoints, minimumBasisPoints: thresholds.minimumClaimTokenOverlapBasisPoints,
+    lexicalCheckPassed: overlapBasisPoints >= thresholds.minimumClaimTokenOverlapBasisPoints });
+}
+
 function genericBlueprintTitle(blueprint: PageBlueprintV1): boolean {
   const genericTokens = new Set([
     'additional', 'evidence', 'group', 'overview', 'reference', 'role', 'root', 'topic',

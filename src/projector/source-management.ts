@@ -38,6 +38,7 @@ import {
   boundRawSourceInputsAreSafe,
   inspectRawSourceInputs,
   rawSourceInputSanitizationIsSafe,
+  sourceProvenanceSecurityBody,
 } from './raw-source-inputs.js';
 import {
   projectSourceProducer,
@@ -523,6 +524,7 @@ async function prepareDiffInput(
   candidate: CollectionCandidate,
   security: ReturnType<typeof createProjectSecurityService>,
   policyDigest: Sha256Digest,
+  maskSecrets = false,
 ): Promise<ProjectSourceInput | null> {
   const sourceKind = candidate.sourceKind === 'execution' ? 'planning' : candidate.sourceKind;
   async function approvedBody(body: string, exact: boolean): Promise<string | null> {
@@ -556,11 +558,12 @@ async function prepareDiffInput(
     approvedBody(candidate.body, false),
   ]);
   if (title === null || body === null) return null;
+  if (maskSecrets && await approvedBody(sourceProvenanceSecurityBody(candidate), true) === null) return null;
   if (candidate.descriptor?.metadata !== undefined) {
     const metadata = serializeCanonicalJson(candidate.descriptor.metadata);
     if (await approvedBody(metadata, true) === null) return null;
   }
-  for (const rawInput of inspectRawSourceInputs(candidate)) {
+  for (const rawInput of inspectRawSourceInputs(candidate, maskSecrets)) {
     const bodyDigest = sha256(rawInput.body);
     const result = await security.prepareSource({
       body: rawInput.body,
@@ -573,7 +576,7 @@ async function prepareDiffInput(
     if (!result.ok || result.report.policyDigest !== policyDigest) return null;
     const approved = consumePreparedSource(result.prepared);
     if (approved === null || approved.inputBodyDigest !== bodyDigest ||
-        !rawSourceInputSanitizationIsSafe(rawInput, approved.approvedBody, result.report.summaries)) {
+        !rawSourceInputSanitizationIsSafe(rawInput, approved.approvedBody, result.report.summaries, maskSecrets)) {
       return null;
     }
   }
@@ -854,7 +857,9 @@ export function createSourceManagement(
       const canonical = normalizedManifest(loaded.manifest, manifestRegistry);
       assertProfileAllowsManifest(canonical, resolved.profile);
       const declarations = await existingDeclarations(resolved.checkout, canonical);
-      const policyDigest = (await readSecurityPolicy(knowledgeRoot, projectId)).digest;
+      const loadedPolicy = await readSecurityPolicy(knowledgeRoot, projectId);
+      const policyDigest = loadedPolicy.digest;
+      const maskSecrets = loadedPolicy.policy.sourceSecretHandling === 'mask';
       const workspace = await resolveProjectWorkspace(knowledgeRoot, projectId, {
         mustExist: true,
       });
@@ -894,10 +899,11 @@ export function createSourceManagement(
           loadedManifest: selectedLoaded,
           sourceAdapterRegistry: resolved.profile.sourceAdapters,
         });
-        const security = createProjectSecurityService({ knowledgeRoot });
+        const security = createProjectSecurityService({ knowledgeRoot, sourceIngestion: true });
         const candidatesByDeclaration = new Map<string, number>();
         const blockedSourceRefs = new Set<string>();
         const rawInputsSafe = await boundRawSourceInputsAreSafe(collection, {
+          maskSecrets,
           policyDigest,
           projectId,
           security,
@@ -947,7 +953,7 @@ export function createSourceManagement(
             candidate.declarationId,
             (candidatesByDeclaration.get(candidate.declarationId) ?? 0) + 1,
           );
-          const prepared = await prepareDiffInput(candidate, security, policyDigest);
+          const prepared = await prepareDiffInput(candidate, security, policyDigest, maskSecrets);
           const status = prepared === null
             ? 'blocked' as const
             : await targetState(workspace, candidate.target, prepared, projectId);

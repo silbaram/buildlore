@@ -34,8 +34,8 @@ describe('project knowledge schema parity', () => {
       }
       for (const child of Object.values(schema)) await walk(child, file);
     };
-    for (const name of ['project-knowledge.schema.json', 'project-knowledge-workflow.schema.json',
-      'hierarchical-wiki-activation.schema.json', 'hierarchical-markdown-materialization.schema.json']) {
+    for (const name of ['project-knowledge.schema.json', 'project-knowledge-history.schema.json', 'project-knowledge-workflow.schema.json', 'project-knowledge-answers.schema.json', 'project-knowledge-reader.schema.json',
+      'project-knowledge-change-impact.schema.json', 'hierarchical-wiki-activation.schema.json', 'hierarchical-markdown-materialization.schema.json']) {
       await walk(await load(name), name);
     }
   });

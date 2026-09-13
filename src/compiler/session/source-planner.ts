@@ -28,11 +28,13 @@ import {
   renderSourceDocument,
 } from '../../projector/source-document.js';
 import { isCollectableProjectSourceKind } from '../../projector/project-source-writer.js';
+import type { BuildLoreSourceMetadata } from '../../projector/types.js';
 import { sourceRetrievalMeaningFromDescriptor } from '../../projector/source-contracts.js';
 import {
   boundRawSourceInputsAreSafe,
   inspectRawSourceInputs,
   rawSourceInputSanitizationIsSafe,
+  sourceProvenanceSecurityBody,
 } from '../../projector/raw-source-inputs.js';
 import { consumePreparedSource } from '../../sanitizer/approval.js';
 import {
@@ -136,7 +138,7 @@ async function sanitizeCandidateText(
     result.report.policyDigest !== policy.digest ||
     result.report.projectId !== projectId ||
     result.report.rulesVersion !== SANITIZER_RULES_VERSION ||
-    (rejectCredentialFindings && result.report.summaries.some((summary) =>
+    (rejectCredentialFindings && policy.policy.sourceSecretHandling !== 'mask' && result.report.summaries.some((summary) =>
       summary.count > 0 && /^(?:credential\.|private-key\.|entropy\.)/u.test(summary.ruleId))) ||
     result.report.summaries.some((summary) =>
       summary.action !== 'redact' && summary.count !== summary.overriddenCount)
@@ -198,6 +200,7 @@ async function assertStoredSource(
 ): Promise<Readonly<{
   readonly body: string;
   readonly contentDigest: SessionSha256Digest;
+  readonly buildlore: BuildLoreSourceMetadata;
 }>> {
   const raw = await readConfinedSessionUtf8(
     join(workspace, 'sources', candidate.target),
@@ -242,6 +245,7 @@ async function assertStoredSource(
   return Object.freeze({
     body: document.body,
     contentDigest: sessionSha256(raw),
+    buildlore: document.buildlore,
   });
 }
 
@@ -301,7 +305,7 @@ async function buildPlannedSources(input: {
       input.projectId,
       input.rejectCredentialFindings,
     );
-    for (const rawInput of inspectRawSourceInputs(candidate)) {
+    for (const rawInput of inspectRawSourceInputs(candidate, input.policy.policy.sourceSecretHandling === 'mask')) {
       const rawBodyDigest = sessionSha256(rawInput.body);
       const rawResult = await input.security.prepareSource({
         body: rawInput.body,
@@ -313,7 +317,7 @@ async function buildPlannedSources(input: {
       });
       const rawPrepared = rawResult.ok ? consumePreparedSource(rawResult.prepared) : null;
       if (!rawResult.ok || rawPrepared === null ||
-          (input.rejectCredentialFindings === true && rawResult.report.summaries.some((summary) =>
+          (input.rejectCredentialFindings === true && input.policy.policy.sourceSecretHandling !== 'mask' && rawResult.report.summaries.some((summary) =>
             summary.count > 0 && /^(?:credential\.|private-key\.|entropy\.)/u.test(summary.ruleId))) ||
           rawPrepared.inputBodyDigest !== rawBodyDigest ||
           rawPrepared.approvedBodyDigest !== rawResult.report.outputDigest ||
@@ -326,9 +330,15 @@ async function buildPlannedSources(input: {
             rawInput,
             rawPrepared.approvedBody,
             rawResult.report.summaries,
+            input.policy.policy.sourceSecretHandling === 'mask',
           )) return denied(input.projectId);
     }
     input.onPhase?.('source-sanitized');
+    if (input.policy.policy.sourceSecretHandling === 'mask') {
+      const metadata = sourceProvenanceSecurityBody(candidate);
+      if (await sanitizeCandidateText(candidate, metadata, candidate.sourceKind, input.security,
+        input.policy, input.projectId) !== metadata) return denied(input.projectId);
+    }
     const storedSource = await assertStoredSource(
       input.workspace,
       candidate,
@@ -346,12 +356,12 @@ async function buildPlannedSources(input: {
     result.push(Object.freeze({
       citationAnchors: createSessionCitationAnchors({
         originalBody,
-        ...(candidate.originMappings === undefined
+        ...(storedSource.buildlore.originMappings === undefined
           ? {}
-          : { originMappings: candidate.originMappings }),
-        ...(candidate.jsonOrigins === undefined
+          : { originMappings: storedSource.buildlore.originMappings }),
+        ...(storedSource.buildlore.jsonOrigins === undefined
           ? {}
-          : { jsonOrigins: candidate.jsonOrigins }),
+          : { jsonOrigins: storedSource.buildlore.jsonOrigins }),
         sanitizedBody: storedSource.body,
         sourceId: id,
         sourceRef: candidate.sourceRef,
@@ -451,8 +461,9 @@ export function createSessionCompilePlanner(
         const policy = await readSecurityPolicy(options.knowledgeRoot, projectId);
         if (policy.workspace !== workspace) return denied(projectId);
         options.onPhase?.('policy-resolved');
-        const security = createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot });
+        const security = createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot, sourceIngestion: true });
         if (!await boundRawSourceInputsAreSafe(collection, {
+          maskSecrets: policy.policy.sourceSecretHandling === 'mask',
           policyDigest: policy.digest,
           projectId,
           security,

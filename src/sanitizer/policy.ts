@@ -229,7 +229,9 @@ export function parseSecurityPolicy(value: unknown, expectedProjectId: string): 
     'classificationRules',
     'egressRules',
     'overrides',
-  ]) || value.schemaVersion !== SECURITY_POLICY_SCHEMA_VERSION || value.projectId !== projectId ||
+  ], ['sourceSecretHandling']) || value.schemaVersion !== SECURITY_POLICY_SCHEMA_VERSION || value.projectId !== projectId ||
+      (value.sourceSecretHandling !== undefined && value.sourceSecretHandling !== 'reject' &&
+        value.sourceSecretHandling !== 'mask') ||
       !Array.isArray(value.classificationRules) ||
       value.classificationRules.length > MAX_CLASSIFICATION_RULES ||
       !Array.isArray(value.egressRules) || value.egressRules.length > MAX_EGRESS_RULES ||
@@ -268,6 +270,7 @@ export function parseSecurityPolicy(value: unknown, expectedProjectId: string): 
       allowedClassifications: Object.freeze([...rule.allowedClassifications]),
     }))),
     overrides: Object.freeze(overrides.map((override) => Object.freeze(override))),
+    ...(value.sourceSecretHandling === undefined ? {} : { sourceSecretHandling: value.sourceSecretHandling }),
   });
 }
 

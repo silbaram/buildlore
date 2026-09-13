@@ -40,6 +40,7 @@ import {
   type RetrievalResultV3,
 } from './hybrid-types.js';
 import type { LexicalScoreComponents, MatchedRetrievalEvidence } from './strategy.js';
+import { semanticCandidateMinimumCosine } from './semantic-relevance.js';
 import {
   SEMANTIC_INDEX_LIMITS,
   SemanticIndexError,
@@ -93,6 +94,10 @@ export interface CreateApprovedWikiHybridRetrievalOptions {
   readonly provider: EmbeddingProviderPort;
   readonly sanitizerPolicyDigest: `sha256:${string}`;
   readonly vectorIndex: VectorIndexPort;
+  /** @internal Section-scoped state from the same verified authority as the corpus. */
+  readonly meaningForHit?: (locator: HierarchicalRetrievalLocatorV1) => readonly ApprovedWikiMeaningSignalV1[];
+  /** @internal Opt-in admission guard; legacy hierarchy retrieval remains unchanged. */
+  readonly filterLowRelevanceSemanticHits?: boolean;
 }
 
 interface SemanticSearch {
@@ -235,11 +240,13 @@ function addSemanticCandidates(
   candidates: Map<string, Candidate>,
   hits: readonly SemanticIndexSearchHitV1[],
   corpus: ApprovedWikiRetrievalCorpusV1,
+  relevanceQuery?: string,
 ): void {
   const titles = new Map(corpus.pages.map((page) => [page.pageId, page.title]));
   const sections: ReadonlyMap<string, Readonly<{
     readonly citations: readonly Readonly<{ readonly citationId: string; readonly sourceId: string }>[];
     readonly title: string;
+    readonly semanticText: string;
   }>> = new Map(corpus.pages.flatMap((page) => page.sections.map((section) => [
     `${page.pageId}\u0000${section.sectionId}`,
     Object.freeze({
@@ -247,6 +254,7 @@ function addSemanticCandidates(
         compareText(left.citationId, right.citationId) ||
         compareText(left.sourceId, right.sourceId))),
       title: page.title,
+      semanticText: section.semanticText ?? section.body,
     }),
   ] as const)));
   for (const [index, hit] of hits.entries()) {
@@ -263,6 +271,8 @@ function addSemanticCandidates(
       corpus.schemaVersion === LEGACY_APPROVED_WIKI_RETRIEVAL_CORPUS_SCHEMA_VERSION
         ? Object.freeze({ ...hit, citationLocators: expected.citations })
         : hit);
+    if (relevanceQuery !== undefined &&
+        hit.score < semanticCandidateMinimumCosine(relevanceQuery, expected.semanticText)) continue;
     const key = candidateKey(locator);
     const prior = candidates.get(key);
     const semantic = Object.freeze({
@@ -729,7 +739,12 @@ function fallbackResult(
   baselineHits: readonly HierarchicalRetrievalHitV1[],
   reasonCode: LocalWikiRetrievalFallbackReason,
   intent: NormalizedIntent,
+  meaningForHit?: CreateApprovedWikiHybridRetrievalOptions['meaningForHit'],
 ): RetrievalResultV3 {
+  const candidates = baselineCandidates(baselineHits, corpus);
+  if (meaningForHit !== undefined) {
+    for (const candidate of candidates.values()) candidate.meaningSignals = meaningForHit(candidate.locator);
+  }
   return Object.freeze({
     schemaVersion: RETRIEVAL_RESULT_V3_SCHEMA_VERSION,
     projectId: corpus.projectId,
@@ -745,7 +760,7 @@ function fallbackResult(
     }),
     fusionPolicy: RETRIEVAL_FUSION_POLICY_V1,
     intentReasonCodes: intent.reasons,
-    hits: rankCandidates(baselineCandidates(baselineHits, corpus), topK, true, intent.effective),
+    hits: rankCandidates(candidates, topK, true, intent.effective),
     identity: Object.freeze({
       embeddingIdentityDigest: null,
       indexGenerationId: null,
@@ -803,11 +818,18 @@ function semanticResult(
   semantic: SemanticSearch,
   baselineHits: readonly HierarchicalRetrievalHitV1[],
   intent: NormalizedIntent,
+  query: string,
 ): RetrievalResultV3 {
   const candidates = requestedMode === 'hybrid'
     ? baselineCandidates(baselineHits, options.corpus)
     : new Map<string, Candidate>();
-  addSemanticCandidates(candidates, semantic.hits, options.corpus);
+  // Admit before fusion: weak semantic matches must neither become standalone
+  // hits nor boost lexical/graph candidates. Baseline candidates remain intact.
+  addSemanticCandidates(candidates, semantic.hits, options.corpus,
+    options.filterLowRelevanceSemanticHits === true ? query : undefined);
+  if (options.meaningForHit !== undefined) {
+    for (const candidate of candidates.values()) candidate.meaningSignals = options.meaningForHit(candidate.locator);
+  }
   const fused = requestedMode === 'hybrid';
   return Object.freeze({
     schemaVersion: RETRIEVAL_RESULT_V3_SCHEMA_VERSION,
@@ -869,7 +891,7 @@ export function createApprovedWikiHybridRetrievalV3(
           projectId: request.projectId,
           query: request.query,
         });
-        return baselineResult(options.corpus, request.mode, request.topK, result.hits, intent);
+        return baselineResult(options.corpus, request.mode, request.topK, result.hits, intent, options.meaningForHit);
       }
       const graph = baseline.search({
         mode: 'graph',
@@ -878,7 +900,7 @@ export function createApprovedWikiHybridRetrievalV3(
       });
       try {
         const semantic = await semanticSearch(options, request.query, request.topK);
-        return semanticResult(options, request.mode, request.topK, semantic, graph.hits, intent);
+        return semanticResult(options, request.mode, request.topK, semantic, graph.hits, intent, request.query);
       } catch (error) {
         if (!(error instanceof LocalWikiRetrievalError) ||
             error.code !== 'LOCAL_WIKI_SEMANTIC_UNAVAILABLE') throw error;
@@ -887,7 +909,7 @@ export function createApprovedWikiHybridRetrievalV3(
         if (reasonCode === null) {
           throw new LocalWikiRetrievalError('LOCAL_WIKI_RETRIEVAL_CONTRACT_INVALID');
         }
-        return fallbackResult(options.corpus, request.topK, graph.hits, reasonCode, intent);
+        return fallbackResult(options.corpus, request.topK, graph.hits, reasonCode, intent, options.meaningForHit);
       }
     },
   });

@@ -16,9 +16,424 @@
     },
     {
       "$ref": "#/$defs/generation"
+    },
+    {
+      "$ref": "#/$defs/factSupport"
+    },
+    {
+      "$ref": "#/$defs/evidenceCoverage"
+    },
+    {
+      "$ref": "#/$defs/groundingDiagnostic"
+    },
+    {
+      "$ref": "#/$defs/questionCoverage"
     }
   ],
   "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+    },
+    "questionCoverageInput": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "description": "Caller-defined authoring questions; at most 256 requirements in total. A mapping does not establish semantic completeness.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "claimIds",
+          "requirements"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          "claimIds": {
+            "type": "array",
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            }
+          },
+          "requirements": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "sourceRef",
+                "jsonPointer",
+                "contentKind"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                "sourceRef": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "jsonPointer": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 4096
+                },
+                "contentKind": {
+                  "enum": [
+                    "any",
+                    "json-value",
+                    "text"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "questionCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "proposalDigest",
+        "requirementsDigest",
+        "semanticReviewRequired",
+        "questions",
+        "complete",
+        "coverageDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-question-coverage.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "snapshotDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "proposalDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "requirementsDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "semanticReviewRequired": {
+          "const": true
+        },
+        "questions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "claimIds",
+              "requirements",
+              "complete"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "claimIds": {
+                "type": "array",
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "requirements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "status",
+                    "evidenceIds",
+                    "citedEvidenceIds"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "status": {
+                      "enum": [
+                        "covered",
+                        "uncited",
+                        "heading-only",
+                        "unavailable"
+                      ]
+                    },
+                    "evidenceIds": {
+                      "type": "array",
+                      "maxItems": 8192,
+                      "items": {
+                        "$ref": "#/$defs/digest"
+                      }
+                    },
+                    "citedEvidenceIds": {
+                      "type": "array",
+                      "maxItems": 8192,
+                      "items": {
+                        "$ref": "#/$defs/digest"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "coverageDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "factSupport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "snapshotDigest",
+        "selectionDigest",
+        "baselineGenerationDigest",
+        "fact",
+        "presentEvidenceIds",
+        "absentEvidenceIds",
+        "supportDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-fact-support.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "snapshotDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "selectionDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "baselineGenerationDigest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fact": {
+          "$ref": "#/$defs/record"
+        },
+        "presentEvidenceIds": {
+          "type": "array",
+          "maxItems": 8192,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "absentEvidenceIds": {
+          "type": "array",
+          "maxItems": 8192,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "supportDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "evidenceCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "requirements",
+        "complete",
+        "coverageDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-evidence-coverage.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "snapshotDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "status",
+              "evidenceIds"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "status": {
+                "enum": [
+                  "available",
+                  "heading-only",
+                  "unavailable"
+                ]
+              },
+              "evidenceIds": {
+                "type": "array",
+                "maxItems": 8192,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/digest"
+                }
+              }
+            }
+          }
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "coverageDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "groundingDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "proposalDigest",
+        "semanticReviewRequired",
+        "claims",
+        "diagnosticDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-grounding-diagnostic.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "snapshotDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "proposalDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "semanticReviewRequired": {
+          "const": true
+        },
+        "claims": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "claimId",
+              "overlapBasisPoints",
+              "minimumBasisPoints",
+              "lexicalCheckPassed"
+            ],
+            "properties": {
+              "claimId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "overlapBasisPoints": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "minimumBasisPoints": {
+                "const": 2500
+              },
+              "lexicalCheckPassed": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "diagnosticDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
     "authorityExtension": {
       "type": "object",
       "additionalProperties": false,
@@ -195,7 +610,15 @@
       }
     },
     "repositoryRevision": {
-      "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" }]
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        }
+      ]
     },
     "digest": {
       "type": "string",
@@ -274,19 +697,52 @@
     "origin": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["projectedLine", "sourceRef", "jsonPointer", "range"],
+      "required": [
+        "projectedLine",
+        "sourceRef",
+        "jsonPointer",
+        "range"
+      ],
       "properties": {
-        "projectedLine": { "type": "integer", "minimum": 1 },
-        "sourceRef": { "type": "string", "minLength": 1, "maxLength": 1024 },
-        "jsonPointer": { "type": "string", "pattern": "^(|/(?:[^~]|~[01])*)$" },
+        "projectedLine": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sourceRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "jsonPointer": {
+          "type": "string",
+          "pattern": "^(|/(?:[^~]|~[01])*)$"
+        },
         "range": {
-          "type": "object", "additionalProperties": false,
-          "required": ["startLine", "startColumn", "endLine", "endColumn"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "startLine",
+            "startColumn",
+            "endLine",
+            "endColumn"
+          ],
           "properties": {
-            "startLine": { "type": "integer", "minimum": 1 },
-            "startColumn": { "type": "integer", "minimum": 1 },
-            "endLine": { "type": "integer", "minimum": 1 },
-            "endColumn": { "type": "integer", "minimum": 1 }
+            "startLine": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "startColumn": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "endLine": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "endColumn": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         }
       }
@@ -343,10 +799,21 @@
           ]
         },
         "tracked": {
-          "type": ["boolean", "null"]
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
-        "repositoryRevision": { "$ref": "#/$defs/repositoryRevision" },
-        "origins": { "type": "array", "maxItems": 8192, "items": { "$ref": "#/$defs/origin" } },
+        "repositoryRevision": {
+          "$ref": "#/$defs/repositoryRevision"
+        },
+        "origins": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/origin"
+          }
+        },
         "format": {
           "enum": [
             "markdown",
@@ -380,11 +847,28 @@
         "excerptDigest"
       ],
       "properties": {
-        "projectId": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
-        "sourceRevisionUnavailableReason": { "enum": [null, "not-provided-by-source-inventory"] },
-        "repositoryRevision": { "$ref": "#/$defs/repositoryRevision" },
-        "codeRevisionUnavailableReason": { "enum": [null, "not-proven-by-source-inventory"] },
-        "origin": { "$ref": "#/$defs/origin" },
+        "projectId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "sourceRevisionUnavailableReason": {
+          "enum": [
+            null,
+            "not-provided-by-source-inventory"
+          ]
+        },
+        "repositoryRevision": {
+          "$ref": "#/$defs/repositoryRevision"
+        },
+        "codeRevisionUnavailableReason": {
+          "enum": [
+            null,
+            "not-proven-by-source-inventory"
+          ]
+        },
+        "origin": {
+          "$ref": "#/$defs/origin"
+        },
         "evidenceId": {
           "$ref": "#/$defs/digest"
         },
@@ -1003,10 +1487,136 @@
           "const": "conservative-currentness-v1"
         },
         "rendererVersion": {
-          "const": "knowledge-markdown-v1"
+          "enum": [
+            "knowledge-markdown-v1",
+            "knowledge-markdown-v2"
+          ]
         },
         "generationDigest": {
           "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "authorityExtensionV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "generationDigest",
+        "pageMappings",
+        "evidenceMappings",
+        "extensionDigest",
+        "history",
+        "baselineHistory"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-authority-extension.v2"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "pageMappings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "pageId",
+              "claims"
+            ],
+            "properties": {
+              "role": {
+                "enum": [
+                  "overview",
+                  "architecture",
+                  "decisions"
+                ]
+              },
+              "pageId": {
+                "type": "string",
+                "pattern": "^page-[0-9a-f]{64}$"
+              },
+              "claims": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "claimId",
+                    "hierarchyClaimId",
+                    "factIds"
+                  ],
+                  "properties": {
+                    "claimId": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$"
+                    },
+                    "hierarchyClaimId": {
+                      "type": "string",
+                      "pattern": "^claim-[0-9a-f]{64}$"
+                    },
+                    "factIds": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/digest"
+                      },
+                      "minItems": 1,
+                      "maxItems": 2048
+                    }
+                  }
+                },
+                "minItems": 1,
+                "maxItems": 8192
+              }
+            }
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "evidenceMappings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "evidenceId",
+              "unitId",
+              "citationId"
+            ],
+            "properties": {
+              "evidenceId": {
+                "$ref": "#/$defs/digest"
+              },
+              "unitId": {
+                "type": "string",
+                "pattern": "^unit-[0-9a-f]{64}$"
+              },
+              "citationId": {
+                "type": "string",
+                "pattern": "^citation-[0-9a-f]{64}$"
+              }
+            }
+          },
+          "minItems": 1,
+          "maxItems": 8192
+        },
+        "extensionDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "history": {
+          "$ref": "project-knowledge-history.schema.json#/$defs/reference"
+        },
+        "baselineHistory": {
+          "oneOf": [
+            {
+              "$ref": "project-knowledge-history.schema.json#/$defs/reference"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     }

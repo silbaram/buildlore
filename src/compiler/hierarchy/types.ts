@@ -691,7 +691,7 @@ export interface CurrentSessionGenerationReceiptContractV1 {
   readonly snapshotDigest: HierarchySha256Digest;
   readonly proposalDigest: HierarchySha256Digest;
   readonly sanitizerPolicyDigest: HierarchySha256Digest;
-  readonly sanitizerRulesVersion: 'buildlore.sanitizer-rules.v5';
+  readonly sanitizerRulesVersion: 'buildlore.sanitizer-rules.v8';
   readonly sanitizerInputDigest: HierarchySha256Digest;
   readonly generationActor: 'current-agent-session';
   readonly proposalOutputSanitized: true;

@@ -1,0 +1,119 @@
+{
+  "schemaVersion": "buildlore.semantic-relevance-calibration.v1",
+  "model": {
+    "adapter": {
+      "contractVersion": 1,
+      "device": "cpu",
+      "kind": "transformers-js",
+      "packageName": "@huggingface/transformers",
+      "packageVersion": "4.2.0",
+      "runtimeDependency": "onnxruntime-node@1.24.3"
+    },
+    "artifacts": [
+      {
+        "basename": "config.json",
+        "bytes": 655,
+        "role": "model-config",
+        "sha256": "sha256:69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959"
+      },
+      {
+        "basename": "onnx/model.onnx",
+        "bytes": 470268510,
+        "role": "model",
+        "sha256": "sha256:ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665"
+      },
+      {
+        "basename": "tokenizer.json",
+        "bytes": 17082730,
+        "role": "tokenizer",
+        "sha256": "sha256:0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"
+      },
+      {
+        "basename": "tokenizer_config.json",
+        "bytes": 443,
+        "role": "tokenizer-config",
+        "sha256": "sha256:a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b"
+      }
+    ],
+    "dimensions": 384,
+    "documentPrefix": "passage: ",
+    "licenseId": "MIT",
+    "maximumTokens": 512,
+    "metric": "cosine",
+    "modelId": "intfloat/multilingual-e5-small",
+    "modelRevision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+    "normalization": "l2",
+    "pooling": "attention-mask-mean",
+    "providerKind": "local-in-process",
+    "queryPrefix": "query: ",
+    "scalarEncoding": "float32-little-endian",
+    "schemaVersion": "buildlore.embedding-identity.v2",
+    "tokenizerContractVersion": 1,
+    "identityDigest": "sha256:bd6276a0a37cb25c3cd90df656ac73e5de80d7d03c8e1f5f426fe9dfe5f9ad6b"
+  },
+  "freeze": {
+    "calibration": "1f26dcd36f446004b04e40bf65e138eb7ac9683e5adc9a8222cca81a428ab872",
+    "holdout": "8412dfa0bdc1e365fb66057779335ce5c164daf4f54b95d10700c9c6d7e005da",
+    "legacy": "4b48c1e298d4ddfb8350f3d2bab5edb12e3e34c912b86691d0e8bd6dae08c5a6",
+    "probes": "c00af7a8c7da7711cf8579b9621f1a252403b151783953ca5cfa11bd31c47b42",
+    "frozenAt": "2026-09-10T04:17:27.409Z"
+  },
+  "policy": {
+    "sameScriptMinimumCosine": 0.817404165245,
+    "crossScriptMinimumCosine": 0.752328178392,
+    "calibrationDigest": "sha256:7a9792be7b5adbd37d3934afe43ef292edd2681f1fbb16c9dbf07e8f468f8386"
+  },
+  "classes": {
+    "same-script": {
+      "positiveMinimum": {
+        "id": "hold-search-en",
+        "key": "parcel-search#content",
+        "pageId": "parcel-search",
+        "sectionId": "content",
+        "chunkId": "chunk-92e46d6c87d78ee9d38ec5f257a3ec8f7b850772a51c711f48ce2fb702081dce",
+        "score": 0.8240783732969887,
+        "scriptClass": "same-script"
+      },
+      "negativeMaximum": {
+        "id": "quartet",
+        "key": "page-3bf7d9a01dfdca8d4423d3725c797d700cb2227a3a9b23d0ff1210f224c853c0#knowledge-0",
+        "pageId": "page-3bf7d9a01dfdca8d4423d3725c797d700cb2227a3a9b23d0ff1210f224c853c0",
+        "sectionId": "knowledge-0",
+        "chunkId": "chunk-9d89739417126b1583617403d5084232063064e673922dc82ea486e3c9894c3e",
+        "score": 0.8107299571928397,
+        "scriptClass": "same-script"
+      },
+      "floor": 0.817404165245,
+      "feasible": true,
+      "positivePairs": 21,
+      "negativePairs": 116
+    },
+    "cross-script": {
+      "positiveMinimum": {
+        "id": "cal-search-ko",
+        "key": "parcel-search#content",
+        "pageId": "parcel-search",
+        "sectionId": "content",
+        "chunkId": "chunk-92e46d6c87d78ee9d38ec5f257a3ec8f7b850772a51c711f48ce2fb702081dce",
+        "score": 0.774561301662294,
+        "scriptClass": "cross-script"
+      },
+      "negativeMaximum": {
+        "id": "cal-unrelated-geology-beacon",
+        "key": "beacon-formats#content",
+        "pageId": "beacon-formats",
+        "sectionId": "content",
+        "chunkId": "chunk-863c009e62dc6eead9c191b234dd12447b6116c417ba4f237704f7cf772e5801",
+        "score": 0.7300950551210481,
+        "scriptClass": "cross-script"
+      },
+      "floor": 0.752328178392,
+      "feasible": true,
+      "positivePairs": 18,
+      "negativePairs": 60
+    }
+  },
+  "method": "Midpoint of minimum required-positive and maximum unrelated candidate score per script class. Known regression plus frozen calibration, actual projected chunker path. Twelve same-script and twelve cross-script calibration positives, 24 unrelated across eight topics and three projects. Legacy 20 and fixed live seven included. Holdout scores not used.",
+  "fullReport": "plans/search-quality-followup-2026-09-10/calibration-result-v1.json",
+  "holdoutExposure": "Independently authored; author final delivered query text to owner before scoring. Approved midpoint rule was fixed before this exposure; no holdout model scores used in selection."
+}

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { containsSecretRedaction } from '../sanitizer/redaction-marker.js';
 
 import { parseDocument } from 'yaml';
 
@@ -487,6 +488,35 @@ export function validateSourceDocument(value: unknown): SourceDocument {
 
 export function createSourceDocument(input: CreateSourceDocumentInput): SourceDocument {
   const canonical = canonicalBody(input.body);
+  // Redacted lines cannot retain exact-value source mappings. Keep mappings for
+  // untouched lines; never shift original coordinates to make a masked value fit.
+  const maskedLines = new Set(canonical.body.split('\n').flatMap((line, index) =>
+    containsSecretRedaction(line) ? [index + 1] : []));
+  const unmasked = (mapping: SourceRangeMappingV1 | SourceJsonOriginMappingV1): boolean =>
+    ![...maskedLines].some((line) => line >= mapping.canonical.startLine && line <= mapping.canonical.endLine);
+  const safeRanges = (mapping: SourceRangeMappingV1): readonly SourceRangeMappingV1[] => {
+    if (unmasked(mapping)) return [mapping];
+    const lines = canonical.body.split('\n');
+    const result: SourceRangeMappingV1[] = [];
+    // V1 mappings have a one-to-one line offset. Keep contiguous safe ranges,
+    // bounded by the already-validated body, without creating one map per line.
+    let start = mapping.canonical.startLine;
+    while (start <= mapping.canonical.endLine) {
+      if (maskedLines.has(start)) { start += 1; continue; }
+      let end = start;
+      while (end < mapping.canonical.endLine && !maskedLines.has(end + 1)) end += 1;
+      const offset = mapping.origin.startLine - mapping.canonical.startLine;
+      const endColumn = Math.max(1, unicodeScalarLength(lines[end - 1] ?? ''));
+      result.push({ canonical: { startLine: start, endLine: end,
+        startColumn: start === mapping.canonical.startLine ? mapping.canonical.startColumn : 1,
+        endColumn: end === mapping.canonical.endLine ? mapping.canonical.endColumn : endColumn },
+      origin: { startLine: start + offset, endLine: end + offset,
+        startColumn: start === mapping.canonical.startLine ? mapping.origin.startColumn : 1,
+        endColumn: end === mapping.canonical.endLine ? mapping.origin.endColumn : endColumn } });
+      start = end + 1;
+    }
+    return result;
+  };
   let descriptor: SourceDescriptor | undefined;
   if (input.descriptor !== undefined) {
     try {
@@ -502,10 +532,10 @@ export function createSourceDocument(input: CreateSourceDocumentInput): SourceDo
       : SOURCE_DOCUMENT_V2_SCHEMA_VERSION;
   const originMappings = input.originMappings === undefined
     ? undefined
-    : fitRangeMappings(input.originMappings, canonical.body, canonical.truncated);
+    : parseRangeMappings(fitRangeMappings(input.originMappings, canonical.body, canonical.truncated).flatMap(safeRanges));
   const jsonOrigins = input.jsonOrigins === undefined
     ? undefined
-    : assertJsonOriginsWithinBody(parseJsonOrigins(input.jsonOrigins), canonical.body);
+    : assertJsonOriginsWithinBody(parseJsonOrigins(parseJsonOrigins(input.jsonOrigins).filter(unmasked)), canonical.body);
   if (
     descriptor !== undefined && (
       descriptor.projectId !== input.projectId ||
