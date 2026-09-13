@@ -27,6 +27,9 @@ stale, unapproved, or incorrectly evidenced provenance for an approved spec.
 2. **Prior Plan2Agent artifacts available only as Markdown** must be reconstructed into
    their JSON contracts first. Approval state still governs: a reconstructed spec
    without a recorded user `approval_audit` is `draft` and stops at Gate B.
-3. **Canonical artifacts under `.plan2agent/artifacts/<project_id>/` with recorded
-   approvals** are the only input that justifies resuming past a gate, and only up to
-   the last recorded approval.
+3. **Canonical JSON artifacts with valid recorded approvals and source hashes** may
+   resume past a gate in any CLI-supported artifact root, including
+   `.plan2agent/artifacts/<project_id>/`, `artifacts/<project_id>/`, or an explicitly
+   selected root. Directory names alone neither grant nor invalidate approval.
+   Follow the action returned by `p2a next` after its contract validation; resume only
+   up to the last valid recorded approval.

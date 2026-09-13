@@ -5,7 +5,7 @@ description: Use when converting Plan2Agent intake output and user answers into 
 
 # Plan2Agent Spec
 
-Create a development-ready product and implementation specification from approved intake. Product authorship belongs to `p2a-spec-author`; implementation planning belongs to `p2a-implementation-planner`. When subagents are unavailable, keep those responsibilities logically separate.
+Create a development-ready product and implementation specification from approved intake. Keep product authorship and implementation planning logically separate. Use `p2a-spec-author` and `p2a-implementation-planner` when independent authorship materially helps; otherwise the foreground owner handles both responsibilities.
 
 ## Preconditions and inputs
 

@@ -11,7 +11,7 @@ Author a reviewable Gate C draft from an approved active iteration. This skill p
 
 Use only when Gate B is approved, open decisions are empty, and Orchestrated execution actually benefits from a dependency/ownership graph.
 
-Draft authorship belongs to the read-only `p2a-task-author` agent. The skill owner obtains context, reviews returned JSON, persists the draft, and runs validation/promotion. When subagents are unavailable, preserve the same author-versus-persistence boundary locally.
+The skill owner obtains context, authors or reviews the draft, persists it, and runs validation/promotion. Use the read-only `p2a-task-author` agent when independent authorship materially helps; it returns JSON and never owns persistence.
 
 ## Progressive reference routing
 
@@ -25,7 +25,7 @@ The canonical conditions live in `.agents/context-routes.json`.
 1. Run `p2a iteration context --artifacts <root>` and validate the returned `p2a.task_context.v2` bundle.
 2. Inspect the effective spec, changed fields, code signals, active/maintenance task summaries, and relevant BuildLore-derived evidence selected by the spec.
 3. Choose cohesive, independently verifiable work boundaries. Task count is not a quality target.
-4. Have the read-only author return one complete `p2a.task_graph.v1` draft.
+4. Author or obtain one complete `p2a.task_graph.v1` draft using the shared draft contract.
 5. Persist only `iterations/<active_iteration>/gate-c-task-graph/task-graph.draft.json`.
 6. Validate `gate-c-draft`; promote only validator-clean content.
 

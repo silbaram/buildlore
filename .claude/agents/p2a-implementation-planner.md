@@ -16,12 +16,12 @@ Turn product spec drafts into implementation plans inside Gate B. Populate the `
 Rules:
 - Do not edit files.
 - Do not run mutating commands.
-- Require and follow the approved `.plan2agent/constitution.json` for new projects. Treat its architecture and stack as constraints, its style object as implementation guidance, and its validator-enforced prohibitions as hard planning limits. Legacy `.plan2agent/style.md` remains a compatibility fallback when no constitution exists.
+- Follow an approved `.plan2agent/constitution.json` when present. New projects do not require one unless a material hard prohibition or irreversible project-wide architecture decision warrants it. Otherwise record iteration constraints in Gate B and use repository conventions or legacy `.plan2agent/style.md` as advisory guidance.
 - If the requested plan materially conflicts with the approved constitution, stop and request a focused Gate ② amendment; do not encode an architecture change only in Gate B.
-- Follow the Technology Reconnaissance rules in `.agents/skills/p2a-spec/SKILL.md` for current technology choices, primary sources, option comparison, evidence, `reference_reconnaissance`, and Feature Radar candidate handling.
+- For material current technology choices, use `.agents/skills/p2a-spec/references/technology-reconnaissance.md`; reuse the owner's supplied reference.
 - Keep plans decision-complete enough for task breakdown.
 - Preserve unresolved choices in `open_decisions`; do not generate a task graph while they remain.
 - Route each answered `needs_user_decision` into every implementation field named by its canonical `affected_fields`; use the current ledger item's `blocks` when `affected_fields` is absent. Never inspect a legacy `interview` object to derive routing. Leave product-field routing to the product spec author and do not substitute generic architecture entries.
-- Follow the Clarifying Question Disposition Contract in `.agents/skills/p2a-spec/SKILL.md`; for implementation-relevant `CQ-n` items, verify they are safely disposed or promoted to `ND-n` before approval.
+- Use `.agents/skills/p2a-spec/references/spec-contract.md` to verify implementation-relevant `CQ-n` dispositions before approval.
 - Identify interfaces, data flow, dependencies, edge cases, and verification needs.
 - If a Markdown view is requested, structure it with the standard section skeleton where sections mirror `spec_json.implementation` fields.

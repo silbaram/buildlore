@@ -1,64 +1,21 @@
 ---
 name: p2a-task-breakdown
-description: Use when splitting an approved Plan2Agent implementation spec into a dependency-aware task graph.
+description: Use as the compatibility entry for task decomposition from a legacy flat Plan2Agent spec; active iterations use p2a-task-author.
 ---
 
 # Plan2Agent Task Breakdown
 
-Break an approved implementation spec into tasks that an agent or developer can execute.
+This is a compatibility entry, not a second decomposition policy.
 
-## Inputs
+- With an active iteration, continue with `p2a-task-author --artifacts <root>` in this session. That owner obtains context, saves the draft, validates, and promotes it.
+- For a legacy flat artifact root, validate `<root>/gate-b-spec/spec.json` with `p2a validate --spec <path>`. Require approved scope, no open decisions, and valid clarifying-question dispositions before authoring.
+- Use the shared draft contract below for task shape and decomposition judgment. A read-only `p2a-task-graph` author may return the JSON; the foreground owner is responsible for persistence and validation.
+- Save a new flat draft to `<root>/gate-c-task-graph/task-graph.draft.json` with `sourceSpec: "../gate-b-spec/spec.json"`. Run `p2a validate --task-graph <draft> --require-approved-spec <spec>`, then persist the validated content as `task-graph.json` only if no canonical graph already exists. Run `p2a next` to continue; do not call iteration-only promotion commands on a flat root.
+- If a canonical graph exists, return through `p2a next` instead of replacing it. Preserve task and run history.
+- When only an in-memory approved spec is supplied and no artifact persistence is requested, return complete graph JSON and identify that it has not been persisted or validated by the CLI.
 
-- `spec_json` conforming to `p2a` package schema `spec.schema.json`.
-- `spec_json.approval: approved`.
-- `spec_json.open_decisions: []`.
-- Every intake `CQ-n` has a valid `spec_json.clarifying_question_disposition`.
-- Known constraints.
-- Optional BuildLore-derived spec evidence containing prior failure signals.
+Do not implement product code or change approved scope during decomposition. Read-only providers return proposed JSON to a write-capable foreground owner.
 
-## Output
+## Progressive reference routing
 
-Return a `task_graph_json` object conforming to `p2a` package schema `task-graph.schema.json` with:
-
-- `schema_version`: `p2a.task_graph.v1`
-- `projectId`
-- `version`
-- `sourceSpec` (use the Gate B folder path, for example `.plan2agent/artifacts/<project_id>/gate-b-spec/spec.json`, when the source is a persisted artifact)
-- `tasks`
-
-Each task must include:
-
-- `id`
-- `title`
-- `intent` for new tasks: one plain sentence in the approved product spec's primary language stating who can do what when the task is complete
-- `description`
-- `status`
-- `dependencies`
-- `acceptanceCriteria`
-- `targetArea`
-- `suggestedAgentPrompt`
-- `sourceSpecRefs`
-- explicit `workKind: ui | non_ui | mixed` for every task under an approved `full + current_iteration` visual experience, with lightweight and optionally overlapping `visualImpact.screenStates` on `ui` and `mixed` tasks
-
-## Validation Gates
-
-- Reject task breakdown if the spec is not approved.
-- Reject task breakdown if any unresolved decision remains.
-- Reject task breakdown if Gate B clarifying question dispositions are missing or invalid.
-- Dependencies must reference task ids in the same graph.
-- The dependency graph must be acyclic.
-- `ui` and `mixed` tasks under `full + current_iteration` must use canonical approved experience/prototype references and only the screen-state cases and exact viewport objects owned by that task.
-
-## Rules
-
-- Use `todo` as the default status.
-- Prefer one cohesive vertical task when one owner can implement and verify the outcome in one resumable run. Split only for a real dependency, separate write owner, independently useful verification/rollback boundary, or cross-session resume requirement; task count is not a quality target.
-- Split oversized tasks only at independently verifiable outcome boundaries, not automatically by file or technical layer.
-- Each task's acceptance criteria must be self-satisfiable from that task's explicit scope; do not require prior or later task work to satisfy an AC.
-- A task that adds a framework dependency which triggers auto-configuration must either include the minimal configuration that auto-configuration requires (for example, a datasource URL) in the same task, or explicitly defer build-green acceptance criteria to the later task that handles that configuration.
-- Inspect BuildLore-derived spec evidence before decomposition. If history materially changes a task boundary, dependency, acceptance criterion, or mitigation, cite the selected evidence and any applicable `decision:ND-n` entry in `sourceSpecRefs`, alongside at least one real product or implementation spec field.
-- Convert a relevant prior failed/blocked run into a concrete mitigation or regression acceptance criterion. Do not create work from irrelevant results, and do not block merely because BuildLore is unavailable or unconfigured.
-- Keep `suggestedAgentPrompt` short and point it to `sourceSpecRefs`; do not copy Gate B acceptance, constraints, file lists, or implementation order into it.
-- Write `intent` only after the precise task contract is complete. It is a human explanation, never acceptance evidence; `acceptanceCriteria` remains authoritative.
-- Do not include implementation code.
-- Do not edit files or run commands.
+- Required, on-demand; stages: gate-c — `.agents/skills/p2a-task-author/references/draft-contract.md` — This compatibility entry is about to decompose an approved spec into a task graph.

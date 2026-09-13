@@ -28,7 +28,7 @@ p2a execute prepare --artifacts <dir> --mode planned \
   --milestone 'milestone-2|<observable outcome>|<verification command>'
 ```
 
-The CLI writes one synthetic compatibility work item and validates Gate C readiness. Do not add another human Gate C approval. If adaptive inspection selects `orchestrated`, invoke `p2a-task-breakdown` and continue from its validated graph.
+The CLI writes one synthetic compatibility work item and validates Gate C readiness. Do not add another human Gate C approval. If adaptive inspection selects `orchestrated`, continue with `p2a-task-author --artifacts <dir>` for an active iteration, or the `p2a-task-breakdown --artifacts <dir>` compatibility entry for a flat root. Continue execution only after that owner persists and validates the graph.
 
 ## Inspect readiness and retry evidence
 

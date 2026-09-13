@@ -29,10 +29,10 @@ When the target product is the Plan2Agent repository, canonical `.agents/`, scri
 - Do not run interactive scaffolders that may overwrite a non-empty co-located project.
 - Do not access, print, or exfiltrate `.env` files, credentials, or tokens.
 - Do not hide failing verification or manufacture passing evidence.
-- Do not perform remote push, PR creation, remote merge, deployment, or other external writes.
+- Do not perform remote push, PR creation, remote merge, deployment, or other external writes as part of an implementation run. A separate explicit request is handled by the foreground assistant within its existing tool/provider permissions and the requested targets, not delegated to an implementer or treated as implicit development approval.
 - Do not modify `.plan2agent/constitution.json` or `.plan2agent/style.md` during implementation.
 - Do not self-modify skills or agents as a retrospective side effect. A skill change is allowed only when it is the approved product objective itself.
 
 ## Constitution and style
 
-Before implementation, check for `.plan2agent/constitution.json`. When present, validate and read the complete approved constitution. Validator prohibitions are hard constraints; review and advisory prohibitions guide implementation judgment. If no constitution exists, infer ordinary repository conventions from inspected project files and treat them as advisory guidance. A legacy `.plan2agent/style.md` may supplement that guidance, but it is not required and does not trigger migration or a new approval.
+Before implementation, check for `.plan2agent/constitution.json`. When present, validate and read the complete approved constitution. Validator prohibitions are hard constraints; review and advisory prohibitions guide implementation judgment. If no constitution exists, infer ordinary repository conventions from inspected project files and treat them as advisory guidance. A legacy `.plan2agent/style.md` may supplement that guidance, but it is not required and does not trigger migration or a new approval. The approved spec and explicit task constraints take precedence over conflicting legacy style.

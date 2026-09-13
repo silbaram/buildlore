@@ -26,6 +26,7 @@ The canonical load conditions are recorded in `.agents/context-routes.json`. Rea
 5. Required, conditional; stages: execution; modes: orchestrated — `references/batch-execution.md` — Two or more independent ready tasks will run concurrently in isolated worktrees.
 6. Required, conditional; stages: monitor, closeout — `references/monitor-gate.md` — The current run was started with --require-monitor.
 7. Required, conditional; stages: visual, closeout — `references/visual-evidence.md` — The task is UI or mixed, or the approved execution envelope contains a visual contract.
+8. Required, conditional; stages: closeout — `references/closeout-choices.md` — A closeout choice or an explicit review/retrospective/report/issue request is being handled.
 
 ## Direct/Planned runtime packet entry
 
@@ -46,9 +47,9 @@ The packet supplies canonical references; it does not grant approval, write, fin
 5. Execute only configured or explicit verification. Planned runs also verify every checkpoint in order and may retry a failed checkpoint in the same run after correction.
 6. Apply only the conditional visual, acceptance, or monitor path selected by policy and the approved contract.
 7. Finish through `p2a execute finish`, preserving changed-file attribution and structured failure evidence.
-8. At feature iteration closeout, present product review, P2A retrospective, and close as separate choices, recommending close when evidence is current and no signal is open. Product review is read-only: inspect the diff, code, tests, and current required verification evidence without rerunning product commands solely because review was selected. A clean review reports no material issue and asks once to close instead of repeating the menu. For a material finding before iteration close, run the returned `p2a execute remediate --artifacts <root> --task <id> --finding <text>` action; it preserves the reviewed run, starts a linked run in the same iteration, and returns through normal verification. Do not classify that work as maintenance. The retrospective reports bounded detected signals, or asks once about user-observed P2A friction when none were detected; after explicit approval, write only `Observed issue`, `User impact`, `Suggested improvement`, and concise evidence to the returned report path. Proposal writes always require separate approval and skipping retrospective never blocks close. After the final maintenance task finishes, present product review, the same minimal P2A retrospective, or finish maintenance once; use the report path printed by `p2a execute finish` and do not create a new maintenance close state.
+8. For a closeout choice or review/retrospective/report/issue request, follow `references/closeout-choices.md`. Do not load it as part of ordinary implementation verification.
 
-Return to Gate B instead of implementing only when satisfying the objective requires changing product meaning, acceptance, approved scope, constitution, or an external authority boundary.
+Return to Gate B instead of implementing only when satisfying the objective requires changing product meaning, acceptance, approved scope, or constitution. Handle external authority through `references/provider-confinement.md`, not product reapproval.
 
 In user-facing updates, describe the approved outcome, current work, recovery, and verification in product language. Keep Gate labels, run ids, hashes, artifact paths, and verification-profile ids internal unless the user asks for diagnostic detail. Ordinary retryable implementation failures should be corrected and rechecked without asking the user to operate the lifecycle.
 
