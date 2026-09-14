@@ -1,0 +1,203 @@
+{
+  "schemaVersion": "buildlore.research-provenance.v1",
+  "recordedAt": "2026-09-14T06:08:20.288181+00:00",
+  "source": "Current conversation user request, verbatim in entry.md",
+  "scope": "Installation and project-scoped central Wiki access research and direction; no product implementation or lifecycle transition",
+  "entry": {
+    "path": "entry.md",
+    "sha256": "14d61e745a80f350d3ae2f0bb61027607779c35c50aba821d81cb6c6b8648aa0",
+    "bytes": 2262
+  },
+  "report": {
+    "path": "REPORT.md",
+    "sha256": "e53b2a9e531a0943a41d6559528b31123e82af8cf7d3994768e2c5652fceb132",
+    "bytes": 20475
+  },
+  "sources": [
+    {
+      "title": "Basic Memory local quickstart",
+      "url": "https://docs.basicmemory.com/start-here/quickstart-local",
+      "accessedOn": "2026-09-14",
+      "supports": "Package installation, MCP registration and connection verification",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "Basic Memory configuration",
+      "url": "https://docs.basicmemory.com/reference/configuration",
+      "accessedOn": "2026-09-14",
+      "supports": "Project path registry and per-process MCP project constraint",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "Basic Memory assistant guide",
+      "url": "https://docs.basicmemory.com/reference/ai-assistant-guide",
+      "accessedOn": "2026-09-14",
+      "supports": "Skills and standing project instructions complement tool registration",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "Basic Memory issue 434",
+      "url": "https://github.com/basicmachines-co/basic-memory/issues/434",
+      "accessedOn": "2026-09-14",
+      "supports": "Historical closed report of background scope propagation mismatch; not a current defect claim",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "Serena installation",
+      "url": "https://oraios.github.io/serena/02-usage/010_installation.html",
+      "accessedOn": "2026-09-14",
+      "supports": "Released package installation and initialization",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "Serena running",
+      "url": "https://oraios.github.io/serena/02-usage/020_running.html",
+      "accessedOn": "2026-09-14",
+      "supports": "Nearest project boundary, per-client stdio, shared active-project limitation",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "Context7 official repository",
+      "url": "https://github.com/upstash/context7",
+      "accessedOn": "2026-09-14",
+      "supports": "Setup supports CLI plus Skills and MCP; library identifiers",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "QMD official repository",
+      "url": "https://github.com/tobi/qmd",
+      "accessedOn": "2026-09-14",
+      "supports": "Global package, collections independent of cwd, CLI/MCP/SDK",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "QMD 2.0.0 release",
+      "url": "https://github.com/tobi/qmd/releases/tag/v2.0.0",
+      "accessedOn": "2026-09-14",
+      "supports": "SDK-centered architecture with MCP as consumer",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "DeepWiki MCP official documentation",
+      "url": "https://docs.devin.ai/work-with-devin/deepwiki-mcp",
+      "accessedOn": "2026-09-14",
+      "supports": "Hosted public repository MCP and small tool set",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "MCP transports specification",
+      "url": "https://modelcontextprotocol.io/specification/2025-11-25/basic/transports",
+      "accessedOn": "2026-09-14",
+      "supports": "Client-started stdio subprocess versus Streamable HTTP",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "MCP tools specification",
+      "url": "https://modelcontextprotocol.io/specification/2025-11-25/server/tools",
+      "accessedOn": "2026-09-14",
+      "supports": "Model-discoverable callable tools",
+      "evidenceType": "official-documentation-or-public-repository"
+    },
+    {
+      "title": "MCP resources specification",
+      "url": "https://modelcontextprotocol.io/specification/2025-11-25/server/resources",
+      "accessedOn": "2026-09-14",
+      "supports": "Host-controlled resource inclusion",
+      "evidenceType": "official-documentation-or-public-repository"
+    }
+  ],
+  "completedAt": "2026-09-14T06:13:15.871361+00:00",
+  "p2a": {
+    "entryValidation": "passed",
+    "nextState": "entry_deferred",
+    "lifecycleAdvanced": false
+  },
+  "localEvidence": {
+    "head": "07319cb59a88b242da6cafc8eb05515b1f76b135",
+    "workingTreeHadExistingChanges": true,
+    "files": [
+      {
+        "path": "AGENTS.md",
+        "sha256": "901e5cc3178d2b05ec6292dab31618037fbc93a34ccee45ca21afe86bb6544ac",
+        "bytes": 2239
+      },
+      {
+        "path": "package.json",
+        "sha256": "89caf9e541ba4efb956f3e35153ebb3983b4e10a159c58475efa347af7985c73",
+        "bytes": 6127
+      },
+      {
+        "path": "package-lock.json",
+        "sha256": "a9e1355c1fe077a4ebd063b655bbf0c02dfacbcc69aa19b28bcbf4cbf903d2af",
+        "bytes": 207169
+      },
+      {
+        "path": "README.ko.md",
+        "sha256": "c4a214f4bd6f026cf7fefac6970867189756fa49498bd3fb85683a3a60c92eb7",
+        "bytes": 84992
+      },
+      {
+        "path": "src/cli/run-cli.ts",
+        "sha256": "193f606ad24c9497ebf2907bbbd25608de062adc6fc176a4d87909362d70b264",
+        "bytes": 56829
+      },
+      {
+        "path": "src/cli/parser.ts",
+        "sha256": "ec17e90d65dcf814a296d7cf9c7edd3645ee7b1521159ead3c7b7277d1320e8b",
+        "bytes": 26423
+      },
+      {
+        "path": "src/cli/help.ts",
+        "sha256": "633dceca2c4de23075d13c9534628951f2768b88a10a8668b4ea2c8323a4067d",
+        "bytes": 7552
+      },
+      {
+        "path": "src/knowledge/local-project-registry.ts",
+        "sha256": "4ac6a6d76e395234dd0d2a4d24858a198b51102d01a58760772cd45111e837f7",
+        "bytes": 29461
+      },
+      {
+        "path": "src/retrieval/project-knowledge-reader.ts",
+        "sha256": "05949da78a37987e8b888b7dd3145a5427da77b98d31c0da79b588f1b723bd79",
+        "bytes": 16796
+      },
+      {
+        "path": "src/retrieval/embedding/provider.ts",
+        "sha256": "230491bff73bd2f8435d9b810395f4a18c0646b238383d52bbc54dc44909c878",
+        "bytes": 16747
+      }
+    ]
+  },
+  "limitations": [
+    "Competing tools not installed or executed",
+    "Documentation and repository HEAD behavior may differ from installed release versions",
+    "No install time, footprint or agent-success benchmark performed",
+    "Proposed commands and connection format are not implemented",
+    "No product code, knowledge content, or client configuration modified by this research task"
+  ],
+  "updatedAt": "2026-09-14T06:37:55.821826+00:00",
+  "topologyDecision": {
+    "source": "Current conversation follow-up user message",
+    "userInput": "1",
+    "selectedOption": "내 PC의 여러 프로젝트에서 공유",
+    "scope": "Multiple source projects on one PC share one local knowledge hub. Cross-PC Git synchronization is a future extension; remote HTTP access is not the baseline.",
+    "authorizesProductImplementation": false
+  },
+  "publicationPreparation": {
+    "preparedAt": "2026-09-14T07:16:11.416571+00:00",
+    "authorization": {
+      "source": "Current conversation user instruction",
+      "userInput": "이번엔 plans 하위 문서 푸시해"
+    },
+    "branch": "feat/install-project-wiki-access",
+    "scope": "One-time publication of this entry, research report and provenance; the default plans ignore rule remains in place.",
+    "changes": [
+      "Convert six local workspace source links to repository-relative GitHub links."
+    ],
+    "previousReport": {
+      "path": "REPORT.md",
+      "sha256": "e9373b5cf53f2197771507f4202f72f47ff63be39653535ce33326e3e997eae0",
+      "bytes": 20589
+    }
+  }
+}
