@@ -67,7 +67,19 @@
     "./schemas/semantic-index.schema.json": "./schemas/semantic-index.schema.json",
     "./schemas/retrieval-result-v2.schema.json": "./schemas/retrieval-result-v2.schema.json",
     "./schemas/retrieval-result-v3.schema.json": "./schemas/retrieval-result-v3.schema.json",
-    "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json"
+    "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json",
+    "./schemas/connection.schema.json": "./schemas/connection.schema.json",
+    "./schemas/read-connections.schema.json": "./schemas/read-connections.schema.json",
+    "./schemas/cli-envelope-v2.schema.json": "./schemas/cli-envelope-v2.schema.json",
+    "./schemas/connection-status.schema.json": "./schemas/connection-status.schema.json",
+    "./connection": {
+      "types": "./dist/connection/index.d.ts",
+      "import": "./dist/connection/index.js"
+    },
+    "./wiki-read": {
+      "types": "./dist/application/index.d.ts",
+      "import": "./dist/application/index.js"
+    }
   },
   "files": [
     "dist",
@@ -80,7 +92,8 @@
     "test": "vitest run",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "p2a:init": "node scripts/bootstrap-p2a.mjs"
+    "p2a:init": "node scripts/bootstrap-p2a.mjs",
+    "verify:installed-read": "node scripts/verify-installed-read.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

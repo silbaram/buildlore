@@ -1,10 +1,8 @@
-import { Buffer } from 'node:buffer';
 import { digest, invalid } from '../../knowledge/project-knowledge/guards.js';
 import type { KnowledgeDigest, KnowledgeGenerationV1 } from '../../knowledge/project-knowledge/types.js';
-import { tokenizeLexical } from '../../retrieval/strategy.js';
 import { knowledgeDevelopmentMemory, type KnowledgeDevelopmentMemoryV1 } from './reader-memory.js';
-import { serializeKnowledgeReaderPacketData } from './reader-packet.js';
-import { validateTaskMemoryRequest, type TaskMemoryRequest, type TaskEvidenceContext } from './task-memory.js';
+import { createMemoryTokenMatcher, finalizeMemoryProjection, selectMemoryReferences, type TaskEvidenceContext } from './memory-projection.js';
+import { validateTaskMemoryRequest, type TaskMemoryRequest } from './task-memory.js';
 
 type Full = KnowledgeDevelopmentMemoryV1;
 type Claim = Full['pages'][number]['sections'][number]['claims'][number];
@@ -53,36 +51,12 @@ const RECOVERY = 'Continue with the same project, task and nextCursor. For an ov
   'recovery may replay later claims: deduplicate by original positions. Otherwise read its page/section and canonical fact/evidence; ' +
   'check generation before combining. No match differs from budget omission. Host owns total bytes/time.';
 interface Candidate extends Position { readonly score: number }
-function subset<T>(registry: Readonly<Record<string, T>>, aliases: ReadonlySet<string>): Readonly<Record<string, T>> {
-  return Object.freeze(Object.fromEntries([...aliases].sort().map(alias => [alias, registry[alias] ?? invalid()])));
-}
-function contexts(full: Full, aliases: ReadonlySet<string>): TaskEvidenceContext {
-  const fields = ['presentInCurrentSnapshot', 'sourceRevision', 'codeRevision', 'sourceRevisionUnavailableReason',
-    'codeRevisionUnavailableReason', 'sourceContentDigest', 'sanitizedContentDigest'] as const;
-  const values: Record<string, TaskEvidenceContext['values'][string]> = {}, refs: Record<string, string> = {};
-  const identities = new Map<string, string>();
-  for (const alias of [...aliases].sort()) {
-    const c = full.evidenceContext[alias] ?? invalid();
-    const tuple = Object.freeze([c.presentInCurrentSnapshot, c.sourceRevision, c.codeRevision,
-      c.sourceRevisionUnavailableReason, c.codeRevisionUnavailableReason, c.sourceContentDigest, c.sanitizedContentDigest] as const);
-    const key = JSON.stringify(tuple);
-    let ref = identities.get(key);
-    if (ref === undefined) { ref = `c${String(identities.size)}`; identities.set(key, ref); values[ref] = tuple; }
-    refs[alias] = ref;
-  }
-  return Object.freeze({ fields: Object.freeze(fields), aliases: Object.freeze(refs), values: Object.freeze(values) });
-}
-
 /** Lossless, bounded claim projection. The approved reader owns authorization and sanitization. */
 export function knowledgeProgressiveMemory(generation: KnowledgeGenerationV1,
   request: ProgressiveMemoryRequest): KnowledgeProgressiveMemoryV1 {
   const { task, maxBytes, cursor } = validateProgressiveMemoryRequest(request);
   const full = knowledgeDevelopmentMemory(generation);
-  const query = new Set(tokenizeLexical(task));
-  const matches = (text: string): number => {
-    const tokens = new Set(tokenizeLexical(text));
-    return [...query].filter(token => tokens.has(token)).length;
-  };
+  const matches = createMemoryTokenMatcher(task);
   const candidates: Candidate[] = [];
   let totalClaims = 0;
   full.pages.forEach((page, pageIndex) => page.sections.forEach((section, sectionIndex) =>
@@ -118,15 +92,13 @@ export function knowledgeProgressiveMemory(generation: KnowledgeGenerationV1,
         partialSection: selected.filter(c => c.pageIndex === item.pageIndex && c.sectionIndex === item.sectionIndex).length < section.claims.length,
         claim });
     });
-    const facts = subset(full.facts, factAliases);
-    const evidenceAliases = new Set(Object.values(facts).flatMap(f => f[6]));
-    const evidence = subset(full.evidence, evidenceAliases);
+    const { facts, evidence, sources, evidenceContext } = selectMemoryReferences(full, factAliases);
     const { pages, memoryDigest: oldDigest, ...base } = full;
     void pages;
     const basis = { ...base, schemaVersion: 'buildlore.knowledge-progressive-memory.v1' as const,
       instructions: INSTRUCTIONS, requestDigest: digest({ task, maxBytes: limit, cursor: cursor ?? null }),
       selectionStrategy: 'lexical-claim-v1' as const, units: Object.freeze(units), facts, evidence,
-      sources: subset(full.sources, new Set(Object.values(evidence).map(e => e[1]))), evidenceContext: contexts(full, evidenceAliases),
+      sources, evidenceContext,
       coverage: Object.freeze({ isSelective: true as const, partial: selected.length < totalClaims, totalClaims,
         relevantClaims: candidates.length, includedClaims: selected.length, unmatchedClaims: totalClaims - candidates.length,
         startPosition: start, nextPosition: next, oversizedClaims: skipped,
@@ -134,15 +106,7 @@ export function knowledgeProgressiveMemory(generation: KnowledgeGenerationV1,
       recovery: Object.freeze({ instructions: RECOVERY, nextCursor: next < candidates.length ? cursorFor(next, 'n') : null,
         oversized, replay }),
       budget: { maxBytes: limit, serializedBytes: 0, encoding: 'compact-json-utf8-with-final-newline' as const } };
-    let size = 0;
-    for (;;) {
-      basis.budget.serializedBytes = size;
-      const actual = Buffer.byteLength(serializeKnowledgeReaderPacketData({ ...basis, memoryDigest: oldDigest }));
-      if (actual === size) break;
-      size = actual;
-    }
-    Object.freeze(basis.budget);
-    return Object.freeze({ ...basis, memoryDigest: digest(basis) });
+    return finalizeMemoryProjection(basis, oldDigest);
   };
   // A bounded, conservative recovery budget includes continuation and omission metadata.
   // It is an upper bound, not a claim that an individually estimated byte count is an exact minimum.

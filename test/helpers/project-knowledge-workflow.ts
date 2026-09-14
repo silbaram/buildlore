@@ -117,11 +117,6 @@ export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' |
   }
 }
 
-/** Read only a fixed safe fixture, never live project data. */
-export async function readKnowledgeFixtureText(sample: string, revision: string, path: string): Promise<string> {
-  return readFile(join(process.cwd(), 'test/fixtures/project-knowledge/v1', sample, revision, path), 'utf8');
-}
-
 /** Deliberately mechanical protocol fixture, never reported as actual AI generation or quality. */
 export function workflowFixtureProposal(exchange: KnowledgeExchangeV1): KnowledgeProposalV1 {
   const snapshot = exchange.snapshot;

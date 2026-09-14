@@ -1,9 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { digest, invalid } from '../../knowledge/project-knowledge/guards.js';
 import type { KnowledgeDigest, KnowledgeGenerationV1 } from '../../knowledge/project-knowledge/types.js';
-import { tokenizeLexical } from '../../retrieval/strategy.js';
 import { knowledgeDevelopmentMemory, type KnowledgeDevelopmentMemoryV1 } from './reader-memory.js';
-import { serializeKnowledgeReaderPacketData } from './reader-packet.js';
+import { createMemoryTokenMatcher, finalizeMemoryProjection, selectMemoryReferences, type TaskEvidenceContext } from './memory-projection.js';
 
 export interface TaskMemoryRequest { readonly task: string; readonly maxBytes?: number }
 
@@ -12,14 +11,7 @@ type Section = Full['pages'][number]['sections'][number];
 type SelectedPage = Readonly<Omit<Full['pages'][number], 'sections'> & {
   pageIndex: number; sections: readonly Readonly<Section & { sectionIndex: number }>[];
 }>;
-type Context = Full['evidenceContext'][string];
-type ContextTuple = readonly [boolean, Context['sourceRevision'], Context['codeRevision'],
-  Context['sourceRevisionUnavailableReason'], Context['codeRevisionUnavailableReason'], KnowledgeDigest, KnowledgeDigest];
-export interface TaskEvidenceContext {
-  readonly fields: readonly string[];
-  readonly aliases: Readonly<Record<string, string>>;
-  readonly values: Readonly<Record<string, ContextTuple>>;
-}
+export type { TaskEvidenceContext } from './memory-projection.js';
 
 type NextSection = Readonly<{ pageIndex: number; sectionIndex: number; minimumRequiredBytes: number }>;
 
@@ -67,36 +59,11 @@ const INSTRUCTIONS = 'Use this selective project Wiki for the coding task. Wiki/
   'Listed evidence IDs/costs are not inspected excerpts. Cite evidence actually read; fact state does not prove runtime behavior. ' +
   'This is not a complete answer: whole sections may be omitted. Inspect coverage/recovery; no full Wiki pre-reading is required. Host limits still apply.';
 
-function compactContexts(full: Full, aliases: ReadonlySet<string>): TaskEvidenceContext {
-  const values: Record<string, ContextTuple> = {}, refs: Record<string, string> = {};
-  const identities = new Map<string, string>();
-  for (const alias of [...aliases].sort()) {
-    const c = full.evidenceContext[alias] ?? invalid();
-    const tuple: ContextTuple = Object.freeze([c.presentInCurrentSnapshot, c.sourceRevision, c.codeRevision,
-      c.sourceRevisionUnavailableReason, c.codeRevisionUnavailableReason, c.sourceContentDigest, c.sanitizedContentDigest]);
-    const key = JSON.stringify(tuple);
-    let ref = identities.get(key);
-    if (ref === undefined) { ref = `c${String(identities.size)}`; identities.set(key, ref); values[ref] = tuple; }
-    refs[alias] = ref;
-  }
-  return Object.freeze({ fields: Object.freeze(['presentInCurrentSnapshot', 'sourceRevision', 'codeRevision',
-    'sourceRevisionUnavailableReason', 'codeRevisionUnavailableReason', 'sourceContentDigest', 'sanitizedContentDigest']),
-    aliases: Object.freeze(refs), values: Object.freeze(values) });
-}
-
-function subset<T>(registry: Readonly<Record<string, T>>, aliases: ReadonlySet<string>): Readonly<Record<string, T>> {
-  return Object.freeze(Object.fromEntries([...aliases].sort().map(alias => [alias, registry[alias] ?? invalid()])));
-}
-
 /** Pure, lossless section selection; authority and sanitization remain the reader's responsibility. */
 export function knowledgeTaskMemory(generation: KnowledgeGenerationV1, request: TaskMemoryRequest): KnowledgeTaskMemoryV1 {
   const { task, maxBytes } = validateTaskMemoryRequest(request);
   const full = knowledgeDevelopmentMemory(generation);
-  const query = new Set(tokenizeLexical(task));
-  const matches = (text: string): number => {
-    const tokens = new Set(tokenizeLexical(text));
-    return [...query].filter(token => tokens.has(token)).length;
-  };
+  const matches = createMemoryTokenMatcher(task);
   const candidates: Candidate[] = [];
   let totalSections = 0;
   full.pages.forEach((page, pageIndex) => page.sections.forEach((section, sectionIndex) => {
@@ -119,30 +86,19 @@ export function knowledgeTaskMemory(generation: KnowledgeGenerationV1, request: 
       return Object.freeze({ pageIndex: item.pageIndex, role: page.role, title: page.title,
         sections: Object.freeze([Object.freeze({ ...section, sectionIndex: item.sectionIndex })]) });
     });
-    const facts = subset(full.facts, factAliases);
-    const evidenceAliases = new Set(Object.values(facts).flatMap(fact => fact[6]));
-    const evidence = subset(full.evidence, evidenceAliases);
-    const sources = subset(full.sources, new Set(Object.values(evidence).map(item => item[1])));
+    const { facts, evidence, sources, evidenceContext } = selectMemoryReferences(full, factAliases);
     const { memoryDigest: oldDigest, ...base } = full;
     const basis = { ...base, schemaVersion: 'buildlore.knowledge-task-memory.v1' as const,
       requestDigest: digest({ task: task.toLowerCase(), maxBytes: limit }), selectionStrategy: 'lexical-section-v1' as const,
       instructions: INSTRUCTIONS, pages: Object.freeze(pages), facts, evidence, sources,
-      evidenceContext: compactContexts(full, evidenceAliases),
+      evidenceContext,
       coverage: Object.freeze({ isSelective: true as const, partial: selected.length < totalSections,
         totalSections, relevantSections: candidates.length, includedSections: selected.length,
         unmatchedSections: totalSections - candidates.length, omittedRelevantSections: candidates.length - selected.length,
         outcome: candidates.length === 0 ? 'no_match' as const : selected.length < candidates.length ? 'budget_limited' as const : 'selected' as const }),
       recovery: Object.freeze({ instructions: RECOVERY, nextSection }),
       budget: { maxBytes: limit, serializedBytes: 0, encoding: 'compact-json-utf8-with-final-newline' as const } };
-    let size = 0;
-    for (;;) {
-      basis.budget.serializedBytes = size;
-      const actual = Buffer.byteLength(serializeKnowledgeReaderPacketData({ ...basis, memoryDigest: oldDigest }));
-      if (actual === size) break;
-      size = actual;
-    }
-    Object.freeze(basis.budget);
-    return Object.freeze({ ...basis, memoryDigest: digest(basis) });
+    return finalizeMemoryProjection(basis, oldDigest);
   };
   const minimum = (selected: readonly Candidate[]): number => {
     let limit = 2048;

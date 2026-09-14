@@ -2,14 +2,16 @@ import type { CliIo } from './run-cli.js';
 import {
   CLI_ENVELOPE_SCHEMA_VERSION,
   type CliEnvelopeV1,
+  type CliEnvelopeV2,
   type CliOutputMode,
   type CliResult,
   type RenderedCliResult,
 } from './types.js';
 
-function normalizedEnvelope(result: CliResult): CliEnvelopeV1 {
+function normalizedEnvelope(result: CliResult): CliEnvelopeV1 | CliEnvelopeV2 {
   return {
-    schemaVersion: CLI_ENVELOPE_SCHEMA_VERSION,
+    ...(result.readContext === undefined ? { schemaVersion: CLI_ENVELOPE_SCHEMA_VERSION } :
+      { schemaVersion: 'buildlore.cli-envelope.v2' as const, readContext: result.readContext }),
     command: result.command,
     ok: result.ok,
     projectId: result.projectId ?? null,

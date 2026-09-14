@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -805,11 +805,14 @@ source_digest: sha256:${'a'.repeat(64)}
     });
     const privateQuery = 'private-token-value\nnext';
     const credentialQuery = `find ghp_${'A'.repeat(24)}`;
+    const cookieQuery = `Cookie: sessionid=${randomBytes(24).toString('hex')}`;
     const absolutePathQuery = 'find /home/private-user/project/config.json';
     for (const request of [
       { mode: 'hybrid' as const, projectId: 'other-private-project', query: 'retrieval' },
       { mode: 'hybrid' as const, projectId: PROJECT_ID, query: privateQuery },
       { mode: 'hybrid' as const, projectId: PROJECT_ID, query: credentialQuery },
+      { mode: 'hybrid' as const, projectId: PROJECT_ID, query: cookieQuery },
+      { mode: 'semantic' as const, projectId: PROJECT_ID, query: cookieQuery },
       { mode: 'semantic' as const, projectId: PROJECT_ID, query: absolutePathQuery },
       { mode: 'semantic' as const, projectId: PROJECT_ID, query: 'a'.repeat(4097) },
     ]) {

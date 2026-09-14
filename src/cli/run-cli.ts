@@ -1,3 +1,6 @@
+import { setupHub, connectProject, disconnectProject, resolveConnection, connectionOutcome } from '../connection/service.js';
+import { fail as connectionFail, ConnectionError } from '../connection/contracts.js';
+import { connectionStatus, unavailableConnectionStatus, readConnectedWiki, readApprovedWiki, type WikiReadRequest } from '../application/wiki-read-service.js';
 import { join } from 'node:path';
 import { createProjectKnowledgeCompletenessWorkflow } from './project-knowledge-workflow.js';
 import type { CompletenessRole } from '../compiler/project-knowledge/completeness.js';
@@ -96,7 +99,7 @@ import { createProjectKnowledgeWorkflow, type ProjectKnowledgeWorkflowService } 
 import { createKnowledgeWikiReader } from '../retrieval/project-knowledge-reader.js';
 import { hash, choice, invalid } from '../knowledge/project-knowledge/guards.js';
 import { HELP_TEXT } from './help.js';
-import { CliUsageError, inferCliCommand, parseCliArguments } from './parser.js';
+import { CliUsageError, CONNECTED_READ_COMMANDS, inferCliCommand, parseCliArguments } from './parser.js';
 import { renderCliResult, writeRenderedCliResult } from './presentation.js';
 import { createCliPublicationLineageResolver } from './publication-lineage.js';
 import type {
@@ -137,6 +140,7 @@ export interface CliIo {
 }
 
 export interface CliRuntime {
+  readonly configDir?: string;
   readonly artifactRoot?: string;
   readonly check?: ProjectCheckPort;
   readonly cwd: string;
@@ -512,7 +516,22 @@ async function executeCommand(
   command: ParsedCliCommand,
   runtime: CliRuntime,
 ): Promise<unknown> {
+  if (CONNECTED_READ_COMMANDS.includes(command.command) && stringOption(command, '--expect-generation') !== undefined) {
+    const projectId = requiredStringOption(command, '--project');
+    await assertProjectCommandsReady(runtime, projectId);
+    return (await readApprovedWiki(runtime.cwd, projectId, connectedRequest(command), 'hub-compatible')).data;
+  }
   switch (command.operation) {
+    case 'setup': return setupHub(requiredStringOption(command, '--hub'), requiredStringOption(command, '--knowledge-repo'), runtime);
+    case 'connect': {
+      const sourceRepository = stringOption(command, '--source-repo');
+      const context = await connectProject(runtime.cwd, { hub: requiredStringOption(command, '--hub'), projectId: requiredStringOption(command, '--project'),
+        ...(sourceRepository === undefined ? {} : { sourceRepository }) }, runtime);
+      const status = await connectionStatus(context);
+      return { outcome: connectionOutcome(context), projectId: context.projectId, connectionDigest: context.connectionDigest, readable: status.readable };
+    }
+    case 'disconnect': return disconnectProject(runtime.cwd, command.options['--remove-shared'] === true, runtime);
+    case 'connection.status': case 'doctor': throw new CliUsageError('CLI_ARGUMENT_INVALID');
     case 'model.bind': {
       const localModels = runtime.localModels ?? createLocalModelBindingService(runtime.cwd);
       const directory = stringOption(command, '--directory');
@@ -1312,6 +1331,18 @@ function successResult(command: ParsedCliCommand, data: unknown): CliSuccessResu
   });
 }
 
+function connectedRequest(command: ParsedCliCommand): WikiReadRequest {
+  const operation = (command.command === 'search' ? 'search' : command.command.slice(5)) as WikiReadRequest['operation'];
+  const strings = Object.fromEntries([['--expect-generation', 'expectedGeneration'], ['--page', 'page'], ['--query', 'query'], ['--mode', 'mode'],
+    ['--view', 'view'], ['--cursor', 'cursor'], ['--task', 'task'], ['--kind', 'kind'], ['--id', 'id'], ['--intent', 'intent']]
+    .flatMap(([option, key]) => option && key && stringOption(command, option) !== undefined ? [[key, stringOption(command, option)]] : []));
+  const maxBytes = stringOption(command, '--max-bytes');
+  if (maxBytes !== undefined && (!/^\d+$/u.test(maxBytes) || !Number.isSafeInteger(Number(maxBytes)) || Number(maxBytes) < 1)) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  return { operation, ...strings, ...(command.options['--progressive'] === true ? { progressive: true } : {}),
+    ...(maxBytes === undefined ? {} : { maxBytes: Number(maxBytes) }),
+    ...(stringOption(command, '--limit') === undefined ? {} : { limit: Number(stringOption(command, '--limit')) }) };
+}
+
 function requestedOutputMode(args: readonly string[]): CliOutputMode {
   return args.includes('--json') ? 'json' : 'human';
 }
@@ -1324,13 +1355,52 @@ export async function runCli(
   let outputMode = requestedOutputMode(args);
   let context: CliPresentationContext = { command: inferCliCommand(args) };
   try {
-    const invocation = parseCliArguments(args);
+    const invocation = parseCliArguments(args, { connected: true });
     if (invocation.kind === 'help') {
       io.stdout(HELP_TEXT);
       return 0;
     }
     outputMode = invocation.outputMode;
     context = { command: invocation.command, projectId: invocation.projectId };
+    const options = runtime.configDir === undefined ? {} : { configDir: runtime.configDir };
+    const diagnostic = invocation.command === 'connection.status' || invocation.command === 'doctor';
+    const reading = CONNECTED_READ_COMMANDS.includes(invocation.command);
+    if (diagnostic || reading) {
+      let connection;
+      try { connection = await resolveConnection(runtime.cwd, options); }
+      catch (error) {
+        // Explicit project reads in a legacy non-Git test/runtime keep the old route.
+        if (error instanceof ConnectionError && error.code === 'CONNECTION_MISSING' && invocation.projectId !== null && !diagnostic) connection = null;
+        else {
+          context = { ...context, readContext: null };
+          if (!diagnostic) throw error;
+          const failure = { ...mapCliError(error, context), data: unavailableConnectionStatus(error) };
+          const rendered = renderCliResult(failure, outputMode);
+          writeRenderedCliResult(io, rendered); return rendered.exitCode;
+        }
+      }
+      if (connection) {
+        context = { ...context, projectId: connection.projectId, readContext: null };
+        if (invocation.projectId !== null && invocation.projectId !== connection.projectId) connectionFail('PROJECT_MISMATCH');
+        if (diagnostic) {
+          const data = await connectionStatus(connection);
+          const result = data.readable === true ? { ...successResult(invocation, data), ...context } :
+            { ...mapCliError(new ConnectionError(data.pin !== 'matched' ? 'KNOWLEDGE_PIN_MISMATCH' :
+              data.approval === 'invalid' ? 'KNOWLEDGE_INVALID' : 'APPROVAL_MISSING'), context), data };
+          const rendered = renderCliResult(result, outputMode); writeRenderedCliResult(io, rendered); return rendered.exitCode;
+        }
+        const read = await readConnectedWiki(connection, connectedRequest(invocation));
+        const rendered = renderCliResult({ ...successResult(invocation, read.data), ...context,
+          readContext: read.readContext, knowledgeRevision: read.knowledgeRevision }, outputMode);
+        writeRenderedCliResult(io, rendered); return rendered.exitCode;
+      }
+      if (diagnostic || invocation.projectId === null) {
+        context = { ...context, readContext: null };
+        const error = new ConnectionError('CONNECTION_MISSING');
+        const failure = { ...mapCliError(error, context), ...(diagnostic ? { data: unavailableConnectionStatus(error) } : {}) };
+        const rendered = renderCliResult(failure, outputMode); writeRenderedCliResult(io, rendered); return rendered.exitCode;
+      }
+    }
     const data = normalizeDomainData(invocation, await executeCommand(invocation, runtime));
     const domainFailure = domainFailureResult(invocation, data) ??
       ineligiblePlanFailureResult(invocation, data);
@@ -1375,6 +1445,13 @@ export async function runCli(
     writeRenderedCliResult(io, rendered);
     return rendered.exitCode;
   } catch (error) {
+    if (CONNECTED_READ_COMMANDS.includes(context.command as ParsedCliCommand['command']) && context.readContext === undefined) {
+      try {
+        if (!args.includes('--project') || await resolveConnection(runtime.cwd, runtime)) context = { ...context, readContext: null };
+      } catch (resolutionError) {
+        if (!(resolutionError instanceof ConnectionError) || resolutionError.code !== 'CONNECTION_MISSING') context = { ...context, readContext: null };
+      }
+    }
     const rendered = renderCliResult(mapCliError(error, context), outputMode);
     writeRenderedCliResult(io, rendered);
     return rendered.exitCode;

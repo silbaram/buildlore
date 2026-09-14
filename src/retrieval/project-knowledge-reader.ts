@@ -4,8 +4,9 @@ import { knowledgeReaderPacket, type KnowledgeReaderPacketV1 } from '../compiler
 import { knowledgeDevelopmentMemory, type KnowledgeDevelopmentMemoryV1 } from '../compiler/project-knowledge/reader-memory.js';
 import { screenRetainedKnowledgeValue } from '../compiler/project-knowledge/history-security.js';
 import { latestKnowledgeGeneration } from './project-knowledge-authority.js';
+import type { KnowledgeHierarchyMappingV1 } from '../compiler/project-knowledge/hierarchy-bridge.js';
 import { dirname, resolve } from 'node:path';
-import { createApprovedWikiPublicationReader } from './approved-corpus-store.js';
+import { createApprovedWikiPublicationReader, type ApprovedWikiPublicationSnapshotV1 } from './approved-corpus-store.js';
 import { createApprovedWikiHybridRetrievalV3, searchApprovedWikiLexicalV3 } from './hybrid.js';
 import { createLocalEmbeddingProvider, type EmbeddingProviderPort } from './embedding/index.js';
 import { createFlatFileVectorIndex, type VectorIndexPort } from './vector-index/index.js';
@@ -59,9 +60,32 @@ export interface CreateKnowledgeWikiReaderOptions {
   readonly vectorIndex?: VectorIndexPort;
 }
 
+function resolvePageMapping(mappings: readonly KnowledgeHierarchyMappingV1[], pageRef: string): KnowledgeHierarchyMappingV1 {
+  return mappings.find(mapping => [mapping.pageId, mapping.role, `${mapping.role}.md`,
+    `wiki/buildlore-hierarchy/${mapping.role}.md`, `buildlore-hierarchy/${mapping.role}.md`].includes(pageRef)) ?? invalid();
+}
+
 /** Reads only the selected authority, never archive files, edited projections or a legacy cache. */
 export function createKnowledgeWikiReader(knowledgeRoot: string,
   options: CreateKnowledgeWikiReaderOptions = {},
+): KnowledgeWikiReader {
+  return createReader(knowledgeRoot, options);
+}
+
+/** Select once; comparison and every projection use the same validated authority. */
+export async function openKnowledgeReadSession(knowledgeRoot: string, projectId: string,
+  options: CreateKnowledgeWikiReaderOptions = {},
+): Promise<Readonly<{ publication: ApprovedWikiPublicationSnapshotV1; reader: KnowledgeWikiReader; generationDigest: KnowledgeDigest | null }> | null> {
+  const publication = await createApprovedWikiPublicationReader(knowledgeRoot).read(projectId);
+  if (!publication) return null;
+  const extension = publication.authority.knowledgeGeneration;
+  return Object.freeze({ publication,
+    generationDigest: extension ? latestKnowledgeGeneration(extension)?.generationDigest ?? null : null,
+    reader: createReader(knowledgeRoot, options, { projectId, publication }) });
+}
+
+function createReader(knowledgeRoot: string, options: CreateKnowledgeWikiReaderOptions,
+  selected?: Readonly<{ projectId: string; publication: ApprovedWikiPublicationSnapshotV1 }>,
 ): KnowledgeWikiReader {
   const publications = createApprovedWikiPublicationReader(knowledgeRoot);
   const security = createProjectSecurityService({ knowledgeRoot });
@@ -75,7 +99,8 @@ export function createKnowledgeWikiReader(knowledgeRoot: string,
     if (!approved || approved.approvedBody !== body || approved.policyDigest !== policyDigest || approved.untrustedData) invalid();
   };
   const load = async (projectId: string) => {
-    const publication = await publications.read(projectId).catch(() => invalid());
+    if (selected && selected.projectId !== projectId) invalid();
+    const publication = selected ? selected.publication : await publications.read(projectId).catch(() => invalid());
     if (publication === null) return null;
     const extension = publication.authority.knowledgeGeneration;
     if (!extension) return null;
@@ -92,6 +117,24 @@ export function createKnowledgeWikiReader(knowledgeRoot: string,
     }
     return { publication, extension, generation, policy };
   };
+  const loadExpectedGeneration = async (projectId: string, expectedGeneration: KnowledgeDigest) => {
+    const loaded = await load(projectId);
+    if (!loaded || loaded.generation.generationDigest !== expectedGeneration) invalid();
+    return loaded;
+  };
+  const readMemoryProjection = async <T>(projectId: string,
+    name: 'development-memory' | 'task-memory' | 'progressive-memory',
+    project: (generation: KnowledgeGenerationV1) => T, task?: string): Promise<T | null> => {
+    const loaded = await load(projectId);
+    if (!loaded) return null;
+    if (task !== undefined) {
+      await screen(projectId, `buildlore-hierarchy/${name}-request.txt`, task, loaded.policy.digest);
+    }
+    const result = project(loaded.generation);
+    await screenRetainedKnowledgeValue(result, body =>
+      screen(projectId, `buildlore-hierarchy/${name}.json`, body, loaded.policy.digest));
+    return result;
+  };
   const pageView = (generation: KnowledgeGenerationV1, page: KnowledgePageV1, pageId: string): KnowledgeWikiPageView => {
     const claims = page.sections.flatMap((s) => s.claims);
     const ids = new Set(claims.flatMap((c) => c.factIds));
@@ -105,31 +148,16 @@ export function createKnowledgeWikiReader(knowledgeRoot: string,
   const reader: KnowledgeWikiReader = {
     async readProgressiveMemory(projectId, request) {
       const validated = validateProgressiveMemoryRequest(request);
-      const loaded = await load(projectId);
-      if (!loaded) return null;
-      await screen(projectId, 'buildlore-hierarchy/progressive-memory-request.txt', validated.task, loaded.policy.digest);
-      const result = knowledgeProgressiveMemory(loaded.generation, validated);
-      await screenRetainedKnowledgeValue(result, body =>
-        screen(projectId, 'buildlore-hierarchy/progressive-memory.json', body, loaded.policy.digest));
-      return result;
+      return readMemoryProjection(projectId, 'progressive-memory',
+        generation => knowledgeProgressiveMemory(generation, validated), validated.task);
     },
     async readTaskMemory(projectId, request) {
       const validated = validateTaskMemoryRequest(request);
-      const loaded = await load(projectId);
-      if (!loaded) return null;
-      await screen(projectId, 'buildlore-hierarchy/task-memory-request.txt', validated.task, loaded.policy.digest);
-      const result = knowledgeTaskMemory(loaded.generation, validated);
-      await screenRetainedKnowledgeValue(result, body =>
-        screen(projectId, 'buildlore-hierarchy/task-memory.json', body, loaded.policy.digest));
-      return result;
+      return readMemoryProjection(projectId, 'task-memory',
+        generation => knowledgeTaskMemory(generation, validated), validated.task);
     },
     async readMemory(projectId) {
-      const loaded = await load(projectId);
-      if (!loaded) return null;
-      const result = knowledgeDevelopmentMemory(loaded.generation);
-      await screenRetainedKnowledgeValue(result, body =>
-        screen(projectId, 'buildlore-hierarchy/development-memory.json', body, loaded.policy.digest));
-      return result;
+      return readMemoryProjection(projectId, 'development-memory', knowledgeDevelopmentMemory);
     },
     async readPacket(projectId) {
       const loaded = await load(projectId);
@@ -141,15 +169,13 @@ export function createKnowledgeWikiReader(knowledgeRoot: string,
     async readContext(projectId, pageRef) {
       const loaded = await load(projectId);
       if (!loaded) return null;
-      const mapping = loaded.extension.pageMappings.find(m => [m.pageId, m.role, `${m.role}.md`,
-        `wiki/buildlore-hierarchy/${m.role}.md`, `buildlore-hierarchy/${m.role}.md`].includes(pageRef)) ?? invalid();
+      const mapping = resolvePageMapping(loaded.extension.pageMappings, pageRef);
       const result = knowledgeReaderPage(loaded.generation, mapping.role);
       await screen(projectId, 'buildlore-hierarchy/reader-page.json', JSON.stringify(result), loaded.policy.digest);
       return result;
     },
     async lookup(projectId, expectedGeneration, kind, id) {
-      const loaded = await load(projectId);
-      if (!loaded || loaded.generation.generationDigest !== expectedGeneration) invalid();
+      const loaded = await loadExpectedGeneration(projectId, expectedGeneration);
       const result = knowledgeReaderLookup(loaded.generation, kind, id);
       await screen(projectId, 'buildlore-hierarchy/reader-lookup.json', JSON.stringify(result), loaded.policy.digest);
       return result;
@@ -172,9 +198,7 @@ export function createKnowledgeWikiReader(knowledgeRoot: string,
     async read(projectId, pageRef) {
       const loaded = await load(projectId);
       if (!loaded) return null;
-      const mapping = loaded.extension.pageMappings.find((m) => [m.pageId, m.role, `${m.role}.md`,
-        `wiki/buildlore-hierarchy/${m.role}.md`, `buildlore-hierarchy/${m.role}.md`].includes(pageRef));
-      if (!mapping) invalid();
+      const mapping = resolvePageMapping(loaded.extension.pageMappings, pageRef);
       const page = loaded.generation.pages.find((p) => p.role === mapping.role);
       if (!page) invalid();
       return pageView(loaded.generation, page, mapping.pageId);
@@ -187,13 +211,11 @@ export function createKnowledgeWikiReader(knowledgeRoot: string,
         claims: page.claims, facts: page.facts, evidence: page.evidence, egress: 'none' };
     },
     async evidence(projectId, expectedGeneration, evidenceId) {
-      const loaded = await load(projectId);
-      if (!loaded || loaded.generation.generationDigest !== expectedGeneration) invalid();
+      const loaded = await loadExpectedGeneration(projectId, expectedGeneration);
       return loaded.generation.evidence.find((e) => e.evidenceId === evidenceId) ?? invalid();
     },
     async fact(projectId, expectedGeneration, factId) {
-      const loaded = await load(projectId);
-      if (!loaded || loaded.generation.generationDigest !== expectedGeneration) invalid();
+      const loaded = await loadExpectedGeneration(projectId, expectedGeneration);
       return knowledgeFactSupport(loaded.generation, factId);
     },
     async search(projectId, query, mode, intent = 'auto') {

@@ -1,6 +1,14 @@
 export const HELP_TEXT = `BuildLore — local-first, Git-backed development wiki tooling
 
 Usage:
+  buildlore setup --hub <path> --knowledge-repo <portable-locator> [--json]
+  buildlore connect --hub <path> --project <id> [--source-repo <locator>] [--json]
+  buildlore disconnect [--remove-shared] [--json]
+  buildlore connection status [--project <id>] [--json]
+  buildlore doctor [--project <id>] [--json]
+
+Connected source reads may omit --project. read/lookup/citations require --expect-generation <sha256:...>; list/search/memory accept it optionally.
+
   buildlore init --knowledge-repo <url-or-path> [--branch <name>] [--json]
   buildlore init --project <project-id> --source-repo <portable-id> --source-root <absolute-path> [--knowledge-repo <url-or-path>] [--branch <name>] [--name <display-name>] [--json]
   buildlore project add --id <project-id> --source-repo <portable-id> --source-root <absolute-path> [--name <display-name>] [--json]

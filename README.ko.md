@@ -40,7 +40,7 @@ npm run build
 node dist/cli/bin.js --help
 ```
 
-모든 명령은 BuildLore 허브 루트에서 실행합니다. 아래 예시는
+등록·수집·컴파일·승인 명령은 BuildLore 허브 루트에서 실행합니다. 아래 예시는
 `node dist/cli/bin.js`를 사용합니다. 패키지 실행 파일을 링크하거나 설치했다면
 이를 `buildlore`로 바꿔 사용할 수 있습니다.
 
@@ -48,6 +48,66 @@ node dist/cli/bin.js --help
 `llm-wiki-compiler@1.1.0`은 교체 가능한 `src/compiler` 패키지 루트 어댑터를
 통해서만 사용합니다. BuildLore는 이 패키지를 포크하거나 내부 모듈을 직접
 가져오지 않습니다.
+
+
+### 패키지 설치와 소스 폴더에서 조회
+
+M1의 기준 환경은 Linux x64, Node.js 24.19.0, npm 11.19.0, Git 2.53.0입니다.
+다른 OS의 검증 완료를 의미하지 않습니다. 현재 패키지는 `private: true`이며
+레지스트리에 게시하지 않고 로컬 tarball을 설치합니다.
+
+```sh
+# BuildLore 개발 체크아웃에서, npm@11.19.0 사용
+npm ci --ignore-scripts
+npm run build
+npm pack --pack-destination /tmp
+# 개발 체크아웃 밖에 실행 패키지와 런타임 의존성 설치
+npm install --prefix "$HOME/.local/buildlore" --omit=dev /tmp/buildlore-0.1.0.tgz
+export PATH="$HOME/.local/buildlore/node_modules/.bin:$PATH"
+
+buildlore setup --hub /work/wiki-hub --knowledge-repo https://example.org/team/knowledge.git
+cd /work/my-source
+buildlore connect --hub /work/wiki-hub --project my-project
+buildlore connection status --json
+buildlore wiki list --json
+buildlore search --query "설계 결정" --json
+# list/search/memory 응답의 readContext.generation 값을 그대로 사용
+buildlore wiki read --page overview --expect-generation sha256:<64자리-해시> --json
+buildlore wiki memory --task "설계 결정 확인" --progressive --json
+```
+
+`setup`은 비어 있는 별도 허브를 만들거나 같은 지식 저장소의 기존 허브를 등록합니다.
+`connect` 전에 해당 프로젝트가 지식 저장소에 등록되어 있어야 합니다. 등록·수집·승인·활성화는
+아래 허브 명령으로 수행합니다. 승인 Wiki가 없으면 연결은 가능하지만 `readable: false`입니다.
+소스 Git origin이 없으면 최초 연결 때 `--source-repo <등록된 저장소 식별자>`도 지정합니다.
+동일 프로젝트의 다른 clone/worktree도 각각 연결할 수 있습니다.
+
+연결 후 소스 루트와 하위 폴더에서는 읽기 명령의 `--project`를 생략합니다. 명시하면 연결된
+프로젝트와 같아야 합니다. `read`, `citations`, `lookup`은 `--expect-generation`이 필수이고,
+`list`, `search`, `memory`는 선택입니다. 세대가 변경되면 본문 없이 실패하므로 새 목록이나
+메모리를 받아 다시 조회합니다. 연결 조회는 승인된 project-knowledge 또는 hierarchical
+출력만 사용하며 검색은 lexical입니다. Hierarchical 출력은 목록·검색·본문·인용을 지원하고,
+메모리·lookup·reader view는 지원하지 않습니다. 기존 허브 명령은 v1 JSON 출력을 유지하며
+연결 조회는 `buildlore.cli-envelope.v2`의 `readContext`에 세대와 저장소 digest를 제공합니다.
+
+공유 가능한 `.buildlore/connection.json`에는 저장소 식별자·digest와 project ID만 저장합니다.
+절대 경로는 PC 전용 `connections.json`에 저장하며, `BUILDLORE_CONFIG_DIR` 절대 경로,
+`$XDG_CONFIG_HOME/buildlore`, `$HOME/.config/buildlore` 순서로 위치를 선택합니다.
+수집용 `local-projects.json`과 `sources.json`은 연결 명령이 수정하지 않습니다.
+`buildlore disconnect`는 PC 바인딩만 해제하고, `--remove-shared`를 함께 지정하면 공유 연결도
+제거합니다. 부분 연결 실패는 같은 `connect`를 재실행하여 복구합니다. 변경된 저장소는 먼저
+연결을 해제하고 올바른 설정으로 다시 연결합니다.
+
+`connection status`와 `doctor`는 승인·핀·dirty 상태와 복구 명령을 읽기만 합니다.
+dirty는 연결된 프로젝트의 지식 파일 범위이며 다른 프로젝트 본문을 열지 않습니다.
+원격 최신 여부는 `not_checked`입니다. 소스 revision 비교는 기록된 Git HEAD 메타데이터의 비교이며 작업 파일 일치 보증이 아닙니다. 핀 불일치는 허브에서 기존 `knowledge status` 및
+핀 계획/커밋 절차로 해결합니다. 읽기에서는 모델·인덱스 생성·네트워크·임시 파일 쓰기를
+수행하지 않습니다. 이력 검증은 메모리를 일정하게 유지하기 위해 읽기만으로 반복 순회하므로
+긴 이력의 최초 조회는 느릴 수 있습니다. MCP 클라이언트 연결과 자동 업데이트는 후속 범위입니다.
+
+개발 검증에는 `npm run verify:installed-read`를 사용합니다. `strace`, `bwrap`,
+사용자 네임스페이스 실행 권한과 npm 11.19.0이 필요하며, 도구가 없으면 검증은 실패합니다.
+패키지 설치에는 네트워크를 사용하고, 이후 조회는 읽기 전용 마운트·네트워크 격리에서 실행합니다.
 
 ## 빠른 시작
 

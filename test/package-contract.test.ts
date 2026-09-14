@@ -298,6 +298,7 @@ describe('package contract', () => {
       'p2a:init': 'node scripts/bootstrap-p2a.mjs',
       test: 'vitest run',
       typecheck: 'tsc -p tsconfig.json --noEmit',
+      'verify:installed-read': 'node scripts/verify-installed-read.mjs',
     });
   });
 

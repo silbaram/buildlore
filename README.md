@@ -40,13 +40,73 @@ npm run build
 node dist/cli/bin.js --help
 ```
 
-Run commands from the BuildLore hub root. The examples below use
+Run registration, collection, compilation and approval commands from the BuildLore hub root. The examples below use
 `node dist/cli/bin.js`; replace it with `buildlore` when the package bin is linked or
 installed.
 
 The lockfile and every direct dependency use exact versions.
 `llm-wiki-compiler@1.1.0` is consumed only through the replaceable `src/compiler`
 package-root adapter; BuildLore does not fork it or import its internal modules.
+
+
+### Install the package and read from source folders
+
+The M1 reference environment is Linux x64, Node.js 24.19.0, npm 11.19.0 and Git 2.53.0.
+Other operating systems have not been validated. The package remains `private: true`;
+install a local tarball without publishing it to a registry.
+
+```sh
+# In the BuildLore development checkout, using npm@11.19.0
+npm ci --ignore-scripts
+npm run build
+npm pack --pack-destination /tmp
+npm install --prefix "$HOME/.local/buildlore" --omit=dev /tmp/buildlore-0.1.0.tgz
+export PATH="$HOME/.local/buildlore/node_modules/.bin:$PATH"
+
+buildlore setup --hub /work/wiki-hub --knowledge-repo https://example.org/team/knowledge.git
+cd /work/my-source
+buildlore connect --hub /work/wiki-hub --project my-project
+buildlore connection status --json
+buildlore wiki list --json
+buildlore search --query "design decision" --json
+# Copy readContext.generation from list/search/memory
+buildlore wiki read --page overview --expect-generation sha256:<64-hex-digits> --json
+buildlore wiki memory --task "review design decisions" --progressive --json
+```
+
+`setup` initializes a separate empty hub or registers an existing matching hub. Register the
+project in its knowledge repository before `connect`, using the hub workflow below. Connecting
+without an approved Wiki is valid but reports `readable: false`. If the source has no Git origin,
+pass `--source-repo <registered-locator>` at connection time. Additional clones and worktrees of
+the same project each have their own local binding.
+
+Connected reads resolve the project from the nearest Git worktree, including subdirectories.
+An explicit `--project` must match. `read`, `citations` and `lookup` require
+`--expect-generation`; `list`, `search` and `memory` accept it optionally. A changed generation
+fails without content; obtain a new list or memory response before retrying. Connected reads use
+approved project-knowledge or hierarchical output and lexical search. Hierarchical output supports
+list/search/read/citations, but not memory, lookup or reader view. Hub JSON remains v1; connected
+reads use `buildlore.cli-envelope.v2` with repository digest and generation in `readContext`.
+
+Shared `.buildlore/connection.json` contains only a portable repository locator, its digest and
+project ID. Absolute paths belong in PC-local `connections.json`: an absolute
+`BUILDLORE_CONFIG_DIR` takes precedence over `$XDG_CONFIG_HOME/buildlore`, then
+`$HOME/.config/buildlore`. Connections do not modify the writer's `local-projects.json` or source
+`sources.json`. `disconnect` removes the local binding; add `--remove-shared` to remove the shared
+connection too. Retry the same `connect` after an interrupted connection. Disconnect before
+replacing a connection with a different identity.
+
+`connection status` and `doctor` inspect approval, dirty state and pin health without repair.
+Dirty state covers the connected project’s knowledge files, without opening other projects’ content.
+Source revision comparison uses recorded Git HEAD metadata, not working-file equivalence.
+Remote freshness is `not_checked`. Resolve pin errors through the existing hub `knowledge status`
+and pin plan/commit workflow. Reads create no model, index or temporary files and need no network.
+Read-only history validation uses repeated traversal to keep live memory bounded, so a cold read
+of a long history may be slower. MCP client integration and automatic updates belong to later work.
+
+For development validation, run `npm run verify:installed-read` with npm 11.19.0, `strace`,
+`bwrap` and permission to create user namespaces. Missing tools fail the check. Installation uses
+the network; subsequent reads run with read-only mounts and a separate network namespace.
 
 ## Quick start
 
