@@ -156,7 +156,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     '--project',
   ),
   command(['wiki', 'packet'], 'wiki.packet', 'wiki.packet', ['--project'], ['--project'], [], {}, '--project'),
-  command(['wiki', 'memory'], 'wiki.memory', 'wiki.memory', ['--project'], ['--project'], [], {}, '--project'),
+  command(['wiki', 'memory'], 'wiki.memory', 'wiki.memory', ['--project', '--task', '--max-bytes', '--cursor'], ['--project'], ['--progressive'], {}, '--project'),
   command(['wiki', 'lookup'], 'wiki.lookup', 'wiki.lookup',
     ['--project', '--kind', '--id', '--expect-generation'],
     ['--project', '--kind', '--id', '--expect-generation'], [], {}, '--project'),

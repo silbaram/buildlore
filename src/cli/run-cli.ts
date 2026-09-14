@@ -735,7 +735,21 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       if (runtime.localWiki !== undefined || runtime.wikiRead !== undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
-      return await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).readMemory(projectId) ?? invalid();
+      const task = stringOption(command, '--task');
+      const budget = stringOption(command, '--max-bytes');
+      const progressive = command.options['--progressive'] === true;
+      const cursor = stringOption(command, '--cursor');
+      if (cursor !== undefined && !progressive) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      const reader = createKnowledgeWikiReader(join(runtime.cwd, 'knowledge'));
+      if (task === undefined) {
+        if (budget !== undefined || progressive) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+        return await reader.readMemory(projectId) ?? invalid();
+      }
+      if (budget !== undefined && !/^[0-9]+$/u.test(budget)) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      if (progressive) return await reader.readProgressiveMemory(projectId, { task,
+        ...(budget === undefined ? {} : { maxBytes: Number(budget) }), ...(cursor === undefined ? {} : { cursor }) }) ?? invalid();
+      return await reader.readTaskMemory(projectId, { task,
+        ...(budget === undefined ? {} : { maxBytes: Number(budget) }) }) ?? invalid();
     }
     case 'wiki.packet': {
       const projectId = requiredStringOption(command, '--project');

@@ -227,3 +227,7 @@ export { createKnowledgeGenerationHistoryStore, KnowledgeHistoryError } from './
 export type { VerifiedKnowledgeHistory, KnowledgeGenerationHistoryStorePort } from './project-knowledge-history-store.js';
 export { approveKnowledgeWikiHistoryAuthority, latestKnowledgeGeneration, knowledgeAuthorityHistory } from './project-knowledge-authority.js';
 export type { KnowledgeAuthorityExtension, KnowledgeAuthorityExtensionV2, KnowledgeHistoryAppendV1 } from './project-knowledge-authority.js';
+
+export { TaskMemoryError, type KnowledgeTaskMemoryV1, type TaskMemoryRequest } from '../compiler/project-knowledge/task-memory.js';
+
+export { knowledgeProgressiveMemory, validateProgressiveMemoryRequest, ProgressiveMemoryError, type KnowledgeProgressiveMemoryV1, type ProgressiveMemoryRequest } from '../compiler/project-knowledge/progressive-memory.js';

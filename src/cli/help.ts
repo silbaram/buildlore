@@ -14,7 +14,7 @@ Usage:
   buildlore wiki curate --project <project-id> [--json]
   buildlore wiki read --project <project-id> --page <page-type/slug|page-sha256-id|overview|architecture|decisions> [--view full|reader] [--json]
   buildlore wiki packet --project <project-id> [--json]
-  buildlore wiki memory --project <project-id> [--json]
+  buildlore wiki memory --project <project-id> [--task <text> [--max-bytes <2048-65536>] [--progressive [--cursor <cursor>]]] [--json]
   buildlore wiki lookup --project <project-id> --kind evidence|fact --id <sha256:id> --expect-generation <sha256:generation> [--json]
   buildlore wiki citations --project <project-id> --page <page-type/slug|page-sha256-id> [--json]
   buildlore export --project <project-id> --format json|okf --output <directory> [--json]

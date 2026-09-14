@@ -1,3 +1,5 @@
+import { ProgressiveMemoryError } from '../compiler/project-knowledge/progressive-memory.js';
+import { TaskMemoryError } from '../compiler/project-knowledge/task-memory.js';
 import { KnowledgeHistoryError } from '../retrieval/project-knowledge-history-store.js';
 import { CompilerOperationError } from '../compiler/errors.js';
 import {
@@ -228,6 +230,18 @@ export function mapCliError(
   }
   if (error instanceof HierarchicalWorkflowError) {
     return baseFailure(context, 3, error.code, error.message);
+  }
+  if (error instanceof ProgressiveMemoryError) {
+    if (error.code === 'PROGRESSIVE_MEMORY_CURSOR_INVALID') return baseFailure(context, 2, error.code,
+      'Cursor must match this project, task and generation. Start a new progressive read if they changed.');
+    return Object.freeze({ ...baseFailure(context, 3, error.code, 'Progressive memory metadata exceeds the requested byte budget.'),
+      data: { minimumRequiredBytes: error.minimumRequiredBytes } });
+  }
+  if (error instanceof TaskMemoryError) {
+    if (error.code === 'TASK_MEMORY_REQUEST_INVALID') return baseFailure(context, 2, 'CLI_ARGUMENT_INVALID',
+      'Task must be nonempty and at most 2048 UTF-8 bytes; maxBytes must be an integer from 2048 to 65536.');
+    return Object.freeze({ ...baseFailure(context, 3, error.code, 'Task memory metadata exceeds the requested byte budget.'),
+      data: { minimumRequiredBytes: error.minimumRequiredBytes } });
   }
   if (error instanceof KnowledgeChangeImpactBudgetError) {
     return Object.freeze({ ...baseFailure(context, 3, error.code,

@@ -15,6 +15,12 @@
     },
     {
       "$ref": "#/$defs/memory"
+    },
+    {
+      "$ref": "#/$defs/taskMemory"
+    },
+    {
+      "$ref": "#/$defs/progressiveMemory"
     }
   ],
   "$defs": {
@@ -554,6 +560,827 @@
             },
             "costEncoding": {
               "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        }
+      }
+    },
+    "taskMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "instructions",
+        "legend",
+        "pages",
+        "facts",
+        "evidence",
+        "sources",
+        "egress",
+        "purpose",
+        "snapshotDigest",
+        "selectionDigest",
+        "baselineGenerationDigest",
+        "providerUsed",
+        "processSpawned",
+        "memoryDigest",
+        "evidenceContext",
+        "lookup",
+        "requestDigest",
+        "selectionStrategy",
+        "coverage",
+        "budget",
+        "recovery"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-task-memory.v1"
+        },
+        "projectId": {
+          "$ref": "#/$defs/packet/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/packet/properties/generationDigest"
+        },
+        "instructions": {
+          "$ref": "#/$defs/packet/properties/instructions"
+        },
+        "legend": {
+          "$ref": "#/$defs/packet/properties/legend"
+        },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "title",
+              "sections",
+              "pageIndex"
+            ],
+            "properties": {
+              "role": {
+                "enum": [
+                  "overview",
+                  "architecture",
+                  "decisions"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "title",
+                    "claims",
+                    "sectionIndex"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "claims": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "claimId",
+                          "text",
+                          "presentation",
+                          "facts"
+                        ],
+                        "properties": {
+                          "claimId": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "presentation": {
+                            "enum": [
+                              "current",
+                              "history",
+                              "uncertainty"
+                            ]
+                          },
+                          "facts": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^f[0-9]+$"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "sectionIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "pageIndex": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "facts": {
+          "$ref": "#/$defs/packet/properties/facts"
+        },
+        "evidence": {
+          "$ref": "#/$defs/packet/properties/evidence"
+        },
+        "sources": {
+          "$ref": "#/$defs/packet/properties/sources"
+        },
+        "egress": {
+          "$ref": "#/$defs/packet/properties/egress"
+        },
+        "purpose": {
+          "const": "development"
+        },
+        "snapshotDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "selectionDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "baselineGenerationDigest": {
+          "oneOf": [
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerUsed": {
+          "const": "none"
+        },
+        "processSpawned": {
+          "const": false
+        },
+        "memoryDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "evidenceContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fields",
+            "aliases",
+            "values"
+          ],
+          "properties": {
+            "fields": {
+              "const": [
+                "presentInCurrentSnapshot",
+                "sourceRevision",
+                "codeRevision",
+                "sourceRevisionUnavailableReason",
+                "codeRevisionUnavailableReason",
+                "sourceContentDigest",
+                "sanitizedContentDigest"
+              ]
+            },
+            "aliases": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^e[0-9]+$": {
+                  "type": "string",
+                  "pattern": "^c[0-9]+$"
+                }
+              }
+            },
+            "values": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^c[0-9]+$": {
+                  "type": "array",
+                  "minItems": 7,
+                  "maxItems": 7,
+                  "prefixItems": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevision"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevision"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevisionUnavailableReason"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevisionUnavailableReason"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceContentDigest"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sanitizedContentDigest"
+                    }
+                  ],
+                  "items": false
+                }
+              }
+            }
+          }
+        },
+        "lookup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "projectId",
+            "expectedGeneration",
+            "kinds",
+            "idKind",
+            "costEncoding"
+          ],
+          "properties": {
+            "projectId": {
+              "$ref": "#/$defs/packet/properties/projectId"
+            },
+            "expectedGeneration": {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            "kinds": {
+              "const": [
+                "fact",
+                "evidence"
+              ]
+            },
+            "idKind": {
+              "const": "canonical-sha256"
+            },
+            "costEncoding": {
+              "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        },
+        "requestDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "selectionStrategy": {
+          "const": "lexical-section-v1"
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "isSelective",
+            "partial",
+            "totalSections",
+            "relevantSections",
+            "includedSections",
+            "unmatchedSections",
+            "omittedRelevantSections",
+            "outcome"
+          ],
+          "properties": {
+            "isSelective": {
+              "const": true
+            },
+            "partial": {
+              "type": "boolean"
+            },
+            "totalSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "relevantSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "includedSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unmatchedSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "omittedRelevantSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outcome": {
+              "enum": [
+                "no_match",
+                "budget_limited",
+                "selected"
+              ]
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxBytes",
+            "serializedBytes",
+            "encoding"
+          ],
+          "properties": {
+            "maxBytes": {
+              "type": "integer",
+              "minimum": 2048,
+              "maximum": 65536
+            },
+            "serializedBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "encoding": {
+              "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "instructions",
+            "nextSection"
+          ],
+          "properties": {
+            "instructions": {
+              "type": "string"
+            },
+            "nextSection": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "pageIndex",
+                    "sectionIndex",
+                    "minimumRequiredBytes"
+                  ],
+                  "properties": {
+                    "pageIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "sectionIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "minimumRequiredBytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "progressiveMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "instructions",
+        "legend",
+        "facts",
+        "evidence",
+        "sources",
+        "egress",
+        "purpose",
+        "snapshotDigest",
+        "selectionDigest",
+        "baselineGenerationDigest",
+        "providerUsed",
+        "processSpawned",
+        "memoryDigest",
+        "evidenceContext",
+        "lookup",
+        "requestDigest",
+        "selectionStrategy",
+        "coverage",
+        "budget",
+        "recovery",
+        "units"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-progressive-memory.v1"
+        },
+        "projectId": {
+          "$ref": "#/$defs/packet/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/packet/properties/generationDigest"
+        },
+        "instructions": {
+          "$ref": "#/$defs/packet/properties/instructions"
+        },
+        "legend": {
+          "$ref": "#/$defs/packet/properties/legend"
+        },
+        "facts": {
+          "$ref": "#/$defs/packet/properties/facts"
+        },
+        "evidence": {
+          "$ref": "#/$defs/packet/properties/evidence"
+        },
+        "sources": {
+          "$ref": "#/$defs/packet/properties/sources"
+        },
+        "egress": {
+          "$ref": "#/$defs/packet/properties/egress"
+        },
+        "purpose": {
+          "const": "development"
+        },
+        "snapshotDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "selectionDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "baselineGenerationDigest": {
+          "oneOf": [
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerUsed": {
+          "const": "none"
+        },
+        "processSpawned": {
+          "const": false
+        },
+        "memoryDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "evidenceContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fields",
+            "aliases",
+            "values"
+          ],
+          "properties": {
+            "fields": {
+              "const": [
+                "presentInCurrentSnapshot",
+                "sourceRevision",
+                "codeRevision",
+                "sourceRevisionUnavailableReason",
+                "codeRevisionUnavailableReason",
+                "sourceContentDigest",
+                "sanitizedContentDigest"
+              ]
+            },
+            "aliases": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^e[0-9]+$": {
+                  "type": "string",
+                  "pattern": "^c[0-9]+$"
+                }
+              }
+            },
+            "values": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^c[0-9]+$": {
+                  "type": "array",
+                  "minItems": 7,
+                  "maxItems": 7,
+                  "prefixItems": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevision"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevision"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevisionUnavailableReason"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevisionUnavailableReason"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceContentDigest"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sanitizedContentDigest"
+                    }
+                  ],
+                  "items": false
+                }
+              }
+            }
+          }
+        },
+        "lookup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "projectId",
+            "expectedGeneration",
+            "kinds",
+            "idKind",
+            "costEncoding"
+          ],
+          "properties": {
+            "projectId": {
+              "$ref": "#/$defs/packet/properties/projectId"
+            },
+            "expectedGeneration": {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            "kinds": {
+              "const": [
+                "fact",
+                "evidence"
+              ]
+            },
+            "idKind": {
+              "const": "canonical-sha256"
+            },
+            "costEncoding": {
+              "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        },
+        "requestDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "selectionStrategy": {
+          "const": "lexical-claim-v1"
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "isSelective",
+            "partial",
+            "totalClaims",
+            "relevantClaims",
+            "includedClaims",
+            "unmatchedClaims",
+            "startPosition",
+            "nextPosition",
+            "oversizedClaims",
+            "outcome"
+          ],
+          "properties": {
+            "isSelective": {
+              "const": true
+            },
+            "partial": {
+              "type": "boolean"
+            },
+            "totalClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "relevantClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "includedClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unmatchedClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "startPosition": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nextPosition": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "oversizedClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outcome": {
+              "enum": [
+                "no_match",
+                "budget_limited",
+                "selected"
+              ]
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxBytes",
+            "serializedBytes",
+            "encoding"
+          ],
+          "properties": {
+            "maxBytes": {
+              "type": "integer",
+              "minimum": 2048,
+              "maximum": 65536
+            },
+            "serializedBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "encoding": {
+              "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "instructions",
+            "nextCursor",
+            "oversized",
+            "replay"
+          ],
+          "properties": {
+            "instructions": {
+              "type": "string"
+            },
+            "nextCursor": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^pwm1:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "oversized": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "pageIndex",
+                    "sectionIndex",
+                    "claimIndex",
+                    "cursor",
+                    "requiredBytes",
+                    "exceedsMaximum"
+                  ],
+                  "properties": {
+                    "pageIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "sectionIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "claimIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "cursor": {
+                      "type": "string",
+                      "pattern": "^pwm1:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
+                    },
+                    "requiredBytes": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "exceedsMaximum": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "replay": {
+              "type": "boolean"
+            }
+          }
+        },
+        "units": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pageIndex",
+              "sectionIndex",
+              "claimIndex",
+              "role",
+              "pageTitle",
+              "sectionTitle",
+              "sectionClaimCount",
+              "partialSection",
+              "claim"
+            ],
+            "properties": {
+              "pageIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sectionIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "claimIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "role": {
+                "enum": [
+                  "overview",
+                  "architecture",
+                  "decisions"
+                ]
+              },
+              "pageTitle": {
+                "type": "string"
+              },
+              "sectionTitle": {
+                "type": "string"
+              },
+              "sectionClaimCount": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "partialSection": {
+                "type": "boolean"
+              },
+              "claim": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "claimId",
+                  "text",
+                  "presentation",
+                  "facts"
+                ],
+                "properties": {
+                  "claimId": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "presentation": {
+                    "enum": [
+                      "current",
+                      "history",
+                      "uncertainty"
+                    ]
+                  },
+                  "facts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^f[0-9]+$"
+                    }
+                  }
+                }
+              }
             }
           }
         }

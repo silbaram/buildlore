@@ -52,3 +52,7 @@ export { DEVELOPMENT_MEMORY_AXES, type DevelopmentMemoryAxis, type DevelopmentMe
   type KnowledgeAuthoringRequirement } from './authoring-questions.js';
 export { inspectDevelopmentMemoryContent, inspectDevelopmentMemoryContentWithHistory,
   type DevelopmentMemoryInspectionV1 } from './development-memory-inspection.js';
+
+export { knowledgeTaskMemory, validateTaskMemoryRequest, TaskMemoryError, type KnowledgeTaskMemoryV1, type TaskMemoryRequest, type TaskEvidenceContext } from './task-memory.js';
+
+export { knowledgeProgressiveMemory, validateProgressiveMemoryRequest, ProgressiveMemoryError, type KnowledgeProgressiveMemoryV1, type ProgressiveMemoryRequest } from './progressive-memory.js';

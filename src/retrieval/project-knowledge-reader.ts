@@ -1,3 +1,5 @@
+import { knowledgeProgressiveMemory, validateProgressiveMemoryRequest, type KnowledgeProgressiveMemoryV1, type ProgressiveMemoryRequest } from '../compiler/project-knowledge/progressive-memory.js';
+import { knowledgeTaskMemory, validateTaskMemoryRequest, type KnowledgeTaskMemoryV1, type TaskMemoryRequest } from '../compiler/project-knowledge/task-memory.js';
 import { knowledgeReaderPacket, type KnowledgeReaderPacketV1 } from '../compiler/project-knowledge/reader-packet.js';
 import { knowledgeDevelopmentMemory, type KnowledgeDevelopmentMemoryV1 } from '../compiler/project-knowledge/reader-memory.js';
 import { screenRetainedKnowledgeValue } from '../compiler/project-knowledge/history-security.js';
@@ -40,6 +42,8 @@ export interface KnowledgeWikiReader {
   read(projectId: string, pageRef: string): Promise<KnowledgeWikiPageView | null>;
   readPacket(projectId: string): Promise<KnowledgeReaderPacketV1 | null>;
   readMemory(projectId: string): Promise<KnowledgeDevelopmentMemoryV1 | null>;
+  readProgressiveMemory(projectId: string, request: ProgressiveMemoryRequest): Promise<KnowledgeProgressiveMemoryV1 | null>;
+  readTaskMemory(projectId: string, request: TaskMemoryRequest): Promise<KnowledgeTaskMemoryV1 | null>;
   readContext(projectId: string, pageRef: string): Promise<KnowledgeReaderPageV1 | null>;
   lookup(projectId: string, expectedGeneration: KnowledgeDigest, kind: 'evidence' | 'fact', id: KnowledgeDigest): Promise<KnowledgeReaderLookupV1>;
   citations(projectId: string, pageRef: string): Promise<Readonly<Record<string, unknown>> | null>;
@@ -99,6 +103,26 @@ export function createKnowledgeWikiReader(knowledgeRoot: string,
       claims, facts, evidence: generation.evidence.filter((e) => evidenceIds.has(e.evidenceId)), egress: 'none' };
   };
   const reader: KnowledgeWikiReader = {
+    async readProgressiveMemory(projectId, request) {
+      const validated = validateProgressiveMemoryRequest(request);
+      const loaded = await load(projectId);
+      if (!loaded) return null;
+      await screen(projectId, 'buildlore-hierarchy/progressive-memory-request.txt', validated.task, loaded.policy.digest);
+      const result = knowledgeProgressiveMemory(loaded.generation, validated);
+      await screenRetainedKnowledgeValue(result, body =>
+        screen(projectId, 'buildlore-hierarchy/progressive-memory.json', body, loaded.policy.digest));
+      return result;
+    },
+    async readTaskMemory(projectId, request) {
+      const validated = validateTaskMemoryRequest(request);
+      const loaded = await load(projectId);
+      if (!loaded) return null;
+      await screen(projectId, 'buildlore-hierarchy/task-memory-request.txt', validated.task, loaded.policy.digest);
+      const result = knowledgeTaskMemory(loaded.generation, validated);
+      await screenRetainedKnowledgeValue(result, body =>
+        screen(projectId, 'buildlore-hierarchy/task-memory.json', body, loaded.policy.digest));
+      return result;
+    },
     async readMemory(projectId) {
       const loaded = await load(projectId);
       if (!loaded) return null;

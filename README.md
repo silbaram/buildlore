@@ -1270,3 +1270,77 @@ The question’s own prose should carry documented decision reasons, revision-sp
 After prose submission, author and omission-review stage views may include a read-only `material.reviewPacket` joining each frozen question and required item to its exact current claims, with shared prose, fact and evidence records. It carries proposal, inventory and mapping bindings, but grants no verdict or approval. The source reviewer does not receive it. If the complete packet exceeds 256 KiB of compact JSON or would exceed the existing stage-view limit, it is omitted in full; the original separately accessible material remains available. Reads do not alter stored runs or history.
 
 Inventory admission errors retain `KNOWLEDGE_INVALID` and include a bounded, zero-based question/category/item location with a fixed rule and whole-draft digest. Each requirement link needs matching current-source evidence; history alone does not satisfy it. `compiler.repairKnowledgeCompletenessInventoryDraft(draft, exchange, role, { draftDigest, questionIndex, categoryIndex, itemIndex, replacement })` replaces one caller-owned draft item, preserves its identity, and validates the complete result. Submit that result through the existing shadow/inventory command with the current stage digest. The helper does not write session state or edit accepted inventories. Role guidance includes the existing coverage inspection request shape.
+
+### Task-focused development memory
+
+`buildlore wiki memory --project <id> --task "describe the coding task" --max-bytes 8192 --json`
+returns opt-in `buildlore.knowledge-task-memory.v1`. Without `--task`, the existing full
+memory response is unchanged. The SDK exposes `readTaskMemory(projectId, { task, maxBytes? })`.
+
+The default budget is 8192 bytes (allowed: 2048–65536). It counts the complete compact
+JSON **data object plus its final newline**, including metadata and digest. CLI envelopes,
+pretty printing and tool framing are extra. `budget.serializedBytes` reports the measured
+size; insufficient metadata space produces `TASK_MEMORY_BUDGET_TOO_SMALL` with recovery size.
+Tasks must be nonempty and at most 2048 UTF-8 bytes after trimming/NFC normalization.
+
+Selection uses distinct lexical tokens: title matches ×4, claim text ×2, source path ×1.
+Ties follow generation page/section order. Whole sections, their fact states, scope,
+currentness and canonical evidence links remain intact; no model or embedding is invoked.
+Sections that do not fit are skipped and smaller relevant sections may still be included.
+This is partial context, not a guarantee that all necessary knowledge was found.
+
+Inspect `coverage` and `recovery`. An oversized section is not truncated: the response
+identifies the highest-ranked omitted section and the size of that section alone with
+metadata. Narrow the task, increase the budget, or use `wiki list`/`wiki read` for full page
+context. Use canonical fact/evidence IDs with `wiki lookup --expect-generation` for details.
+Check page-read generations before combining responses; restart memory lookup after drift.
+The approved-generation, project and sanitizer boundaries are shared with the full reader.
+
+In task memory, identical currentness/provenance tuples share `evidenceContext.values`
+entries. Resolve an evidence alias through `evidenceContext.aliases`, then interpret the
+tuple using `evidenceContext.fields`. Every original context value is retained; the
+existing full-memory format is unchanged.
+
+### Progressive development memory
+
+`buildlore wiki memory --project <id> --task "describe the coding task" --progressive --json`
+returns `buildlore.knowledge-progressive-memory.v1`. The SDK equivalent is
+`readProgressiveMemory(projectId, { task, maxBytes?, cursor? })`. Existing full memory and
+whole-section task memory calls retain their original contracts.
+
+The default budget is 8192 UTF-8 bytes (2048–65536 allowed), counting compact JSON data plus
+one final newline, excluding CLI envelopes, pretty printing and tool framing. Ranked original
+claims retain conditions, exceptions, original page/section/claim positions, fact state and
+reachable evidence/currentness registries. A partial section is explicitly marked: read its
+page for sibling context and check the generation before combining information.
+
+For more ranked claims, repeat the same project and task with
+`--progressive --cursor <recovery.nextCursor>` while needed and within your cumulative context/time
+budget; `nextCursor: null` ends normal continuation. Cursors bind project, generation,
+normalized task and ranked position; a changed generation requires a fresh read. Budget may change.
+Normal continuation does not repeat delivered claims. Oversized claims are counted separately:
+`recovery.oversized` identifies the first skipped position, a recovery cursor and a conservative
+`requiredBytes` budget. Recovery can replay later claims; deduplicate by original positions.
+For a required budget above 65536, use the existing page reader and canonical fact/evidence lookup.
+No original text is clipped, no full Wiki is automatically attached, and no new model or index runs.
+`no_match` means no lexical match; `budget_limited` means relevant material remains or was skipped.
+Metadata alone exceeding the limit produces a structured budget error. Listed evidence identifies
+available excerpts; only successful canonical lookup establishes that an excerpt was read.
+
+Before submitting an answer or development summary, the calling agent checks each requested
+explanation against its draft. Keep independent changes separate: explaining one decision does
+not explain every related decision. Check recorded reasons, compatibility conditions and the
+revision and scope of verification when the request needs them. For each requirement, distinguish
+whether inspected support is sufficient from whether an answer sentence actually explains it.
+Receiving a claim or listing its identifier does not satisfy the requirement.
+
+Use sufficient inspected support to fill an omitted explanation first. If support is insufficient,
+look up a listed canonical fact/evidence, read the relevant page/section, or request memory for the
+missing topic. A different task starts a fresh request without the old task's cursor. Keep the same
+project and generation when combining results; restart after generation drift. All such reads share
+the host's cumulative byte, call and time limits; a per-response budget does not reset them.
+Make at most one correction pass and leave unresolved requirements explicit. A missing excerpt in
+this response does not establish that the source lacks it, and unavailable reasons or verification
+must not be invented. The reader provides this guidance; the calling agent owns checking, retrieval
+and answer revision. BuildLore does not execute that loop or launch a model. Claim-count `coverage`
+and the agent's checklist are not semantic quality certification.
