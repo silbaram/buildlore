@@ -32,12 +32,12 @@ export interface KnowledgeWorkflowFixture {
 }
 
 export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' | 'optional-p2a',
-  options: Readonly<{ sourceDetails?: boolean }> = {}): Promise<KnowledgeWorkflowFixture> {
+  options: Readonly<{ sourceDetails?: boolean; projectId?: string }> = {}): Promise<KnowledgeWorkflowFixture> {
   const root = await mkdtemp(join(tmpdir(), 'buildlore-knowledge-e2e-'));
   const sourceRoot = join(root, 'source');
   const hubRoot = join(root, 'hub');
   const knowledgeRoot = join(hubRoot, 'knowledge');
-  const projectId = sample === 'generic-md-json' ? 'parcel' : 'lantern';
+  const projectId = options.projectId ?? (sample === 'generic-md-json' ? 'parcel' : 'lantern');
   const fixtureRoot = join(process.cwd(), 'test/fixtures/project-knowledge/v1', sample);
   const git = async (cwd: string, args: readonly string[]): Promise<void> => {
     await exec('git', [...args], { cwd, env: { ...process.env, LC_ALL: 'C' } });

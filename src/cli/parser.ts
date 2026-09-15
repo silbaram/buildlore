@@ -1,3 +1,4 @@
+import { validReadPage } from '../application/read-validation.js';
 import { isGeneratedIdentifier } from '../sanitizer/index.js';
 import { containsCredentialMaterial } from '../sanitizer/service.js';
 import { SESSION_COMPILE_LIMITS } from '../compiler/session/contracts.js';
@@ -658,9 +659,7 @@ function validateWikiOptions(
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
     const page = values['--page'];
-    if (typeof page !== 'string' || page.length > 320 ||
-        !/^(?:(?:concepts|decisions|failures|queries|verifications)\/[a-z0-9]+(?:-[a-z0-9]+)*|page-[a-f0-9]{64}|(?:(?:wiki\/)?buildlore-hierarchy\/)?(?:overview|architecture|decisions)(?:\.md)?)$/u
-          .test(page)) {
+    if (typeof page !== 'string' || !validReadPage(page)) {
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
     return;

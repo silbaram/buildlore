@@ -1316,7 +1316,7 @@ function qualityFailed(command: ParsedCliCommand, data: unknown): boolean {
     'passed' in data && data.passed === false;
 }
 
-function successResult(command: ParsedCliCommand, data: unknown): CliSuccessResult {
+export function successResult(command: Pick<ParsedCliCommand, 'command' | 'projectId'>, data: unknown): CliSuccessResult {
   return Object.freeze({
     command: command.command,
     data,

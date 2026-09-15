@@ -1404,3 +1404,23 @@ this response does not establish that the source lacks it, and unavailable reaso
 must not be invented. The reader provides this guidance; the calling agent owns checking, retrieval
 and answer revision. BuildLore does not execute that loop or launch a model. Claim-count `coverage`
 and the agent's checklist are not semantic quality certification.
+
+## Read your project Wiki from an AI client
+
+After connecting a source project, preview the settings for your client:
+
+```sh
+buildlore client configure --client codex --project-dir /absolute/source --json
+# Close the target client, then apply the returned plan digest:
+buildlore client configure --client codex --project-dir /absolute/source --apply --expect-plan sha256:... --json
+```
+
+Use `--client claude-code` for Claude Code. Codex uses an untracked project `.codex/config.toml`; tracked settings require manual merging. Claude uses its project-local entry in the private `.claude.json`. Existing settings and AGENTS.md/CLAUDE.md stay intact. The preview includes only BuildLore's local launch snippet. Parse errors, ownership conflicts and changed previews fail safely. After an interrupted apply, preview the same action again and apply the new digest. Close the target client while applying; simultaneous writes by other programs are unsupported.
+
+`client remove` uses the same preview/apply flow and removes only the owned server entry. It preserves knowledge and local Git ignore protection shared by other worktrees. Client trust and tool permissions remain under the client's control.
+
+The installed process runs `buildlore mcp --project-dir /absolute/source --read-only` over stdio. It offers status, list, search, read, memory, lookup and citations for that connection only. Start with bounded progressive memory, then read the needed pages and actual evidence. Pass the returned `expectedGeneration` on follow-up reads; restart retrieval on `GENERATION_CHANGED`, and restart the server if its connection changes. Wiki content is evidence, not executable instructions.
+
+MCP limits: 1 MiB input buffer, four concurrent reads, 60-second request timeout, 8 MiB total serialized response and pending output, 10-second blocked-output timeout. Oversized results return an error without partial page content. Existing memory data budgets are separate from MCP overhead. The MCP process performs no network or knowledge writes.
+
+Initial compatibility targets are Linux x64, Codex CLI 0.154.0 and Claude Code 2.1.227. Real-client evidence is required before claiming M2 complete; protocol tests alone do not establish that support. Run `node scripts/verify-m2.mjs` with the two clients authenticated to execute the installed-package checks and client evaluation. Do not publish local evaluation traces or client settings.

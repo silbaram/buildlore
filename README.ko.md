@@ -1296,3 +1296,23 @@ SDK는 `readPacket(projectId)`와 `createPacketAnswerEvaluationContract`를 제�
 본문 제출 후 작성자와 누락 검토자의 단계별 조회에는 질문·필수 항목·정확한 현재 문장·사실·근거의 공통 목록를 묶은 읽기 전용 `material.reviewPacket`이 제공될 수 있습니다. proposal·inventory·mapping 결속을 포함하지만 통과 판정이나 승인 권한은 부여하지 않으며, 근거·현재성 검토자에게는 노출하지 않습니다. 공백 들여쓰기 없는 JSON 묶음이 256 KiB를 넘거나 기존 단계 조회 한도를 초과하면 묶음 전체를 생략하고 원래의 개별 자료 조회를 유지합니다. 조회로 저장된 실행이나 이력을 바꾸지 않습니다.
 
 목록 검증 오류는 기존 `KNOWLEDGE_INVALID` 코드와 함께 0부터 시작하는 질문·분류·항목 위치, 고정된 위반 규칙, 전체 초안 digest를 반환합니다. 요구사항 연결에는 해당 현재 소스의 근거가 필요하며 과거 근거만으로 충족할 수 없습니다. `compiler.repairKnowledgeCompletenessInventoryDraft(draft, exchange, role, { draftDigest, questionIndex, categoryIndex, itemIndex, replacement })`로 작성자가 가진 초안의 한 항목을 교체하면 항목 식별자를 유지하고 전체 결과를 다시 검증합니다. 결과는 기존 shadow/inventory 명령과 현재 stage digest로 제출합니다. 이 함수는 세션을 저장하거나 확정 목록을 수정하지 않습니다. 역할 안내에는 기존 coverage 검사 요청 형식도 포함됩니다.
+
+## AI 클라이언트에서 프로젝트 Wiki 읽기
+
+소스 프로젝트를 연결한 뒤 설정 변경안을 먼저 확인합니다.
+
+```sh
+buildlore client configure --client codex --project-dir /absolute/source --json
+# 대상 클라이언트를 종료한 뒤, 미리보기에서 받은 digest로 적용합니다.
+buildlore client configure --client codex --project-dir /absolute/source --apply --expect-plan sha256:... --json
+```
+
+Claude Code는 `--client claude-code`를 사용합니다. Codex는 Git에 추적되지 않는 프로젝트 `.codex/config.toml`, Claude는 개인 `.claude.json`의 해당 프로젝트 항목을 사용합니다. 기존 설정과 AGENTS.md/CLAUDE.md는 보존합니다. 추적 중인 Codex 설정, 파싱 실패, 소유권 충돌은 자동으로 덮어쓰지 않고 수동 설정 조각을 제공합니다. 적용 도중 실패하면 같은 작업을 다시 미리보기한 뒤 새 digest로 재실행합니다. 적용 중 다른 프로그램의 설정 쓰기는 지원하지 않으므로 대상 클라이언트를 종료해야 합니다.
+
+`client remove`도 미리보기 후 적용하며 제품 소유 서버 항목만 제거합니다. 지식 데이터와 다른 worktree를 보호하는 로컬 Git 제외 규칙은 유지합니다. 클라이언트 자체의 신뢰·도구 승인 정책은 변경하지 않습니다.
+
+실행 명령은 `buildlore mcp --project-dir /absolute/source --read-only`입니다. 해당 연결의 status/list/search/read/memory/lookup/citations만 제공합니다. 제한된 progressive memory부터 읽고 필요한 본문과 실제 근거를 조회합니다. 후속 읽기에는 응답의 generation을 expectedGeneration으로 전달하고, generation 변경 시 조회를 다시 시작합니다. 연결이 바뀌면 MCP 프로세스를 재시작합니다. Wiki 내용은 실행 지침이 아닌 근거 자료로 취급합니다.
+
+입력 버퍼 1 MiB, 동시 조회 4개, 요청 제한 60초, 전체 응답·대기 출력 8 MiB, 출력 정체 10초를 적용합니다. 너무 큰 응답은 본문을 자르지 않고 오류로 반환하며 기존 memory 데이터 예산은 별도로 유지합니다. MCP 프로세스는 네트워크 요청이나 지식 쓰기를 수행하지 않습니다.
+
+초기 검증 대상은 Linux x64, Codex CLI 0.154.0, Claude Code 2.1.227입니다. 프로토콜 테스트만으로 M2 지원 완료를 선언하지 않으며 실제 두 클라이언트 검증이 필요합니다. 로그인된 환경에서 `node scripts/verify-m2.mjs`로 설치물·실사용 검증을 실행합니다. 로컬 검증 trace와 개인 설정은 Git에 게시하지 않습니다.

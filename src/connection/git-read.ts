@@ -1,14 +1,15 @@
+import { readProcessOptions } from '../application/read-cancellation.js';
 import { execFile } from 'node:child_process';
 import { realpath, lstat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ConnectionError, fail, type SourceIdentity } from './contracts.js';
 
 export async function gitRead(root: string, args: readonly string[], optional = false): Promise<string | null> {
-  if (!['rev-parse', 'config', 'ls-files', 'status'].includes(args[0] ?? '')) fail();
+  if (!['rev-parse', 'config', 'ls-files', 'status', 'check-ignore'].includes(args[0] ?? '')) fail();
   return new Promise((ok, reject) => {
     execFile('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false',
       '-c', 'core.hooksPath=/dev/null', '-c', 'core.pager=cat', ...args], {
-      cwd: root, encoding: 'utf8', shell: false, maxBuffer: 1024 * 1024,
+      ...readProcessOptions(), cwd: root, encoding: 'utf8', shell: false, maxBuffer: 1024 * 1024,
       env: { PATH: process.env.PATH, LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1',
         GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
     }, (error, stdout) => {

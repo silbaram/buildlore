@@ -38,8 +38,12 @@ const approvedDevDependencies = {
 
 const approvedRuntimeDependencies = {
   '@huggingface/transformers': '4.2.0',
+  '@modelcontextprotocol/server': '2.0.0',
+  'jsonc-parser': '3.3.1',
   'llm-wiki-compiler': '1.1.0',
+  'smol-toml': '1.8.0',
   yaml: '2.9.0',
+  zod: '4.6.5',
 } as const;
 
 describe('package contract', () => {

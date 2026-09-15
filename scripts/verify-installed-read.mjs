@@ -154,7 +154,8 @@ try {
       result = { code: error.code, stdout: error.stdout, stderr: error.stderr };
     }
     const traceFiles = (await readdir(evidence)).filter(file => file.startsWith(`${name}.`) && /\.\d+$/u.test(file));
-    assert(traceFiles.length > 0);
+    if (traceFiles.length === 0) await writeFile(join(evidence, `${name}.unavailable.json`), JSON.stringify(result, null, 2));
+    assert(traceFiles.length > 0, 'Syscall tracing unavailable; inspect local unavailable evidence.');
     const trace = (await Promise.all(traceFiles.map(file => readFile(join(evidence, file), 'utf8')))).join('\n');
     assert.match(trace, /execve\(/u);
     assert.match(trace, /exited with/u);
@@ -196,6 +197,12 @@ try {
     controls: { sameBytesRewriteDetected: true, createDeleteDetected: true, failedWriteDetected: true,
       stdioDeviceException: 'Successful O_RDWR open of /dev/null character device 1:3 for Git standard descriptor initialization; no persistent file mutation.' }, results }, null, 2));
   process.stdout.write(`Installed read verification passed: ${results.length} commands. Evidence: ${evidence}\n`);
+  if (process.env.BUILDLORE_VERIFY_M2 === '1') {
+    /** @type {typeof import('../test/helpers/m2-installed-evaluation.js')} */
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Compiled local verification helper.
+    const m2 = await import(pathToFileURL(join(support, 'test/helpers/m2-installed-evaluation.js')).href);
+    await m2.verifyInstalledM2({ binary, hubRoot: fixture.hubRoot, repo, root, sourceRoot, configDir: fixture.configDir, projectId: fixture.projectId, evidence, support, generation, evidenceId, other });
+  }
 } finally {
   await fixture?.cleanup();
   // Keep traces for review; all throwaway package/fixture paths are PC-local.

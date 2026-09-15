@@ -8,7 +8,7 @@ import {
   type RenderedCliResult,
 } from './types.js';
 
-function normalizedEnvelope(result: CliResult): CliEnvelopeV1 | CliEnvelopeV2 {
+export function normalizedEnvelope(result: CliResult): CliEnvelopeV1 | CliEnvelopeV2 {
   return {
     ...(result.readContext === undefined ? { schemaVersion: CLI_ENVELOPE_SCHEMA_VERSION } :
       { schemaVersion: 'buildlore.cli-envelope.v2' as const, readContext: result.readContext }),
