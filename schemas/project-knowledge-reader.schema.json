@@ -1143,7 +1143,7 @@
           "$ref": "project-knowledge.schema.json#/$defs/digest"
         },
         "selectionStrategy": {
-          "const": "lexical-claim-v1"
+          "enum": ["lexical-claim-v1", "lexical-claim-v2"]
         },
         "coverage": {
           "type": "object",
@@ -1244,7 +1244,7 @@
               "oneOf": [
                 {
                   "type": "string",
-                  "pattern": "^pwm1:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
+                  "pattern": "^pwm[12]:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
                 },
                 {
                   "type": "null"
@@ -1279,7 +1279,7 @@
                     },
                     "cursor": {
                       "type": "string",
-                      "pattern": "^pwm1:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
+                      "pattern": "^pwm[12]:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
                     },
                     "requiredBytes": {
                       "type": "integer",

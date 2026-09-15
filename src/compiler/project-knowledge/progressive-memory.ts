@@ -18,7 +18,7 @@ interface Oversized extends Position {
 export interface KnowledgeProgressiveMemoryV1 extends Omit<Full, 'schemaVersion' | 'pages' | 'evidenceContext'> {
   readonly schemaVersion: 'buildlore.knowledge-progressive-memory.v1';
   readonly requestDigest: KnowledgeDigest;
-  readonly selectionStrategy: 'lexical-claim-v1';
+  readonly selectionStrategy: 'lexical-claim-v1' | 'lexical-claim-v2';
   readonly units: readonly Unit[];
   readonly evidenceContext: TaskEvidenceContext;
   readonly coverage: Readonly<{ isSelective: true; partial: boolean; totalClaims: number; relevantClaims: number;
@@ -37,7 +37,7 @@ export function validateProgressiveMemoryRequest(request: ProgressiveMemoryReque
 }> {
   const validated = validateTaskMemoryRequest(request);
   if (request.cursor !== undefined && (typeof request.cursor !== 'string' ||
-      !/^pwm1:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$/u.test(request.cursor))) {
+      !/^pwm[12]:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$/u.test(request.cursor))) {
     throw new ProgressiveMemoryError('PROGRESSIVE_MEMORY_CURSOR_INVALID');
   }
   return { ...validated, ...(request.cursor === undefined ? {} : { cursor: request.cursor }) };
@@ -51,10 +51,34 @@ const RECOVERY = 'Continue with the same project, task and nextCursor. For an ov
   'recovery may replay later claims: deduplicate by original positions. Otherwise read its page/section and canonical fact/evidence; ' +
   'check generation before combining. No match differs from budget omission. Host owns total bytes/time.';
 interface Candidate extends Position { readonly score: number }
+function prioritizeDistinctClaims(full: Full, candidates: Candidate[]): void {
+  const contexts = new Map<string, Map<string, { first: Claim; occurrences?: Map<string, number> }>>();
+  const repetitions = new Map<Candidate, number>();
+  const factKey = (claim: Claim): string => JSON.stringify(
+    [...new Set(claim.facts.map(alias => (full.facts[alias] ?? invalid())[0]))].sort());
+  for (const item of candidates) {
+    const claim = full.pages[item.pageIndex]?.sections[item.sectionIndex]?.claims[item.claimIndex] ?? invalid();
+    // A different context or fact identity remains distinct, even with identical wording.
+    const context = JSON.stringify([item.pageIndex, item.sectionIndex, claim.presentation]);
+    let texts = contexts.get(context);
+    if (!texts) { texts = new Map(); contexts.set(context, texts); }
+    const group = texts.get(claim.text);
+    if (!group) { texts.set(claim.text, { first: claim }); continue; }
+    // Most claims have unique text: resolve fact sets only when that text repeats.
+    group.occurrences ??= new Map([[factKey(group.first), 1]]);
+    const key = factKey(claim), occurrence = group.occurrences.get(key) ?? 0;
+    group.occurrences.set(key, occurrence + 1);
+    if (occurrence > 0) repetitions.set(item, occurrence);
+  }
+  // Stable sorting preserves lexical relevance within each repetition tier.
+  if (repetitions.size > 0) candidates.sort((a, b) => (repetitions.get(a) ?? 0) - (repetitions.get(b) ?? 0));
+}
 /** Lossless, bounded claim projection. The approved reader owns authorization and sanitization. */
 export function knowledgeProgressiveMemory(generation: KnowledgeGenerationV1,
   request: ProgressiveMemoryRequest): KnowledgeProgressiveMemoryV1 {
   const { task, maxBytes, cursor } = validateProgressiveMemoryRequest(request);
+  const legacy = cursor?.startsWith('pwm1:') === true;
+  const selectionStrategy: KnowledgeProgressiveMemoryV1['selectionStrategy'] = legacy ? 'lexical-claim-v1' : 'lexical-claim-v2';
   const full = knowledgeDevelopmentMemory(generation);
   const matches = createMemoryTokenMatcher(task);
   const candidates: Candidate[] = [];
@@ -69,8 +93,10 @@ export function knowledgeProgressiveMemory(generation: KnowledgeGenerationV1,
     })));
   candidates.sort((a, b) => b.score - a.score || a.pageIndex - b.pageIndex ||
     a.sectionIndex - b.sectionIndex || a.claimIndex - b.claimIndex);
-  const cursorFor = (position: number, mode: 'n' | 'r'): string => `pwm1:${mode}:${String(position)}:${digest({
-    projectId: generation.projectId, generationDigest: generation.generationDigest, task, position, mode })}`;
+  if (!legacy) prioritizeDistinctClaims(full, candidates);
+  const cursorFor = (position: number, mode: 'n' | 'r'): string => `${legacy ? 'pwm1' : 'pwm2'}:${mode}:${String(position)}:${digest({
+    projectId: generation.projectId, generationDigest: generation.generationDigest, task, position, mode,
+    ...(legacy ? {} : { selectionStrategy }) })}`;
   let start = 0;
   const replay = cursor?.split(':')[1] === 'r';
   if (cursor !== undefined) {
@@ -97,7 +123,7 @@ export function knowledgeProgressiveMemory(generation: KnowledgeGenerationV1,
     void pages;
     const basis = { ...base, schemaVersion: 'buildlore.knowledge-progressive-memory.v1' as const,
       instructions: INSTRUCTIONS, requestDigest: digest({ task, maxBytes: limit, cursor: cursor ?? null }),
-      selectionStrategy: 'lexical-claim-v1' as const, units: Object.freeze(units), facts, evidence,
+      selectionStrategy, units: Object.freeze(units), facts, evidence,
       sources, evidenceContext,
       coverage: Object.freeze({ isSelective: true as const, partial: selected.length < totalClaims, totalClaims,
         relevantClaims: candidates.length, includedClaims: selected.length, unmatchedClaims: totalClaims - candidates.length,

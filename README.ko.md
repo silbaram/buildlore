@@ -76,6 +76,12 @@ buildlore wiki read --page overview --expect-generation sha256:<64자리-해시>
 buildlore wiki memory --task "설계 결정 확인" --progressive --json
 ```
 
+새 점진 조회는 같은 페이지·섹션 안에서 원문, 표현 상태와 근거 fact 집합이 모두 같은
+반복 항목을 뒤로 보내고 서로 다른 정보를 먼저 반환합니다. 원문 항목을 삭제하거나
+병합하지 않으며, 이어 읽으면 반복 항목도 조회할 수 있습니다. 새 `pwm2` cursor와
+기존 `pwm1` cursor는 각각의 조회 순서를 유지합니다. 새 순서를 사용하려면 cursor 없이
+시작하고, cursor의 버전 문자열을 직접 바꾸지 마세요.
+
 `setup`은 비어 있는 별도 허브를 만들거나 같은 지식 저장소의 기존 허브를 등록합니다.
 `connect` 전에 해당 프로젝트가 지식 저장소에 등록되어 있어야 합니다. 등록·수집·승인·활성화는
 아래 허브 명령으로 수행합니다. 승인 Wiki가 없으면 연결은 가능하지만 `readable: false`입니다.

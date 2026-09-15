@@ -1405,6 +1405,15 @@ returns `buildlore.knowledge-progressive-memory.v1`. The SDK equivalent is
 `readProgressiveMemory(projectId, { task, maxBytes?, cursor? })`. Existing full memory and
 whole-section task memory calls retain their original contracts.
 
+New progressive reads use `lexical-claim-v2`: within the same original page and section,
+claims with exactly identical text, presentation and canonical fact sets form a group.
+Each group's first claim is ranked before its repetitions; lexical relevance and original
+position break ties within each repetition tier. Different contexts, facts or wording stay
+distinct. Every claim remains available through continuation; nothing is deleted or merged.
+New `pwm2` cursors bind this strategy as well as project, generation and task. Existing `pwm1`
+cursors continue using `lexical-claim-v1` and return `pwm1` continuations and recovery cursors.
+Start without a cursor to use the new strategy. A cursor's version must not be rewritten.
+
 The default budget is 8192 UTF-8 bytes (2048–65536 allowed), counting compact JSON data plus
 one final newline, excluding CLI envelopes, pretty printing and tool framing. Ranked original
 claims retain conditions, exceptions, original page/section/claim positions, fact state and
