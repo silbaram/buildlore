@@ -108,6 +108,43 @@ For development validation, run `npm run verify:installed-read` with npm 11.19.0
 `bwrap` and permission to create user namespaces. Missing tools fail the check. Installation uses
 the network; subsequent reads run with read-only mounts and a separate network namespace.
 
+### Optional local semantic-search runtime
+
+A fresh tarball installation with `--omit=dev` excludes the local embedding runtime.
+Wiki authoring through the current AI session, lexical search, connected Wiki reads and
+MCP do not require it. Development `npm ci` includes the runtime for tests.
+
+For local semantic/hybrid search on Linux x64, install the exact runtime version into
+the **same prefix as BuildLore**:
+
+```sh
+npm install --prefix "$HOME/.local/buildlore" --omit=dev --save-exact @huggingface/transformers@4.2.0
+```
+
+A separate global installation does not supply the runtime to this prefix. Model files
+remain separate: use the existing `model bind`, `model verify` and `index rebuild`
+workflow from the hub. Installing the runtime does not download model weights or build
+an index. Without a usable runtime, semantic operations report the existing structured
+unavailable error; hybrid retains its explicit fallback where supported. Connected
+search remains lexical. An upgrade preserves a runtime you explicitly installed.
+
+BuildLore declares an optional peer dependency because `optionalDependencies` are still
+installed by default. Other compiler dependencies remain in the base installation;
+this change does not promise a particular installed size or vulnerability count.
+
+To verify upgrades as well as isolated reads, developers can provide a retained tarball
+that required transformers 4.2.0 and a prepared local `multilingual-e5-small` model directory:
+
+```sh
+BUILDLORE_EMBEDDING_BASELINE_TARBALL=/path/previous-buildlore.tgz \
+BUILDLORE_EMBEDDING_MODEL_DIR=/path/multilingual-e5-small \
+npm run verify:installed-read
+```
+
+This uses disposable installations to check runtime removal, recovery, and preservation
+after explicit installation, with actual local semantic/hybrid searches. It copies the
+model for testing and makes no paid AI calls. The same npm and isolation tools are required.
+
 ## Quick start
 
 ### 1. Create the central hub
@@ -1457,6 +1494,19 @@ This changes only the local path for that known knowledge repository. All its so
 ### Update, roll back and remove
 
 Close clients before replacing an installation. Install the exact tarball into the same prefix:
+
+**Upgrading from a version that bundled the embedding runtime:** the update removes
+the previously automatic runtime dependency. To keep existing semantic/hybrid search,
+explicitly install it into the same prefix **before updating** (or afterwards to restore it):
+
+```sh
+npm install --prefix "$HOME/.local/buildlore" --omit=dev --save-exact @huggingface/transformers@4.2.0
+```
+
+This records your choice in the installation prefix so updates preserve it. Skip this
+step for a lightweight installation using lexical search. Model files and existing
+indexes remain; `model verify` checks model files and does not install the runtime.
+After updating, run a semantic search from the hub to verify recovery if you use it.
 
 ```sh
 npm install --prefix "$HOME/.local/buildlore" --omit=dev /path/buildlore-0.1.1-rc.1.tgz

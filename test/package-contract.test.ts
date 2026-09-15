@@ -8,6 +8,8 @@ interface PackageContract {
   readonly bin: Readonly<Record<string, string>>;
   readonly dependencies?: Readonly<Record<string, string>>;
   readonly devDependencies: Readonly<Record<string, string>>;
+  readonly peerDependencies: Readonly<Record<string, string>>;
+  readonly peerDependenciesMeta: Readonly<Record<string, { readonly optional: boolean }>>;
   readonly engines: Readonly<Record<string, string>>;
   readonly exports: Readonly<Record<string, unknown>>;
   readonly files: readonly string[];
@@ -28,6 +30,7 @@ const compilerIntegrity =
 
 const approvedDevDependencies = {
   '@eslint/js': '10.0.1',
+  '@huggingface/transformers': '4.2.0',
   '@types/node': '24.13.3',
   eslint: '10.8.1',
   globals: '17.11.0',
@@ -37,7 +40,6 @@ const approvedDevDependencies = {
 } as const;
 
 const approvedRuntimeDependencies = {
-  '@huggingface/transformers': '4.2.0',
   '@modelcontextprotocol/server': '2.0.0',
   'jsonc-parser': '3.3.1',
   'llm-wiki-compiler': '1.1.0',
@@ -295,6 +297,8 @@ describe('package contract', () => {
     expect(packageJson.dependencies).toEqual(approvedRuntimeDependencies);
     expect(packageJson.engines).toEqual({ node: '>=24', npm: '>=11 <12' });
     expect(packageJson.devDependencies).toEqual(approvedDevDependencies);
+    expect(packageJson.peerDependencies).toEqual({ '@huggingface/transformers': '4.2.0' });
+    expect(packageJson.peerDependenciesMeta).toEqual({ '@huggingface/transformers': { optional: true } });
     expect(packageJson.scripts).toEqual({
       build: 'tsc -p tsconfig.build.json',
       'eval:retrieval': 'npm run build --silent && node dist/retrieval/evaluation/cli.js',
@@ -311,11 +315,17 @@ describe('package contract', () => {
       await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'),
     ) as PackageLockContract;
     expect(packageLock.packages['']?.dependencies).toEqual(approvedRuntimeDependencies);
+    expect(packageLock.packages['']).toMatchObject({
+      devDependencies: approvedDevDependencies,
+      peerDependencies: { '@huggingface/transformers': '4.2.0' },
+      peerDependenciesMeta: { '@huggingface/transformers': { optional: true } },
+    });
     expect(packageLock.packages['node_modules/llm-wiki-compiler']).toMatchObject({
       version: '1.1.0',
     });
     expect(packageLock.packages['node_modules/@huggingface/transformers']).toMatchObject({
       version: '4.2.0',
+      dev: true,
     });
     expect(packageLock.packages['node_modules/@huggingface/transformers']?.dependencies)
       .toMatchObject({ 'onnxruntime-node': '1.24.3' });

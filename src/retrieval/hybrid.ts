@@ -602,10 +602,12 @@ LocalWikiRetrievalRecoveryAction {
 function semanticUnavailable(
   reasonCode: LocalWikiRetrievalFallbackReason,
   recoveryAction: LocalWikiRetrievalRecoveryAction,
+  cause?: LocalEmbeddingError,
 ): LocalWikiRetrievalError {
   return new LocalWikiRetrievalError('LOCAL_WIKI_SEMANTIC_UNAVAILABLE', {
     reasonCode,
     recoveryAction,
+    ...(cause === undefined ? {} : { cause }),
   });
 }
 
@@ -639,7 +641,10 @@ function mapProviderError(error: unknown, provider: EmbeddingProviderPort): Loca
   const recovery = state.state === 'incompatible' || state.state === 'unavailable'
     ? state.recoveryAction
     : null;
-  return semanticUnavailable(reasonCode, mapProviderRecovery(recovery));
+  return semanticUnavailable(reasonCode, mapProviderRecovery(recovery),
+    error instanceof LocalEmbeddingError
+      ? new LocalEmbeddingError(error.code, error.reasonCode)
+      : undefined);
 }
 
 function manifestCompatibility(

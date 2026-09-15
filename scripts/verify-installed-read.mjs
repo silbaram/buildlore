@@ -30,6 +30,10 @@ const envelope = text => {
   return value;
 };
 try {
+  const embeddingBaseline = process.env.BUILDLORE_EMBEDDING_BASELINE_TARBALL;
+  const embeddingModel = process.env.BUILDLORE_EMBEDDING_MODEL_DIR;
+  assert(Boolean(embeddingBaseline) === Boolean(embeddingModel),
+    'Embedding upgrade verification requires both the baseline tarball and local model directory.');
   const versions = { node: process.version, npm: (await run('npm', ['--version'])).stdout.trim(), git: (await run('git', ['--version'])).stdout.trim(), platform: process.platform, arch: process.arch };
   assert.equal(versions.npm, '11.19.0', 'Run with npm@11.19.0 on PATH.');
   assert.equal(versions.platform, 'linux'); assert.equal(versions.arch, 'x64');
@@ -53,9 +57,16 @@ try {
   await run(process.execPath, ['--input-type=module', '-e', `
     import assert from 'node:assert/strict';
     import { readFile } from 'node:fs/promises';
+    import { createRequire } from 'node:module';
+    import * as buildlore from 'buildlore';
     import { resolveConnection } from 'buildlore/connection';
     import { readConnectedWiki } from 'buildlore/wiki-read';
     assert.equal(typeof resolveConnection, 'function'); assert.equal(typeof readConnectedWiki, 'function');
+    assert.equal(typeof buildlore.compiler, 'object');
+    const require = createRequire(import.meta.resolve('buildlore'));
+    for (const name of ['@huggingface/transformers', 'onnxruntime-node', 'onnxruntime-web']) {
+      assert.throws(() => require.resolve(name), { code: 'MODULE_NOT_FOUND' });
+    }
     for (const name of ['connection', 'read-connections', 'connection-status', 'cli-envelope-v2']) {
       const value = JSON.parse(await readFile(new URL(import.meta.resolve('buildlore/schemas/' + name + '.schema.json')), 'utf8'));
       assert.equal(value.additionalProperties, false); assert(value.$schema);
@@ -193,10 +204,17 @@ try {
   }
   await writeFile(join(evidence, 'summary.json'), JSON.stringify({ schemaVersion: 'buildlore.installed-read-evidence.v1',
     versions, package: { name: packed.name, version: packed.version, sha256: hash(await readFile(tarball)), integrity: packed.integrity },
-    isolation: { runtimeDependenciesOnly: true, sourceCheckoutHidden: true, readOnlyMount: true, networkNamespace: true },
+    isolation: { runtimeDependenciesOnly: true, optionalEmbeddingRuntimeAbsent: true, sourceCheckoutHidden: true, readOnlyMount: true, networkNamespace: true },
     controls: { sameBytesRewriteDetected: true, createDeleteDetected: true, failedWriteDetected: true,
       stdioDeviceException: 'Successful O_RDWR open of /dev/null character device 1:3 for Git standard descriptor initialization; no persistent file mutation.' }, results }, null, 2));
   process.stdout.write(`Installed read verification passed: ${results.length} commands. Evidence: ${evidence}\n`);
+  if (process.env.BUILDLORE_VERIFY_M2 !== '1' && process.env.BUILDLORE_VERIFY_M3 !== '1') {
+    /** @type {typeof import('../test/helpers/m2-installed-evaluation.js')} */
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Compiled local verification helper.
+    const protocol = await import(pathToFileURL(join(support, 'test/helpers/m2-installed-evaluation.js')).href);
+    await protocol.verifyInstalledM2Protocol({ binary, hubRoot: fixture.hubRoot, repo, root, sourceRoot,
+      configDir: fixture.configDir, projectId: fixture.projectId, evidence, support, generation, evidenceId, other });
+  }
   if (process.env.BUILDLORE_VERIFY_M2 === '1') {
     /** @type {typeof import('../test/helpers/m2-installed-evaluation.js')} */
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Compiled local verification helper.
@@ -209,6 +227,13 @@ try {
     const m3 = await import(pathToFileURL(join(support, 'test/helpers/m3-installed-evaluation.js')).href);
     await m3.verifyInstalledM3({ binary, hubRoot: fixture.hubRoot, repo, root, sourceRoot, configDir: fixture.configDir,
       projectId: fixture.projectId, evidence, support, generation, evidenceId, other, tarball, install });
+  }
+  if (embeddingBaseline && embeddingModel) {
+    /** @type {typeof import('../test/helpers/embedding-installed-evaluation.js')} */
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Compiled local verification helper.
+    const embedding = await import(pathToFileURL(join(support, 'test/helpers/embedding-installed-evaluation.js')).href);
+    await embedding.verifyInstalledEmbeddingLifecycle({ baselineTarball: resolve(embeddingBaseline),
+      modelDirectory: resolve(embeddingModel), tarball, install, evidence });
   }
 } finally {
   await fixture?.cleanup();

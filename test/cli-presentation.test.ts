@@ -23,12 +23,53 @@ import {
   ProjectSyncError,
   type ProjectSyncSanitizationDiagnostics,
 } from '../src/projector/index.js';
-import { RetrievalOperationError } from '../src/retrieval/index.js';
+import { LocalWikiRetrievalError, RetrievalOperationError } from '../src/retrieval/index.js';
+import { LocalEmbeddingError } from '../src/retrieval/embedding/index.js';
 import { SECURITY_RULES } from '../src/sanitizer/index.js';
 import { SecurityOperationError } from '../src/sanitizer/errors.js';
 import { WikiOperationError } from '../src/wiki/errors.js';
 
 describe('CLI presentation and exit taxonomy', () => {
+  it.each(['index.rebuild', 'search'] as const)(
+    'guides %s runtime recovery without suggesting model verification can install it', (command) => {
+      const cause = new LocalEmbeddingError('LOCAL_EMBEDDING_UNAVAILABLE', 'runtime-unavailable');
+      const error = command === 'search'
+        ? new LocalWikiRetrievalError('LOCAL_WIKI_SEMANTIC_UNAVAILABLE', {
+          cause, reasonCode: 'embedding-provider-unavailable',
+          recoveryAction: ['model', 'verify', '--profile', 'multilingual-e5-small'],
+        })
+        : cause;
+      const result = mapCliError(error, { command, projectId: 'alpha' });
+      expect(result.exitCode).toBe(4);
+      expect(result.errors[0]?.code).toBe(error.code);
+      expect(result.errors[0]?.recoveryCommand).toBeUndefined();
+      expect(result.errors[0]?.message).toContain(
+        'npm install --prefix "<buildlore-install-prefix>" --omit=dev --save-exact @huggingface/transformers@4.2.0',
+      );
+      for (const mode of ['human', 'json'] as const) {
+        const rendered = renderCliResult(result, mode).message;
+        expect(rendered).toContain('same installation prefix');
+        expect(rendered).not.toContain('ERR_MODULE_NOT_FOUND');
+        expect(rendered).not.toContain('"cause"');
+      }
+    },
+  );
+
+  it.each(['binding-missing', 'artifact-checksum-mismatch', 'platform-unsupported'] as const)(
+    'preserves the existing recovery for %s instead of recommending a runtime install', (reason) => {
+      const cause = new LocalEmbeddingError('LOCAL_EMBEDDING_UNAVAILABLE', reason);
+      const recovery = ['model', reason === 'binding-missing' ? 'bind' : 'verify',
+        '--profile', 'multilingual-e5-small'] as const;
+      for (const error of [cause, new LocalWikiRetrievalError('LOCAL_WIKI_SEMANTIC_UNAVAILABLE', {
+        cause, reasonCode: 'embedding-provider-unavailable', recoveryAction: recovery,
+      })]) {
+        const result = mapCliError(error, { command: 'search', projectId: 'alpha' });
+        expect(result.errors[0]?.recoveryCommand).toEqual(recovery);
+        expect(result.errors[0]?.message).not.toContain('npm install');
+      }
+    },
+  );
+
   it('documents the current-session hierarchy handoff without implying approval activates', () => {
     for (const command of [
       'start', 'status', 'submit', 'resubmit', 'child-review', 'review', 'finalize', 'approve',

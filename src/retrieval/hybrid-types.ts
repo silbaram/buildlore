@@ -1,4 +1,4 @@
-import type { EmbeddingSha256Digest } from './embedding/types.js';
+import type { EmbeddingSha256Digest, LocalEmbeddingError } from './embedding/types.js';
 import type {
   HierarchicalRetrievalLocatorV1,
 } from './hierarchical.js';
@@ -189,6 +189,7 @@ export class LocalWikiRetrievalError extends Error {
     options: Readonly<{
       readonly reasonCode?: LocalWikiRetrievalFallbackReason;
       readonly recoveryAction?: LocalWikiRetrievalRecoveryAction;
+      readonly cause?: LocalEmbeddingError;
     }> = {},
   ) {
     super(code === 'LOCAL_WIKI_PROJECTION_UNAVAILABLE'
@@ -201,7 +202,7 @@ export class LocalWikiRetrievalError extends Error {
         ? 'Local Wiki retrieval project does not match.'
         : code === 'LOCAL_WIKI_SEMANTIC_UNAVAILABLE'
           ? 'Local Wiki semantic retrieval is unavailable.'
-          : 'Local Wiki retrieval contract is invalid.');
+          : 'Local Wiki retrieval contract is invalid.', { cause: options.cause });
     this.name = 'LocalWikiRetrievalError';
     this.code = code;
     this.reasonCode = options.reasonCode ?? null;

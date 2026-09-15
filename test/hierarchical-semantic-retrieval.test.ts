@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { digestHierarchyValue } from '../src/compiler/index.js';
+import { mapCliError } from '../src/cli/error-map.js';
 import { addProject } from '../src/knowledge/index.js';
 import {
   createApprovedWikiHybridRetrieval as createApprovedWikiHybridRetrievalV2,
@@ -678,6 +679,39 @@ source_digest: sha256:${'a'.repeat(64)}
       mode: 'lexical', projectId: PROJECT_ID, query: 'authentication recovery',
     })).resolves.toMatchObject({ effectiveChannels: ['lexical'], fallback: null });
     expect(calls).toEqual([]);
+  });
+
+  it('retains the runtime failure for CLI recovery while preserving hybrid fallback', async () => {
+    const gold = await goldFixture();
+    const vectorIndex = createFlatFileVectorIndex(await knowledgeFixture());
+    await vectorIndex.buildFull(buildInput(gold.corpus, provider([])));
+    const retrieval = createApprovedWikiHybridRetrieval({
+      corpus: gold.corpus, projectId: PROJECT_ID, sanitizerPolicyDigest: SANITIZER_DIGEST,
+      vectorIndex,
+      provider: {
+        ...provider([]),
+        embedQuery: () => Promise.reject(
+          new LocalEmbeddingError('LOCAL_EMBEDDING_UNAVAILABLE', 'runtime-unavailable'),
+        ),
+      },
+    });
+    const query = { projectId: PROJECT_ID, query: 'authentication recovery' };
+    await expect(retrieval.search({ ...query, mode: 'semantic' })).rejects.toMatchObject({
+      code: 'LOCAL_WIKI_SEMANTIC_UNAVAILABLE', reasonCode: 'embedding-provider-unavailable',
+      cause: { code: 'LOCAL_EMBEDDING_UNAVAILABLE', reasonCode: 'runtime-unavailable' },
+    });
+    try {
+      await retrieval.search({ ...query, mode: 'semantic' });
+      expect.fail('Expected semantic failure');
+    } catch (error) {
+      const failure = mapCliError(error, { command: 'search', projectId: PROJECT_ID });
+      expect(failure.errors[0]?.message).toContain('@huggingface/transformers@4.2.0');
+      expect(failure.errors[0]?.recoveryCommand).toBeUndefined();
+      expect(JSON.stringify(error)).not.toContain('"cause"');
+    }
+    await expect(retrieval.search({ ...query, mode: 'hybrid' })).resolves.toMatchObject({
+      effectiveMode: 'lexical-graph', fallback: { reasonCode: 'embedding-provider-unavailable' },
+    });
   });
 
   it('does not query stale indexes or accept a different active embedding identity', async () => {

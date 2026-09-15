@@ -166,6 +166,13 @@ function baseFailure(
   });
 }
 
+const EMBEDDING_RUNTIME_RECOVERY_MESSAGE =
+  'Local embedding runtime is missing or could not be loaded. On Linux x64, install or repair ' +
+  '@huggingface/transformers@4.2.0 in the same installation prefix as BuildLore: ' +
+  'npm install --prefix "<buildlore-install-prefix>" --omit=dev --save-exact ' +
+  '@huggingface/transformers@4.2.0. Replace the prefix placeholder with your BuildLore installation ' +
+  'prefix, then retry. A separate global installation or model verify does not install this runtime.';
+
 export function mapCliError(
   error: unknown,
   context: CliPresentationContext = { command: 'unknown' },
@@ -192,6 +199,10 @@ export function mapCliError(
     return baseFailure(context, 3, error.code, error.message);
   }
   if (error instanceof LocalEmbeddingError) {
+    if (error.code === 'LOCAL_EMBEDDING_UNAVAILABLE' && error.reasonCode === 'runtime-unavailable') {
+      return baseFailure(context, 4, error.code, EMBEDDING_RUNTIME_RECOVERY_MESSAGE,
+        undefined, error.reasonCode);
+    }
     const recoveryCommand = error.reasonCode === null || context.command === 'unknown'
       ? undefined
       : safeRecoveryCommand([
@@ -299,6 +310,13 @@ export function mapCliError(
     );
   }
   if (error instanceof LocalWikiRetrievalError) {
+    if (error.code === 'LOCAL_WIKI_SEMANTIC_UNAVAILABLE' &&
+        error.cause instanceof LocalEmbeddingError &&
+        error.cause.code === 'LOCAL_EMBEDDING_UNAVAILABLE' &&
+        error.cause.reasonCode === 'runtime-unavailable') {
+      return baseFailure(context, 4, error.code, EMBEDDING_RUNTIME_RECOVERY_MESSAGE,
+        undefined, error.reasonCode ?? undefined);
+    }
     return baseFailure(
       context,
       error.code === 'LOCAL_WIKI_RETRIEVAL_CONFIG_INVALID' ? 2

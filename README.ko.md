@@ -109,6 +109,43 @@ dirty는 연결된 프로젝트의 지식 파일 범위이며 다른 프로젝�
 사용자 네임스페이스 실행 권한과 npm 11.19.0이 필요하며, 도구가 없으면 검증은 실패합니다.
 패키지 설치에는 네트워크를 사용하고, 이후 조회는 읽기 전용 마운트·네트워크 격리에서 실행합니다.
 
+### 선택적인 로컬 의미 검색 런타임
+
+새 소비자 환경에 tarball을 `--omit=dev`로 설치하면 로컬 임베딩 런타임은 제외됩니다.
+현재 AI 세션을 통한 Wiki 작성, lexical 검색, 연결된 Wiki 조회와 MCP에는 이 런타임이
+필요하지 않습니다. 개발용 `npm ci`는 테스트를 위해 런타임을 포함합니다.
+
+Linux x64에서 로컬 semantic/hybrid 검색을 사용하려면 **BuildLore와 같은 설치 위치**에
+정확한 버전의 런타임을 추가합니다.
+
+```sh
+npm install --prefix "$HOME/.local/buildlore" --omit=dev --save-exact @huggingface/transformers@4.2.0
+```
+
+별도 전역 설치만으로는 이 설치 위치에 런타임이 제공되지 않습니다. 모델 파일은 별도이며,
+허브에서 기존 `model bind`, `model verify`, `index rebuild` 절차를 사용합니다. 런타임
+설치가 모델을 다운로드하거나 인덱스를 생성하지는 않습니다. 사용 가능한 런타임이 없으면
+의미 검색 작업은 기존 구조화된 사용 불가 오류를 반환하며, hybrid는 지원하는 경로에서
+명시적인 검색 전환을 유지합니다. 연결된 프로젝트의 검색은 계속 lexical입니다.
+사용자가 명시적으로 추가 설치한 런타임은 BuildLore 업데이트 후에도 유지됩니다.
+
+`optionalDependencies`는 기본 설치에 포함되므로, BuildLore는 자동 설치되지 않는
+선택적 peer 의존성을 사용합니다. 기본 설치에는 다른 컴파일러 의존성이 남으며,
+특정 설치 용량이나 취약점 건수를 보장하지 않습니다.
+
+개발자는 transformers 4.2.0을 필수 의존성으로 포함했던 이전 tarball과 준비된 로컬
+`multilingual-e5-small` 모델 디렉터리를 지정해 업데이트 전환까지 검증할 수 있습니다.
+
+```sh
+BUILDLORE_EMBEDDING_BASELINE_TARBALL=/path/previous-buildlore.tgz \
+BUILDLORE_EMBEDDING_MODEL_DIR=/path/multilingual-e5-small \
+npm run verify:installed-read
+```
+
+폐기 가능한 설치에서 런타임 제거·복구·명시 설치 후 보존과 실제 로컬 semantic/hybrid
+검색을 확인합니다. 모델은 테스트용으로 복사하며 유료 AI 호출은 없습니다.
+앞서 설명한 npm 버전과 격리 도구가 필요합니다.
+
 ## 빠른 시작
 
 ### 1. 중앙 허브 생성
@@ -1349,6 +1386,19 @@ buildlore connection relocate-hub --from /work/old-hub --to /work/new-hub \
 ### 업데이트·이전 버전 복구·제거
 
 클라이언트를 종료하고 같은 설치 위치에 정확한 tarball을 설치합니다.
+
+**임베딩 런타임을 기본 제공하던 버전에서 업데이트할 때:** 이전에 자동 설치된 런타임은
+업데이트로 제거됩니다. 기존 semantic/hybrid 검색을 계속 사용하려면 **업데이트 전에**
+같은 설치 위치에 아래 명령으로 명시적으로 설치합니다. 업데이트 후에도 이 명령으로 복구할 수 있습니다.
+
+```sh
+npm install --prefix "$HOME/.local/buildlore" --omit=dev --save-exact @huggingface/transformers@4.2.0
+```
+
+이 명령은 설치 위치에 사용자의 선택을 기록하므로 이후 업데이트에서도 런타임을 유지합니다.
+lexical 검색만 사용하는 경량 설치라면 생략합니다. 모델 파일과 기존 인덱스는 유지되며,
+`model verify`는 모델 파일만 검사하고 런타임을 설치하지 않습니다. 의미 검색을 사용한다면
+업데이트 후 허브에서 semantic 검색을 실행해 복구를 확인합니다.
 
 ```sh
 npm install --prefix "$HOME/.local/buildlore" --omit=dev /path/buildlore-0.1.1-rc.1.tgz
