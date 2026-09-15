@@ -1,5 +1,5 @@
-import { setupHub, connectProject, disconnectProject, resolveConnection, connectionOutcome } from '../connection/service.js';
-import { fail as connectionFail, ConnectionError } from '../connection/contracts.js';
+import { setupHub, connectProject, disconnectProject, resolveConnection, connectionOutcome, relocateHub } from '../connection/service.js';
+import { fail as connectionFail, ConnectionError, digest as connectionPlanDigest } from '../connection/contracts.js';
 import { connectionStatus, unavailableConnectionStatus, readConnectedWiki, readApprovedWiki, type WikiReadRequest } from '../application/wiki-read-service.js';
 import { join } from 'node:path';
 import { createProjectKnowledgeCompletenessWorkflow } from './project-knowledge-workflow.js';
@@ -531,6 +531,14 @@ async function executeCommand(
       return { outcome: connectionOutcome(context), projectId: context.projectId, connectionDigest: context.connectionDigest, readable: status.readable };
     }
     case 'disconnect': return disconnectProject(runtime.cwd, command.options['--remove-shared'] === true, runtime);
+    case 'connection.relocate-hub': {
+      const expected = stringOption(command, '--expect-plan');
+      const apply = command.options['--apply'] === true;
+      if (apply !== (expected !== undefined)) throw new CliUsageError('CLI_OPTION_CONFLICT');
+      return relocateHub({ from: requiredStringOption(command, '--from'), to: requiredStringOption(command, '--to'),
+        knowledgeRepository: requiredStringOption(command, '--knowledge-repo'), apply,
+        ...(expected === undefined ? {} : { expectedPlan: connectionPlanDigest(expected) }) }, runtime);
+    }
     case 'connection.status': case 'doctor': throw new CliUsageError('CLI_ARGUMENT_INVALID');
     case 'model.bind': {
       const localModels = runtime.localModels ?? createLocalModelBindingService(runtime.cwd);

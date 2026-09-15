@@ -58,6 +58,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
   command(['connect'], 'connect', 'connect', ['--hub', '--project', '--source-repo'], ['--hub', '--project'], [], {}, '--project'),
   command(['disconnect'], 'disconnect', 'disconnect', [], [], ['--remove-shared']),
   command(['connection', 'status'], 'connection.status', 'connection.status', ['--project'], [], [], {}, '--project'),
+  command(['connection', 'relocate-hub'], 'connection.relocate-hub', 'connection.relocate-hub', ['--from', '--to', '--knowledge-repo', '--expect-plan'], ['--from', '--to', '--knowledge-repo'], ['--apply']),
   command(['doctor'], 'doctor', 'doctor', ['--project'], [], [], {}, '--project'),
   command(
     ['init'],

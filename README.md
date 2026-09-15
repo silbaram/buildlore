@@ -60,7 +60,7 @@ install a local tarball without publishing it to a registry.
 npm ci --ignore-scripts
 npm run build
 npm pack --pack-destination /tmp
-npm install --prefix "$HOME/.local/buildlore" --omit=dev /tmp/buildlore-0.1.0.tgz
+npm install --prefix "$HOME/.local/buildlore" --omit=dev /tmp/buildlore-0.1.1-rc.1.tgz
 export PATH="$HOME/.local/buildlore/node_modules/.bin:$PATH"
 
 buildlore setup --hub /work/wiki-hub --knowledge-repo https://example.org/team/knowledge.git
@@ -1424,3 +1424,49 @@ The installed process runs `buildlore mcp --project-dir /absolute/source --read-
 MCP limits: 1 MiB input buffer, four concurrent reads, 60-second request timeout, 8 MiB total serialized response and pending output, 10-second blocked-output timeout. Oversized results return an error without partial page content. Existing memory data budgets are separate from MCP overhead. The MCP process performs no network or knowledge writes.
 
 Initial compatibility targets are Linux x64, Codex CLI 0.154.0 and Claude Code 2.1.227. Real-client evidence is required before claiming M2 complete; protocol tests alone do not establish that support. Run `node scripts/verify-m2.mjs` with the two clients authenticated to execute the installed-package checks and client evaluation. Do not publish local evaluation traces or client settings.
+
+## Reconnection, hub relocation and package lifecycle
+
+The local release candidate is **0.1.1-rc.1**, with `private: true`. Linux x64 is the verification target; Windows and macOS remain unverified. Retain the exact previous tarball before updating. A candidate is not a public npm release.
+
+### Reconnect a source checkout
+
+For a new clone or worktree, run the existing `connect --hub <hub> --project <id>` from that checkout. A moved checkout with a shared connection can also register its new local path with `connect`. An inaccessible old path may remain as a dormant local record; it is never selected by default.
+
+To replace a connection, close the AI client, preview and apply `client remove` while the old connection works, then run `disconnect --remove-shared` and `connect` with the explicit new target. Configure the client again and restart it. Ordinary `disconnect` preserves the shared connection file; `--remove-shared` explicitly removes it. Neither operation removes knowledge or collection settings. If a checkout was replaced at the same path, disconnect its old local binding before reconnecting.
+
+### Restore the mapping after moving a hub
+
+Move or restore the Git checkout yourself, including initialized submodule metadata. Keep the same portable knowledge repository locator. Relative locators must still resolve correctly at the new location. Repair broken Git worktree/submodule paths before asking BuildLore to validate the destination.
+
+```sh
+# Preview only: no file writes. Both roots must be absolute; the old root may be gone.
+buildlore connection relocate-hub --from /work/old-hub --to /work/new-hub \
+  --knowledge-repo https://example.org/team/knowledge.git --json
+
+# Copy planDigest from that preview, with otherwise identical arguments.
+buildlore connection relocate-hub --from /work/old-hub --to /work/new-hub \
+  --knowledge-repo https://example.org/team/knowledge.git \
+  --apply --expect-plan sha256:<preview-digest> --json
+```
+
+This changes only the local path for that known knowledge repository. All its source connections use the new mapping; their project identities and shared files stay intact. The preview reports the number of affected bindings without listing other projects. A changed registry, destination or stale preview is rejected. After an interruption, preview again: an already-applied mapping returns `changed: false`. Restart every MCP session using that hub. Read/status commands do not repair connections automatically.
+
+`CONNECTION_BUSY` means a registry operation or a leftover lock is present. Stop all BuildLore processes before manual recovery. Back up the private configuration directory (`BUILDLORE_CONFIG_DIR`, otherwise `$XDG_CONFIG_HOME/buildlore` or `~/.config/buildlore`). Remove only confirmed abandoned regular lock files in its `locks` directory, then preview again. Do not delete `connections.json`, active locks, or knowledge data. Locks are never stolen automatically.
+
+### Update, roll back and remove
+
+Close clients before replacing an installation. Install the exact tarball into the same prefix:
+
+```sh
+npm install --prefix "$HOME/.local/buildlore" --omit=dev /path/buildlore-0.1.1-rc.1.tgz
+buildlore --version
+buildlore doctor --json
+buildlore wiki list --json
+```
+
+Use the returned generation for a page read and its evidence lookup. If the Node or installed package path changed, preview/apply `client configure` again, then restart the client. To roll back, install the retained `buildlore-0.1.0.tgz` into the same prefix and repeat the reads. The v1 connection format remains readable; `relocate-hub` and `--version` are new in the candidate. Check the older package version with `npm ls --prefix "$HOME/.local/buildlore" buildlore`.
+
+For removal, first preview/apply `client remove` for each configured client, then disconnect the intended source checkout(s), and finally run `npm uninstall --prefix "$HOME/.local/buildlore" buildlore`. Knowledge repositories, source documents, other clients' settings and unrelated worktree bindings remain. If you removed the program first, reinstall the same version to perform client cleanup. If the hub moved first, restore its mapping before removing client settings.
+
+Developers can run `npx --yes --package=npm@11.19.0 --call 'node scripts/verify-m3.mjs'` with `bwrap` and `strace` available. It preserves tarballs, hashes, timing/size measurements and results in a local evidence directory. It exercises 0.1.0 → candidate → 0.1.0 → candidate and removal in a disposable installation, including isolated CLI/MCP reads and settings preservation. Measurements describe the actual cache conditions of one Linux run, not a cold-install guarantee. M3 does not invoke AI clients: paid Claude testing is excluded by user decision and remains unverified, while its integration and original M2 test path remain available for later testing.

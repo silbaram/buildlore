@@ -1,12 +1,14 @@
 export const HELP_TEXT = `BuildLore — local-first, Git-backed development wiki tooling
 
 Usage:
+  buildlore --version
   buildlore mcp --project-dir <absolute-source-root> --read-only
   buildlore client configure|remove --client codex|claude-code --project-dir <absolute-source-root> [--apply --expect-plan <digest>] [--json]
   buildlore setup --hub <path> --knowledge-repo <portable-locator> [--json]
   buildlore connect --hub <path> --project <id> [--source-repo <locator>] [--json]
   buildlore disconnect [--remove-shared] [--json]
   buildlore connection status [--project <id>] [--json]
+  buildlore connection relocate-hub --from <absolute-old-root> --to <absolute-new-root> --knowledge-repo <locator> [--apply --expect-plan <digest>] [--json]
   buildlore doctor [--project <id>] [--json]
 
 Connected source reads may omit --project. read/lookup/citations require --expect-generation <sha256:...>; list/search/memory accept it optionally.

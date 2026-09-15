@@ -35,7 +35,7 @@ try {
   assert.equal(versions.platform, 'linux'); assert.equal(versions.arch, 'x64');
   await run('strace', ['--version']); await run('bwrap', ['--ro-bind', '/', '/', '--unshare-net', '--proc', '/proc', '--dev', '/dev', 'true']);
   await run('npm', ['run', 'build']);
-  /** @type {{filename: string, integrity: string, files: {path: string}[]}[]} */
+  /** @type {{name: string, version: string, filename: string, integrity: string, files: {path: string}[]}[]} */
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Typed boundary for a validated fixture/module or JSON assertion below.
   const packs = JSON.parse((await run('npm', ['pack', '--json', '--pack-destination', root])).stdout);
   const packed = packs[0];
@@ -192,7 +192,7 @@ try {
     process.stdout.write(`Verified installed ${name} (exit ${code})\n`);
   }
   await writeFile(join(evidence, 'summary.json'), JSON.stringify({ schemaVersion: 'buildlore.installed-read-evidence.v1',
-    versions, package: { name: 'buildlore', version: '0.1.0', sha256: hash(await readFile(tarball)), integrity: packed.integrity },
+    versions, package: { name: packed.name, version: packed.version, sha256: hash(await readFile(tarball)), integrity: packed.integrity },
     isolation: { runtimeDependenciesOnly: true, sourceCheckoutHidden: true, readOnlyMount: true, networkNamespace: true },
     controls: { sameBytesRewriteDetected: true, createDeleteDetected: true, failedWriteDetected: true,
       stdioDeviceException: 'Successful O_RDWR open of /dev/null character device 1:3 for Git standard descriptor initialization; no persistent file mutation.' }, results }, null, 2));
@@ -202,6 +202,13 @@ try {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Compiled local verification helper.
     const m2 = await import(pathToFileURL(join(support, 'test/helpers/m2-installed-evaluation.js')).href);
     await m2.verifyInstalledM2({ binary, hubRoot: fixture.hubRoot, repo, root, sourceRoot, configDir: fixture.configDir, projectId: fixture.projectId, evidence, support, generation, evidenceId, other });
+  }
+  if (process.env.BUILDLORE_VERIFY_M3 === '1') {
+    /** @type {typeof import('../test/helpers/m3-installed-evaluation.js')} */
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Compiled local verification helper.
+    const m3 = await import(pathToFileURL(join(support, 'test/helpers/m3-installed-evaluation.js')).href);
+    await m3.verifyInstalledM3({ binary, hubRoot: fixture.hubRoot, repo, root, sourceRoot, configDir: fixture.configDir,
+      projectId: fixture.projectId, evidence, support, generation, evidenceId, other, tarball, install });
   }
 } finally {
   await fixture?.cleanup();

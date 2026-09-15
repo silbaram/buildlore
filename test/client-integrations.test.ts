@@ -4,8 +4,79 @@ import { describe, expect, it } from 'vitest';
 import { connectedFixture, git } from './helpers/connected-fixture.js';
 import { configureClient, type ClientOptions } from '../src/integrations/service.js';
 import { editSetting, launchSnippet } from '../src/integrations/settings.js';
+import { connectProject, disconnectProject } from '../src/connection/service.js';
+import { addProject } from '../src/knowledge/workspace.js';
 
 describe('client configuration ownership', () => {
+  it.each(['owned', 'pending'] as const)('rejects a changed connection while its previous setting is %s', async state => {
+    const f = await connectedFixture();
+    try {
+      const options: ClientOptions = { client: 'codex', projectDir: f.sourceRoot, operation: 'configure', nodePath: process.execPath,
+        binPath: join(f.root, 'bin.js'), configDir: f.configDir };
+      const preview = await configureClient(options);
+      const apply = configureClient({ ...options, apply: true, expectedPlan: preview.planDigest,
+        ...(state === 'pending' ? { afterStage: () => Promise.reject(new Error('Interrupted setup')) } : {}),
+      });
+      if (state === 'pending') await expect(apply).rejects.toThrow('Interrupted setup'); else await apply;
+      const target = join(f.sourceRoot, '.codex/config.toml');
+      const before = await readFile(target).catch(() => null);
+      await disconnectProject(f.sourceRoot, false, { configDir: f.configDir });
+      const shared = join(f.sourceRoot, '.buildlore/connection.json');
+      await writeFile(shared, (await readFile(shared, 'utf8')) + '\n');
+      await connectProject(f.sourceRoot, { hub: f.hubRoot, projectId: f.projectId, sourceRepository: `https://example.test/${f.projectId}.git` }, { configDir: f.configDir });
+      await expect(configureClient(options)).rejects.toMatchObject({ code: 'CLIENT_CONFIG_CONFLICT' });
+      expect(await readFile(target).catch(() => null)).toEqual(before);
+    } finally { await f.cleanup(); }
+  }, 30000);
+  it('preserves an empty user-created config after an earlier complete removal', async () => {
+    const f = await connectedFixture();
+    try {
+      const target = join(f.sourceRoot, '.codex/config.toml');
+      const options: ClientOptions = { client: 'codex', projectDir: f.sourceRoot, operation: 'configure', nodePath: process.execPath,
+        binPath: join(f.root, 'bin.js'), configDir: f.configDir };
+      const apply = async (operation: 'configure' | 'remove') => {
+        const preview = await configureClient({ ...options, operation });
+        await configureClient({ ...options, operation, apply: true, expectedPlan: preview.planDigest });
+      };
+      await apply('configure'); await apply('remove');
+      await writeFile(target, '');
+      await apply('configure'); await apply('remove');
+      expect(await readFile(target, 'utf8')).toBe('');
+    } finally { await f.cleanup(); }
+  }, 30000);
+  it.each(['codex', 'claude-code'] as const)('configures %s after removing and replacing a project connection', async client => {
+    const f = await connectedFixture();
+    try {
+      const target = client === 'codex' ? join(f.sourceRoot, '.codex/config.toml') : join(f.root, 'claude.json');
+      const options: ClientOptions = { client, projectDir: f.sourceRoot, operation: 'configure', nodePath: process.execPath,
+        binPath: join(f.root, 'bin.js'), configDir: f.configDir, claudeConfigPath: target };
+      const old = await configureClient(options);
+      await configureClient({ ...options, apply: true, expectedPlan: old.planDigest });
+      const removal = await configureClient({ ...options, operation: 'remove' });
+      await configureClient({ ...options, operation: 'remove', apply: true, expectedPlan: removal.planDigest });
+      await disconnectProject(f.sourceRoot, true, { configDir: f.configDir });
+      await addProject(f.knowledgeRoot, { projectId: 'replacement', displayName: 'Replacement', sourceRepository: `https://example.test/${f.projectId}.git` });
+      const manifestPath = join(f.sourceRoot, '.buildlore/sources.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+      await writeFile(manifestPath, JSON.stringify({ ...manifest, projectId: 'replacement' }));
+      await connectProject(f.sourceRoot, { hub: f.hubRoot, projectId: 'replacement', sourceRepository: `https://example.test/${f.projectId}.git` }, { configDir: f.configDir });
+      const next = await configureClient(options);
+      expect(next.projectId).toBe('replacement');
+      expect(next.serverName).not.toBe(old.serverName);
+      await expect(configureClient({ ...options, apply: true, expectedPlan: next.planDigest,
+        afterStage: stage => stage === 'journal' ? Promise.reject(new Error('Injected reconnection interruption')) : Promise.resolve(),
+      })).rejects.toThrow('Injected reconnection interruption');
+      const retry = await configureClient(options);
+      await configureClient({ ...options, apply: true, expectedPlan: retry.planDigest });
+      const configured = await readFile(target, 'utf8');
+      expect(configured).toContain(next.serverName);
+      expect(configured).not.toContain(old.serverName);
+      expect((await configureClient(options)).changed).toBe(false);
+      const removed = await configureClient({ ...options, operation: 'remove' });
+      await configureClient({ ...options, operation: 'remove', apply: true, expectedPlan: removed.planDigest });
+      expect((await configureClient({ ...options, operation: 'remove' })).changed).toBe(false);
+    } finally { await f.cleanup(); }
+  }, 30000);
   it.each(['codex', 'claude-code'] as const)('previews, applies, reuses and removes %s without changing user content', async client => {
     const f = await connectedFixture();
     const target = client === 'codex' ? join(f.sourceRoot, '.codex', 'config.toml') : join(f.root, 'claude.json');

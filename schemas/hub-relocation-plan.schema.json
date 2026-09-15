@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.dev/schemas/hub-relocation-plan.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "knowledgeRepositoryDigest", "affectedBindings", "changed", "applied", "planDigest"],
+  "properties": {
+    "schemaVersion": { "const": "buildlore.hub-relocation-plan.v1" },
+    "knowledgeRepositoryDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "affectedBindings": { "type": "integer", "minimum": 0 },
+    "changed": { "type": "boolean" },
+    "applied": { "type": "boolean" },
+    "planDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

@@ -62,7 +62,7 @@ npm ci --ignore-scripts
 npm run build
 npm pack --pack-destination /tmp
 # 개발 체크아웃 밖에 실행 패키지와 런타임 의존성 설치
-npm install --prefix "$HOME/.local/buildlore" --omit=dev /tmp/buildlore-0.1.0.tgz
+npm install --prefix "$HOME/.local/buildlore" --omit=dev /tmp/buildlore-0.1.1-rc.1.tgz
 export PATH="$HOME/.local/buildlore/node_modules/.bin:$PATH"
 
 buildlore setup --hub /work/wiki-hub --knowledge-repo https://example.org/team/knowledge.git
@@ -103,7 +103,7 @@ dirty는 연결된 프로젝트의 지식 파일 범위이며 다른 프로젝�
 원격 최신 여부는 `not_checked`입니다. 소스 revision 비교는 기록된 Git HEAD 메타데이터의 비교이며 작업 파일 일치 보증이 아닙니다. 핀 불일치는 허브에서 기존 `knowledge status` 및
 핀 계획/커밋 절차로 해결합니다. 읽기에서는 모델·인덱스 생성·네트워크·임시 파일 쓰기를
 수행하지 않습니다. 이력 검증은 메모리를 일정하게 유지하기 위해 읽기만으로 반복 순회하므로
-긴 이력의 최초 조회는 느릴 수 있습니다. MCP 클라이언트 연결과 자동 업데이트는 후속 범위입니다.
+긴 이력의 최초 조회는 느릴 수 있습니다. MCP 클라이언트 연결은 아래 AI 클라이언트 안내를 사용합니다. 자동 업데이트는 제공하지 않습니다.
 
 개발 검증에는 `npm run verify:installed-read`를 사용합니다. `strace`, `bwrap`,
 사용자 네임스페이스 실행 권한과 npm 11.19.0이 필요하며, 도구가 없으면 검증은 실패합니다.
@@ -1316,3 +1316,49 @@ Claude Code는 `--client claude-code`를 사용합니다. Codex는 Git에 추적
 입력 버퍼 1 MiB, 동시 조회 4개, 요청 제한 60초, 전체 응답·대기 출력 8 MiB, 출력 정체 10초를 적용합니다. 너무 큰 응답은 본문을 자르지 않고 오류로 반환하며 기존 memory 데이터 예산은 별도로 유지합니다. MCP 프로세스는 네트워크 요청이나 지식 쓰기를 수행하지 않습니다.
 
 초기 검증 대상은 Linux x64, Codex CLI 0.154.0, Claude Code 2.1.227입니다. 프로토콜 테스트만으로 M2 지원 완료를 선언하지 않으며 실제 두 클라이언트 검증이 필요합니다. 로그인된 환경에서 `node scripts/verify-m2.mjs`로 설치물·실사용 검증을 실행합니다. 로컬 검증 trace와 개인 설정은 Git에 게시하지 않습니다.
+
+## 재연결·허브 이동·업데이트와 제거
+
+로컬 릴리스 후보는 **0.1.1-rc.1**이며 `private: true`를 유지합니다. 실제 검증 대상은 Linux x64입니다. Windows/macOS는 미검증이며, 후보 버전은 npm 공개 배포를 뜻하지 않습니다. 업데이트 전에 이전 버전의 정확한 tarball을 보관합니다.
+
+### 소스 체크아웃 재연결
+
+새 clone/worktree에서는 해당 루트에서 기존 `connect --hub <허브> --project <ID>`를 실행합니다. 공유 연결을 가진 소스 폴더를 옮긴 경우에도 새 경로에서 `connect`로 로컬 결속을 등록합니다. 접근할 수 없는 옛 경로의 로컬 기록은 남을 수 있지만 자동 선택에 사용하지 않습니다.
+
+연결 대상을 바꾸려면 AI 클라이언트를 종료하고, 기존 연결이 유효할 때 `client remove`를 미리보기·적용합니다. 이후 `disconnect --remove-shared`와 명시적 새 대상의 `connect`를 실행하고 클라이언트를 다시 설정·시작합니다. 일반 `disconnect`는 공유 연결 파일을 보존하며 `--remove-shared`를 명시했을 때만 삭제합니다. 두 방식 모두 지식과 수집 설정은 삭제하지 않습니다. 같은 경로의 checkout을 교체했다면 기존 로컬 결속을 disconnect한 후 다시 연결합니다.
+
+### 허브를 옮긴 뒤 경로 복구
+
+Git checkout과 초기화된 submodule 구조는 사용자가 먼저 이동·복원합니다. portable 지식 저장소 locator는 유지해야 하며, 상대 locator는 새 위치에서도 올바르게 해석되어야 합니다. Git worktree/submodule 내부 경로가 깨졌다면 먼저 Git 구조를 복구합니다.
+
+```sh
+# 미리보기만 수행합니다. 이전 경로가 사라졌어도 되며 두 경로는 절대 경로입니다.
+buildlore connection relocate-hub --from /work/old-hub --to /work/new-hub \
+  --knowledge-repo https://example.org/team/knowledge.git --json
+
+# 미리보기의 planDigest를 복사하고 나머지 인수는 동일하게 유지합니다.
+buildlore connection relocate-hub --from /work/old-hub --to /work/new-hub \
+  --knowledge-repo https://example.org/team/knowledge.git \
+  --apply --expect-plan sha256:<미리보기-digest> --json
+```
+
+알려진 지식 저장소의 로컬 허브 경로만 바뀝니다. 해당 허브의 소스 연결들은 새 경로를 사용하며 각 프로젝트 신원과 공유 파일은 유지됩니다. 미리보기는 다른 프로젝트 목록 대신 영향받는 연결 개수를 반환합니다. 저장된 연결이나 대상 허브가 바뀌면 오래된 미리보기의 적용을 거절합니다. 중단 후에는 다시 미리보기합니다. 이미 적용됐다면 `changed: false`입니다. 해당 허브를 사용하는 모든 MCP 세션을 재시작해야 하며 조회·진단은 자동 복구를 수행하지 않습니다.
+
+`CONNECTION_BUSY`는 연결 작업이 실행 중이거나 남은 잠금이 있다는 뜻입니다. 수동 복구 전 모든 BuildLore 프로세스를 종료하고 개인 설정 디렉터리를 백업합니다. 위치는 `BUILDLORE_CONFIG_DIR`, 없으면 `$XDG_CONFIG_HOME/buildlore` 또는 `~/.config/buildlore`입니다. `locks` 안에서 중단된 작업의 일반 잠금 파일임을 확인한 항목만 제거한 뒤 다시 미리보기합니다. `connections.json`, 사용 중인 잠금, 지식 데이터는 삭제하지 않습니다. 자동 잠금 탈취는 하지 않습니다.
+
+### 업데이트·이전 버전 복구·제거
+
+클라이언트를 종료하고 같은 설치 위치에 정확한 tarball을 설치합니다.
+
+```sh
+npm install --prefix "$HOME/.local/buildlore" --omit=dev /path/buildlore-0.1.1-rc.1.tgz
+buildlore --version
+buildlore doctor --json
+buildlore wiki list --json
+```
+
+반환된 generation으로 본문과 실제 근거를 읽어 확인합니다. Node나 제품 설치 경로가 바뀌었다면 `client configure`를 다시 미리보기·적용하고 클라이언트를 재시작합니다. 이전 버전으로 복구하려면 보관한 `buildlore-0.1.0.tgz`를 같은 prefix에 설치하고 조회를 반복합니다. v1 연결 형식은 유지됩니다. `relocate-hub`와 `--version`은 후보 버전의 새 기능이며, 이전 버전 확인에는 `npm ls --prefix "$HOME/.local/buildlore" buildlore`를 사용합니다.
+
+제거할 때는 설정한 클라이언트마다 `client remove`를 먼저 미리보기·적용하고, 원하는 소스 checkout을 disconnect한 뒤 `npm uninstall --prefix "$HOME/.local/buildlore" buildlore`를 실행합니다. 지식 저장소·소스 문서·다른 클라이언트 설정·다른 worktree 연결은 남습니다. 프로그램을 먼저 제거했다면 같은 버전을 재설치해 설정 제거를 진행합니다. 허브를 먼저 옮겼다면 경로 복구 후 클라이언트 설정을 제거합니다.
+
+개발 검증은 `bwrap`과 `strace`가 준비된 환경에서 `npx --yes --package=npm@11.19.0 --call 'node scripts/verify-m3.mjs'`로 실행합니다. 폐기 가능한 설치에서 0.1.0 → 후보 → 0.1.0 → 후보 → 제거와 CLI/MCP 격리 조회·설정 보존을 검사하고, tarball·해시·설치 시간/용량·결과를 로컬 증거 디렉터리에 보관합니다. 측정은 해당 npm 캐시 조건의 Linux 단일 실행이며 빈 캐시 설치 성능을 보장하지 않습니다. M3 검증은 AI 클라이언트를 호출하지 않습니다. Claude 유료 실사용은 사용자 결정으로 제외·미검증이며, 연동 기능과 기존 M2 테스트 경로는 차후 실행할 수 있도록 유지합니다.

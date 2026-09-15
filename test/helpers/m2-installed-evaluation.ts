@@ -12,7 +12,7 @@ export interface InstalledM2Options {
   binary: string; hubRoot: string; repo: string; root: string; sourceRoot: string; configDir: string; projectId: string;
   evidence: string; support: string; generation: string; evidenceId: string; other: { sourceRoot: string; projectId: string; generation: string; pageId: string };
 }
-class Peer {
+export class Peer {
   private next = 0;
   private buffer = '';
   private readonly waiting = new Map<number, { resolve(v: Record<string, unknown>): void; reject(e: Error): void }>();
@@ -52,6 +52,10 @@ class Peer {
   }
 }
 export async function verifyInstalledM2(o: InstalledM2Options): Promise<void> {
+  await verifyInstalledM2Protocol(o);
+  await evaluateActualClients(o);
+}
+export async function verifyInstalledM2Protocol(o: InstalledM2Options): Promise<void> {
   const env = { PATH: process.env.PATH, HOME: process.env.HOME, BUILDLORE_CONFIG_DIR: o.configDir, XDG_CACHE_HOME: join(o.root, 'empty-cache'), LC_ALL: 'C', LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH };
   const traces = [];
   for (const selected of [{ sourceRoot: o.sourceRoot, projectId: o.projectId, generation: o.generation, pageId: 'overview' }, o.other]) {
@@ -98,5 +102,4 @@ export async function verifyInstalledM2(o: InstalledM2Options): Promise<void> {
   }
   await writeFile(join(o.evidence, 'm2-protocol-summary.json'), JSON.stringify({ passed: true, traces }, null, 2));
   process.stdout.write('Installed MCP lifecycle and isolation checks passed.\n');
-  await evaluateActualClients(o);
 }

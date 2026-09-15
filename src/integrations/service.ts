@@ -56,7 +56,13 @@ export async function configureClient(options: ClientOptions): Promise<ClientPla
       const parsed = receiptSchema.safeParse(parseJsonStrict(receiptFile.text));
       if (!parsed.success) reject('CLIENT_CONFIG_INVALID');
       receipt = parsed.data;
-      if (receipt.client !== options.client || receipt.rootDigest !== rootDigest || receipt.name !== name) reject();
+      if (receipt.client !== options.client || receipt.rootDigest !== rootDigest) reject();
+      const released = receipt.owned === null && receipt.pending === undefined;
+      if (receipt.name !== name && !released) reject();
+      if (released) {
+        // A completed removal releases both the connection name and file ownership.
+        receipt = { ...receipt, name, createdConfig: targetFile.identity === null };
+      }
     }
     const pending = receipt.pending;
     if (pending) {
@@ -102,7 +108,8 @@ export async function configureClient(options: ClientOptions): Promise<ClientPla
     if (p.plan.planDigest !== options.expectedPlan) reject('CLIENT_PLAN_CHANGED');
     const before = p.receiptFile.identity === null ? { ...p.receipt, owned: null } : receiptSchema.parse(parseJsonStrict(p.receiptFile.text));
     if (!p.plan.changed && !before.pending) return { ...p.plan, applied: true };
-    const journal: Receipt = { ...before, pending: { operation: options.operation, beforeDigest: p.targetFile.digest, afterDigest: hash(p.text), nextOwned: p.receipt.owned } };
+    const journal: Receipt = { ...before, name: p.receipt.name, createdConfig: p.receipt.createdConfig,
+      pending: { operation: options.operation, beforeDigest: p.targetFile.digest, afterDigest: hash(p.text), nextOwned: p.receipt.owned } };
     await replacePrivateFile(receiptPath, p.receiptFile, JSON.stringify(journal) + '\n');
     await options.afterStage?.('journal');
     if (p.exclude) await replacePrivateFile(p.exclude.path, p.exclude.file, p.exclude.text);

@@ -63,10 +63,11 @@ export async function readConfig(path: string, maxBytes: number): Promise<Config
     throw e;
   } finally { await handle?.close(); }
 }
-export async function replaceConfig(path: string, value: unknown, expected: Digest | null, maxBytes: number): Promise<void> {
+export async function replaceConfig(path: string, value: unknown, expected: Digest | null, maxBytes: number, validate?: () => Promise<void>): Promise<void> {
   if (Buffer.byteLength(serializeCanonicalJson(value)) > maxBytes) fail('CONNECTION_INVALID');
   if ((await readConfig(path, maxBytes))?.digest !== (expected ?? undefined)) fail('CONNECTION_CONFLICT');
   await writeJsonAtomic(path, value, { confinementRoot: dirname(path), beforeRename: async () => {
+    await validate?.();
     if ((await readConfig(path, maxBytes))?.digest !== (expected ?? undefined)) fail('CONNECTION_CONFLICT');
   } });
 }

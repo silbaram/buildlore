@@ -92,6 +92,22 @@ describe('local read connection lifecycle', () => {
 });
 
 describe('clones and worktrees', () => {
+  it('reconnects a moved source without rewriting its shared binding or collection settings', async () => {
+    const f = await connectedFixture();
+    try {
+      const options = { configDir: f.configDir }, moved = join(f.root, '옮긴 source');
+      const files = ['connection.json', 'sources.json'];
+      const before = await Promise.all(files.map(file => readFile(join(f.sourceRoot, '.buildlore', file))));
+      const writer = await readFile(join(f.hubRoot, '.buildlore/local-projects.json'));
+      await rename(f.sourceRoot, moved);
+      await expect(resolveConnection(moved, options)).rejects.toMatchObject({ code: 'CONNECTION_INCOMPLETE' });
+      await connectProject(moved, { hub: f.hubRoot, projectId: f.projectId, sourceRepository: `https://example.test/${f.projectId}.git` }, options);
+      expect(await resolveConnection(moved, options)).toMatchObject({ projectId: f.projectId });
+      expect(await Promise.all(files.map(file => readFile(join(moved, '.buildlore', file))))).toEqual(before);
+      expect(await readFile(join(f.hubRoot, '.buildlore/local-projects.json'))).toEqual(writer);
+      await expect(assertConnectionCurrent(f.context)).rejects.toMatchObject({ code: 'CONNECTION_MISSING' });
+    } finally { await f.cleanup(); }
+  }, 20000);
   it('binds another worktree to the same project and rejects replacement of its original root', async () => {
     const f = await connectedFixture();
     try {
