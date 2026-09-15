@@ -1049,7 +1049,7 @@ function freezePublicationValue(value: unknown, seen = new WeakSet<object>()): v
  * Cached nested values are frozen because read/search callers can receive their references.
  */
 export function createApprovedWikiPublicationReader(knowledgeRoot: string): ApprovedWikiPublicationReader {
-  const historyStore = createKnowledgeGenerationHistoryStore({ knowledgeRoot });
+  const historyStore = createKnowledgeGenerationHistoryStore({ knowledgeRoot, readOnly: true });
   let cached: Readonly<{ projectId: string; path: string; bytesDigest: string;
     snapshot: ApprovedWikiPublicationSnapshotV1 }> | undefined;
   return Object.freeze({

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
+import { containsCredentialMaterial } from '../sanitizer/service.js';
 import {
   LocalEmbeddingError,
   type EmbeddingProviderPort,
@@ -142,6 +143,7 @@ function containsUnsafeScalar(value: string): boolean {
 }
 
 function containsSensitiveQueryMaterial(value: string): boolean {
+  if (containsCredentialMaterial(value)) return true;
   const suspectedCredential = /(?:\b(?:Bearer|Basic)[ \t]+|\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,255}\b|\bnpm_[A-Za-z0-9]{20,255}\b|\bsk-(?:ant-)?[A-Za-z0-9_-]{20,255}\b|\bAIza[A-Za-z0-9_-]{32,64}\b|\b(?:API[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|COOKIE|PASSWORD|SECRET)[ \t]*=)/iu;
   const privateAbsolutePath = /(?:^|[\s"'(])(?:\/(?:home|root|users|private|mnt\/[a-z])\/|[a-z]:[\\/]|\\\\(?:wsl(?:\.localhost)?|[^\\\s]+)\\)/iu;
   return suspectedCredential.test(value) || privateAbsolutePath.test(value);

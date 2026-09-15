@@ -1,3 +1,4 @@
+import { readProcessOptions } from '../application/read-cancellation.js';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
@@ -546,6 +547,7 @@ export class GitPublicationInspector implements PublicationInspectionPort {
   ): Promise<CommandResult> {
     return new Promise((resolvePromise, reject) => {
       const child = spawn('git', [...args], {
+        ...readProcessOptions(),
         cwd,
         env: {
           ...process.env,

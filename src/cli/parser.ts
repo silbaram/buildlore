@@ -1,4 +1,6 @@
+import { validReadPage } from '../application/read-validation.js';
 import { isGeneratedIdentifier } from '../sanitizer/index.js';
+import { containsCredentialMaterial } from '../sanitizer/service.js';
 import { SESSION_COMPILE_LIMITS } from '../compiler/session/contracts.js';
 import { validateSourceSelectionPath } from '../projector/source-manifest.js';
 import type {
@@ -49,7 +51,15 @@ const PROJECT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const RESERVED_PROJECT_IDS = new Set(['knowledge', 'manifest', 'projects', 'shared']);
 const LOCAL_MODEL_PROFILE_ID = 'multilingual-e5-small';
 
+export const CONNECTED_READ_COMMANDS: readonly CliCommandId[] = ['wiki.list', 'wiki.read', 'wiki.memory', 'wiki.lookup', 'wiki.citations', 'search'];
+
 const COMMAND_SPECS: readonly CommandSpec[] = [
+  command(['setup'], 'setup', 'setup', ['--hub', '--knowledge-repo'], ['--hub', '--knowledge-repo']),
+  command(['connect'], 'connect', 'connect', ['--hub', '--project', '--source-repo'], ['--hub', '--project'], [], {}, '--project'),
+  command(['disconnect'], 'disconnect', 'disconnect', [], [], ['--remove-shared']),
+  command(['connection', 'status'], 'connection.status', 'connection.status', ['--project'], [], [], {}, '--project'),
+  command(['connection', 'relocate-hub'], 'connection.relocate-hub', 'connection.relocate-hub', ['--from', '--to', '--knowledge-repo', '--expect-plan'], ['--from', '--to', '--knowledge-repo'], ['--apply']),
+  command(['doctor'], 'doctor', 'doctor', ['--project'], [], [], {}, '--project'),
   command(
     ['init'],
     'init',
@@ -495,7 +505,7 @@ function command(
     requiredOptions,
     repeatableValueOptions,
     tokens,
-    valueOptions,
+    valueOptions: CONNECTED_READ_COMMANDS.includes(commandId) ? [...new Set([...valueOptions, '--expect-generation'])] : valueOptions,
   };
 }
 
@@ -636,6 +646,9 @@ function validateWikiOptions(
   commandId: CliCommandId,
   values: Readonly<Record<string, CliOptionValue>>,
 ): void {
+  if (values['--expect-generation'] !== undefined && !PLAN_DIGEST_PATTERN.test(String(values['--expect-generation']))) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
   if (commandId === 'wiki.lookup') {
     if (!['evidence', 'fact'].includes(String(values['--kind'])) ||
         ['--id', '--expect-generation'].some(option => typeof values[option] !== 'string' ||
@@ -647,9 +660,7 @@ function validateWikiOptions(
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
     const page = values['--page'];
-    if (typeof page !== 'string' || page.length > 320 ||
-        !/^(?:(?:concepts|decisions|failures|queries|verifications)\/[a-z0-9]+(?:-[a-z0-9]+)*|page-[a-f0-9]{64}|(?:(?:wiki\/)?buildlore-hierarchy\/)?(?:overview|architecture|decisions)(?:\.md)?)$/u
-          .test(page)) {
+    if (typeof page !== 'string' || !validReadPage(page)) {
       throw new CliUsageError('CLI_ARGUMENT_INVALID');
     }
     return;
@@ -839,31 +850,33 @@ function validatedProjectId(value: string | undefined): string | null {
   if (
     value.length > 64 ||
     !PROJECT_ID_PATTERN.test(value) ||
-    RESERVED_PROJECT_IDS.has(value)
+    RESERVED_PROJECT_IDS.has(value) || containsCredentialMaterial(value)
   ) {
     throw new CliUsageError('CLI_ARGUMENT_INVALID');
   }
   return value;
 }
 
-export function parseCliArguments(args: readonly string[]): ParsedCliInvocation {
+export function parseCliArguments(args: readonly string[], options: { readonly connected?: boolean } = {}): ParsedCliInvocation {
   if (args.length === 0 || (args.length === 1 && (args[0] === '--help' || args[0] === '-h'))) {
     return Object.freeze({ kind: 'help' });
   }
-  const spec = findCommandSpec(args);
+  const found = findCommandSpec(args);
+  const spec = found && options.connected && CONNECTED_READ_COMMANDS.includes(found.command)
+    ? { ...found, requiredOptions: found.requiredOptions.filter(v => v !== '--project') } : found;
   if (spec === null) throw new CliUsageError('CLI_COMMAND_UNSUPPORTED');
-  const options = parseOptions(args, spec);
-  const outputMode: CliOutputMode = options['--json'] === true ? 'json' : 'human';
+  const parsedOptions = parseOptions(args, spec);
+  const outputMode: CliOutputMode = parsedOptions['--json'] === true ? 'json' : 'human';
   const projectId = validatedProjectId(
-    spec.projectOption === undefined || typeof options[spec.projectOption] !== 'string'
+    spec.projectOption === undefined || typeof parsedOptions[spec.projectOption] !== 'string'
       ? undefined
-      : String(options[spec.projectOption]),
+      : String(parsedOptions[spec.projectOption]),
   );
   const result: ParsedCliCommand = {
     command: spec.command,
     kind: 'command',
     operation: spec.operation,
-    options,
+    options: parsedOptions,
     outputMode,
     projectId,
   };

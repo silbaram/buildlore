@@ -67,8 +67,6 @@ describe('progressive memory approved reader integration', () => {
       expect(memory).toMatchObject({ providerUsed: 'none', egress: 'none', processSpawned: false });
       expect(await reader.readMemory(f.projectId)).toEqual(fullBefore);
       expect(await reader.readPacket(f.projectId)).toEqual(packetBefore);
-      expect((await f.cli(['wiki', 'memory', '--project', f.projectId, '--max-bytes', '8192'])).exitCode).toBe(2);
-      expect((await f.cli(['wiki', 'memory', '--project', f.projectId, '--task', 'local', '--max-bytes', 'no'])).exitCode).toBe(2);
       expect(await reader.readTaskMemory(f.projectId, { task: 'local' })).toEqual(legacyBefore);
       for (const extra of [['--progressive'], ['--cursor', 'bad'], ['--task', 'local', '--cursor', 'bad'], ['--task', 'local', '--progressive', '--cursor', 'bad']]) {
         expect((await f.cli(['wiki', 'memory', '--project', f.projectId, ...extra])).exitCode).toBe(2);

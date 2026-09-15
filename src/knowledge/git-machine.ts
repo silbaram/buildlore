@@ -1,3 +1,4 @@
+import { readProcessOptions } from '../application/read-cancellation.js';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -910,6 +911,7 @@ export class GitMachineAdapter implements GitMachinePort {
   ): Promise<MachineCommandResult> {
     return new Promise((resolve, reject) => {
       const child = spawn('git', [...args], {
+        ...readProcessOptions(),
         cwd: repositoryRoot,
         env: {
           ...process.env,

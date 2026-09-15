@@ -1,3 +1,4 @@
+import { readProcessOptions } from '../application/read-cancellation.js';
 import { execFile } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, realpath, rename, rm, unlink } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -61,6 +62,7 @@ function runGit(
       'git',
       [...args],
       {
+        ...readProcessOptions(),
         cwd,
         encoding: 'utf8',
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' },

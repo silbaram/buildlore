@@ -73,6 +73,7 @@ export {
   type CliDiagnostic,
   type CliEnvelopeCommand,
   type CliEnvelopeV1,
+  type CliEnvelopeV2,
   type CliExitCode,
   type CliFailureResult,
   type CliOperation,

@@ -56,6 +56,20 @@ async function assertNoSpool(root: string, projectId: string): Promise<void> {
 }
 
 describe('bounded generation history', () => {
+  it('replays read-only history without scratch storage and detects changes before replay', async () => {
+    const { root, snapshot } = await fixture();
+    const first = generation(snapshot), second = generation(snapshot, first);
+    const writer = createKnowledgeGenerationHistoryStore({ knowledgeRoot: root });
+    const history = await writer.stageLegacy([first, second], snapshot.projectId);
+    const reader = createKnowledgeGenerationHistoryStore({ knowledgeRoot: root, readOnly: true });
+    expect((await reader.verify(history.reference, snapshot.projectId)).latest).toEqual(second);
+    await assertNoSpool(root, snapshot.projectId);
+    await expect(reader.stageLegacy([first], snapshot.projectId)).rejects.toThrow();
+    const changing = createKnowledgeGenerationHistoryStore({ knowledgeRoot: root, readOnly: true,
+      testHooks: { beforeReplay: async () => { await writeFile(objectFile(root, first), '{}'); } } });
+    await expect(changing.verify(history.reference, snapshot.projectId)).rejects.toThrow();
+  });
+
   it('keeps payload identity, replays genesis first, and mints immutable unforgeable runtime results', async () => {
     const { root, snapshot } = await fixture();
     const first = generation(snapshot);

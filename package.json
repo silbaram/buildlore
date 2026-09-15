@@ -1,6 +1,6 @@
 {
   "name": "buildlore",
-  "version": "0.1.0",
+  "version": "0.1.1-rc.1",
   "description": "Local-first, Git-backed development wiki tooling",
   "private": true,
   "type": "module",
@@ -67,7 +67,20 @@
     "./schemas/semantic-index.schema.json": "./schemas/semantic-index.schema.json",
     "./schemas/retrieval-result-v2.schema.json": "./schemas/retrieval-result-v2.schema.json",
     "./schemas/retrieval-result-v3.schema.json": "./schemas/retrieval-result-v3.schema.json",
-    "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json"
+    "./profiles/buildlore.profile.v1.json": "./profiles/buildlore.profile.v1.json",
+    "./schemas/connection.schema.json": "./schemas/connection.schema.json",
+    "./schemas/read-connections.schema.json": "./schemas/read-connections.schema.json",
+    "./schemas/cli-envelope-v2.schema.json": "./schemas/cli-envelope-v2.schema.json",
+    "./schemas/connection-status.schema.json": "./schemas/connection-status.schema.json",
+    "./connection": {
+      "types": "./dist/connection/index.d.ts",
+      "import": "./dist/connection/index.js"
+    },
+    "./wiki-read": {
+      "types": "./dist/application/index.d.ts",
+      "import": "./dist/application/index.js"
+    },
+    "./schemas/hub-relocation-plan.schema.json": "./schemas/hub-relocation-plan.schema.json"
   },
   "files": [
     "dist",
@@ -80,7 +93,8 @@
     "test": "vitest run",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "p2a:init": "node scripts/bootstrap-p2a.mjs"
+    "p2a:init": "node scripts/bootstrap-p2a.mjs",
+    "verify:installed-read": "node scripts/verify-installed-read.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -93,7 +107,11 @@
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "jsonc-parser": "3.3.1",
     "llm-wiki-compiler": "1.1.0",
-    "yaml": "2.9.0"
+    "smol-toml": "1.8.0",
+    "yaml": "2.9.0",
+    "zod": "4.6.5"
   }
 }

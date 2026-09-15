@@ -1,3 +1,4 @@
+import { ConnectionError } from '../connection/contracts.js';
 import { ProgressiveMemoryError } from '../compiler/project-knowledge/progressive-memory.js';
 import { TaskMemoryError } from '../compiler/project-knowledge/task-memory.js';
 import { KnowledgeHistoryError } from '../retrieval/project-knowledge-history-store.js';
@@ -169,6 +170,13 @@ export function mapCliError(
   error: unknown,
   context: CliPresentationContext = { command: 'unknown' },
 ): CliFailureResult {
+  if (error instanceof ConnectionError) {
+    const code = error.code;
+    const exitCode = ['CONNECTION_MISSING', 'CONNECTION_INCOMPLETE', 'APPROVAL_MISSING', 'FORMAT_UNSUPPORTED', 'GENERATION_REQUIRED'].includes(code) ? 2 :
+      ['CONNECTION_BUSY', 'CONNECTION_WRITE_FAILED'].includes(code) ? 4 :
+      ['HUB_UNAVAILABLE', 'KNOWLEDGE_PIN_MISMATCH', 'KNOWLEDGE_UNINITIALIZED'].includes(code) ? 6 : 3;
+    return baseFailure(context, exitCode, code, 'Connection read or setup failed safely. Run buildlore connection status for recovery.');
+  }
   if (error instanceof CliUsageError) {
     return baseFailure(
       context,

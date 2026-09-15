@@ -196,7 +196,7 @@ async function stageRecord(paths: StorePaths, generation: KnowledgeGenerationV1)
  * traversal state is a record, a predecessor, and fixed-width digest frames.
  */
 export function createKnowledgeGenerationHistoryStore(options: Readonly<{
-  knowledgeRoot: string; testHooks?: KnowledgeHistoryStoreTestHooks;
+  knowledgeRoot: string; testHooks?: KnowledgeHistoryStoreTestHooks; readOnly?: boolean;
 }>): KnowledgeGenerationHistoryStorePort {
   const security = createProjectSecurityService(options);
   let cached: VerifiedKnowledgeHistory | null = null;
@@ -229,11 +229,11 @@ export function createKnowledgeGenerationHistoryStore(options: Readonly<{
     const paths = await storePaths(options.knowledgeRoot, projectId, false);
     await assertDirectories(paths);
     const spoolPath = join(paths.root, `.verify-${randomUUID()}.tmp`);
-    const spool = await open(spoolPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    const spoolStatus = await spool.stat();
+    const spool = options.readOnly ? null : await open(spoolPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    const spoolStatus = await spool?.stat();
     try {
       await assertDirectories(paths);
-      if (!spoolStatus.isFile() || await realpath(spoolPath) !== spoolPath) invalid();
+      if (spoolStatus && (!spoolStatus.isFile() || await realpath(spoolPath) !== spoolPath)) invalid();
       let parsedRecordGraphs = 0;
       let replayGenerationGraphs = cached === null ? 0 : 1;
       let recordBufferBytes = 0;
@@ -270,7 +270,7 @@ export function createKnowledgeGenerationHistoryStore(options: Readonly<{
           fingerprint.update(frame);
           if (count > 0n) predecessorFingerprint.update(frame);
           else headParent = item.record.parentGenerationDigest;
-          await writeFrame(spool, frame);
+          if (spool) await writeFrame(spool, frame);
           return item.record.parentGenerationDigest;
         });
         count += 1n;
@@ -305,7 +305,27 @@ export function createKnowledgeGenerationHistoryStore(options: Readonly<{
         const frame = Buffer.alloc(64);
         for (let index = canReusePredecessor ? 0n : count - 1n; index >= 0n; index -= 1n) {
           checkCancellation(operation.signal);
-          await readFrame(spool, frame, index * 64n);
+          if (spool) await readFrame(spool, frame, index * 64n);
+          else {
+            // Read-only reverse replay trades repeated traversal for bounded memory.
+            // Revalidate the entire byte fingerprint before using each selected
+            // frame; no growing history array or on-disk scratch file is needed.
+            const replayFingerprint = createHash('sha256');
+            let next: KnowledgeDigest | null = reference.headGenerationDigest;
+            for (let offset = 0n; offset < count; offset += 1n) {
+              if (next === null) throw new KnowledgeHistoryError('KNOWLEDGE_HISTORY_DRIFT');
+              const id: KnowledgeDigest = next;
+              next = await visitRecord(id, item => {
+                const entry = Buffer.from(id.slice(7) + item.bytesDigest.slice(7), 'hex');
+                replayFingerprint.update(entry);
+                if (offset === index) entry.copy(frame);
+                return Promise.resolve(item.record.parentGenerationDigest);
+              });
+            }
+            if (next !== null || `sha256:${replayFingerprint.digest('hex')}` !== bytesFingerprint) {
+              throw new KnowledgeHistoryError('KNOWLEDGE_HISTORY_DRIFT');
+            }
+          }
           const generationDigest = hash(`sha256:${frame.subarray(0, 32).toString('hex')}`);
           const expectedBytes = `sha256:${frame.subarray(32).toString('hex')}`;
           latest = await visitRecord(generationDigest, async item => {
@@ -332,12 +352,13 @@ export function createKnowledgeGenerationHistoryStore(options: Readonly<{
       cached = result;
       return result;
     } finally {
-      await spool.close();
-      await removeOwnedFile(paths, spoolPath, spoolStatus.dev, spoolStatus.ino);
+      await spool?.close();
+      if (spoolStatus) await removeOwnedFile(paths, spoolPath, spoolStatus.dev, spoolStatus.ino);
     }
   });
   return Object.freeze({ verify,
     stageAppend: async (input: AppendInput) => guarded(async () => {
+      if (options.readOnly) throw new KnowledgeHistoryError('KNOWLEDGE_HISTORY_WRITE_FAILED');
       checkCancellation(input.signal);
       const baseline = input.baseline === null ? null : requireVerifiedKnowledgeHistory(input.baseline, input.projectId);
       const previous = baseline === null ? null : await verify(baseline.reference, input.projectId, input);
@@ -355,6 +376,7 @@ export function createKnowledgeGenerationHistoryStore(options: Readonly<{
       return verify(appendKnowledgeHistoryReference(previous?.reference ?? null, generation.generationDigest, input.projectId), input.projectId, input);
     }, true),
     stageLegacy: async (value: unknown, projectId: string, operation: OperationOptions = {}) => guarded(async () => {
+      if (options.readOnly) throw new KnowledgeHistoryError('KNOWLEDGE_HISTORY_WRITE_FAILED');
       checkCancellation(operation.signal);
       const generations = parseKnowledgeGenerationChain(value, projectId);
       const policy = await readSecurityPolicy(options.knowledgeRoot, projectId);

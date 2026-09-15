@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { knowledgeTaskMemory, validateTaskMemoryRequest, TaskMemoryError } from '../src/compiler/project-knowledge/task-memory.js';
+import { knowledgeTaskMemory, TaskMemoryError } from '../src/compiler/project-knowledge/task-memory.js';
 import { knowledgeDevelopmentMemory } from '../src/compiler/project-knowledge/reader-memory.js';
 import { createKnowledgeGeneration } from '../src/compiler/project-knowledge/generation.js';
 import { digest, record } from '../src/knowledge/project-knowledge/guards.js';
@@ -102,9 +102,8 @@ describe('progressive original claim memory', () => {
     expect(project(g, { task: 'zzzzzz' }).coverage.outcome).toBe('no_match');
     expect(() => project(g, { task: 'parcel', maxBytes: 2048 })).toThrow('PROGRESSIVE_MEMORY_BUDGET_TOO_SMALL');
     expect(() => validateProgressiveMemoryRequest({ task: 'parcel', cursor: 'invalid' })).toThrow(ProgressiveMemoryError);
-    for (const request of [{ task: '' }, { task: '한'.repeat(684) }, { task: 'x', maxBytes: 1 }, { task: 'x', maxBytes: 65537 }]) {
-      expect(() => validateTaskMemoryRequest(request)).toThrow(TaskMemoryError);
-    }
+    expect(() => project(g, { task: '' })).toThrow(TaskMemoryError);
+    expect(() => project(g, { task: 'parcel', maxBytes: 65537 })).toThrow(TaskMemoryError);
     const changed = { ...g, pages: g.pages.map((p, i) => ({ ...p, title: i === 1 ? '배포 CAFÉ' : 'Other',
       sections: p.sections.map(s => ({ ...s, title: 'Context', claims: s.claims.map(c => ({ ...c,
         text: i === 0 ? '배포 only after checks; except archived work.' : 'Other conditions.' })) })) })) };

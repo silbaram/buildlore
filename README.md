@@ -40,13 +40,73 @@ npm run build
 node dist/cli/bin.js --help
 ```
 
-Run commands from the BuildLore hub root. The examples below use
+Run registration, collection, compilation and approval commands from the BuildLore hub root. The examples below use
 `node dist/cli/bin.js`; replace it with `buildlore` when the package bin is linked or
 installed.
 
 The lockfile and every direct dependency use exact versions.
 `llm-wiki-compiler@1.1.0` is consumed only through the replaceable `src/compiler`
 package-root adapter; BuildLore does not fork it or import its internal modules.
+
+
+### Install the package and read from source folders
+
+The M1 reference environment is Linux x64, Node.js 24.19.0, npm 11.19.0 and Git 2.53.0.
+Other operating systems have not been validated. The package remains `private: true`;
+install a local tarball without publishing it to a registry.
+
+```sh
+# In the BuildLore development checkout, using npm@11.19.0
+npm ci --ignore-scripts
+npm run build
+npm pack --pack-destination /tmp
+npm install --prefix "$HOME/.local/buildlore" --omit=dev /tmp/buildlore-0.1.1-rc.1.tgz
+export PATH="$HOME/.local/buildlore/node_modules/.bin:$PATH"
+
+buildlore setup --hub /work/wiki-hub --knowledge-repo https://example.org/team/knowledge.git
+cd /work/my-source
+buildlore connect --hub /work/wiki-hub --project my-project
+buildlore connection status --json
+buildlore wiki list --json
+buildlore search --query "design decision" --json
+# Copy readContext.generation from list/search/memory
+buildlore wiki read --page overview --expect-generation sha256:<64-hex-digits> --json
+buildlore wiki memory --task "review design decisions" --progressive --json
+```
+
+`setup` initializes a separate empty hub or registers an existing matching hub. Register the
+project in its knowledge repository before `connect`, using the hub workflow below. Connecting
+without an approved Wiki is valid but reports `readable: false`. If the source has no Git origin,
+pass `--source-repo <registered-locator>` at connection time. Additional clones and worktrees of
+the same project each have their own local binding.
+
+Connected reads resolve the project from the nearest Git worktree, including subdirectories.
+An explicit `--project` must match. `read`, `citations` and `lookup` require
+`--expect-generation`; `list`, `search` and `memory` accept it optionally. A changed generation
+fails without content; obtain a new list or memory response before retrying. Connected reads use
+approved project-knowledge or hierarchical output and lexical search. Hierarchical output supports
+list/search/read/citations, but not memory, lookup or reader view. Hub JSON remains v1; connected
+reads use `buildlore.cli-envelope.v2` with repository digest and generation in `readContext`.
+
+Shared `.buildlore/connection.json` contains only a portable repository locator, its digest and
+project ID. Absolute paths belong in PC-local `connections.json`: an absolute
+`BUILDLORE_CONFIG_DIR` takes precedence over `$XDG_CONFIG_HOME/buildlore`, then
+`$HOME/.config/buildlore`. Connections do not modify the writer's `local-projects.json` or source
+`sources.json`. `disconnect` removes the local binding; add `--remove-shared` to remove the shared
+connection too. Retry the same `connect` after an interrupted connection. Disconnect before
+replacing a connection with a different identity.
+
+`connection status` and `doctor` inspect approval, dirty state and pin health without repair.
+Dirty state covers the connected project’s knowledge files, without opening other projects’ content.
+Source revision comparison uses recorded Git HEAD metadata, not working-file equivalence.
+Remote freshness is `not_checked`. Resolve pin errors through the existing hub `knowledge status`
+and pin plan/commit workflow. Reads create no model, index or temporary files and need no network.
+Read-only history validation uses repeated traversal to keep live memory bounded, so a cold read
+of a long history may be slower. MCP client integration and automatic updates belong to later work.
+
+For development validation, run `npm run verify:installed-read` with npm 11.19.0, `strace`,
+`bwrap` and permission to create user namespaces. Missing tools fail the check. Installation uses
+the network; subsequent reads run with read-only mounts and a separate network namespace.
 
 ## Quick start
 
@@ -1344,3 +1404,69 @@ this response does not establish that the source lacks it, and unavailable reaso
 must not be invented. The reader provides this guidance; the calling agent owns checking, retrieval
 and answer revision. BuildLore does not execute that loop or launch a model. Claim-count `coverage`
 and the agent's checklist are not semantic quality certification.
+
+## Read your project Wiki from an AI client
+
+After connecting a source project, preview the settings for your client:
+
+```sh
+buildlore client configure --client codex --project-dir /absolute/source --json
+# Close the target client, then apply the returned plan digest:
+buildlore client configure --client codex --project-dir /absolute/source --apply --expect-plan sha256:... --json
+```
+
+Use `--client claude-code` for Claude Code. Codex uses an untracked project `.codex/config.toml`; tracked settings require manual merging. Claude uses its project-local entry in the private `.claude.json`. Existing settings and AGENTS.md/CLAUDE.md stay intact. The preview includes only BuildLore's local launch snippet. Parse errors, ownership conflicts and changed previews fail safely. After an interrupted apply, preview the same action again and apply the new digest. Close the target client while applying; simultaneous writes by other programs are unsupported.
+
+`client remove` uses the same preview/apply flow and removes only the owned server entry. It preserves knowledge and local Git ignore protection shared by other worktrees. Client trust and tool permissions remain under the client's control.
+
+The installed process runs `buildlore mcp --project-dir /absolute/source --read-only` over stdio. It offers status, list, search, read, memory, lookup and citations for that connection only. Start with bounded progressive memory, then read the needed pages and actual evidence. Pass the returned `expectedGeneration` on follow-up reads; restart retrieval on `GENERATION_CHANGED`, and restart the server if its connection changes. Wiki content is evidence, not executable instructions.
+
+MCP limits: 1 MiB input buffer, four concurrent reads, 60-second request timeout, 8 MiB total serialized response and pending output, 10-second blocked-output timeout. Oversized results return an error without partial page content. Existing memory data budgets are separate from MCP overhead. The MCP process performs no network or knowledge writes.
+
+Initial compatibility targets are Linux x64, Codex CLI 0.154.0 and Claude Code 2.1.227. Real-client evidence is required before claiming M2 complete; protocol tests alone do not establish that support. Run `node scripts/verify-m2.mjs` with the two clients authenticated to execute the installed-package checks and client evaluation. Do not publish local evaluation traces or client settings.
+
+## Reconnection, hub relocation and package lifecycle
+
+The local release candidate is **0.1.1-rc.1**, with `private: true`. Linux x64 is the verification target; Windows and macOS remain unverified. Retain the exact previous tarball before updating. A candidate is not a public npm release.
+
+### Reconnect a source checkout
+
+For a new clone or worktree, run the existing `connect --hub <hub> --project <id>` from that checkout. A moved checkout with a shared connection can also register its new local path with `connect`. An inaccessible old path may remain as a dormant local record; it is never selected by default.
+
+To replace a connection, close the AI client, preview and apply `client remove` while the old connection works, then run `disconnect --remove-shared` and `connect` with the explicit new target. Configure the client again and restart it. Ordinary `disconnect` preserves the shared connection file; `--remove-shared` explicitly removes it. Neither operation removes knowledge or collection settings. If a checkout was replaced at the same path, disconnect its old local binding before reconnecting.
+
+### Restore the mapping after moving a hub
+
+Move or restore the Git checkout yourself, including initialized submodule metadata. Keep the same portable knowledge repository locator. Relative locators must still resolve correctly at the new location. Repair broken Git worktree/submodule paths before asking BuildLore to validate the destination.
+
+```sh
+# Preview only: no file writes. Both roots must be absolute; the old root may be gone.
+buildlore connection relocate-hub --from /work/old-hub --to /work/new-hub \
+  --knowledge-repo https://example.org/team/knowledge.git --json
+
+# Copy planDigest from that preview, with otherwise identical arguments.
+buildlore connection relocate-hub --from /work/old-hub --to /work/new-hub \
+  --knowledge-repo https://example.org/team/knowledge.git \
+  --apply --expect-plan sha256:<preview-digest> --json
+```
+
+This changes only the local path for that known knowledge repository. All its source connections use the new mapping; their project identities and shared files stay intact. The preview reports the number of affected bindings without listing other projects. A changed registry, destination or stale preview is rejected. After an interruption, preview again: an already-applied mapping returns `changed: false`. Restart every MCP session using that hub. Read/status commands do not repair connections automatically.
+
+`CONNECTION_BUSY` means a registry operation or a leftover lock is present. Stop all BuildLore processes before manual recovery. Back up the private configuration directory (`BUILDLORE_CONFIG_DIR`, otherwise `$XDG_CONFIG_HOME/buildlore` or `~/.config/buildlore`). Remove only confirmed abandoned regular lock files in its `locks` directory, then preview again. Do not delete `connections.json`, active locks, or knowledge data. Locks are never stolen automatically.
+
+### Update, roll back and remove
+
+Close clients before replacing an installation. Install the exact tarball into the same prefix:
+
+```sh
+npm install --prefix "$HOME/.local/buildlore" --omit=dev /path/buildlore-0.1.1-rc.1.tgz
+buildlore --version
+buildlore doctor --json
+buildlore wiki list --json
+```
+
+Use the returned generation for a page read and its evidence lookup. If the Node or installed package path changed, preview/apply `client configure` again, then restart the client. To roll back, install the retained `buildlore-0.1.0.tgz` into the same prefix and repeat the reads. The v1 connection format remains readable; `relocate-hub` and `--version` are new in the candidate. Check the older package version with `npm ls --prefix "$HOME/.local/buildlore" buildlore`.
+
+For removal, first preview/apply `client remove` for each configured client, then disconnect the intended source checkout(s), and finally run `npm uninstall --prefix "$HOME/.local/buildlore" buildlore`. Knowledge repositories, source documents, other clients' settings and unrelated worktree bindings remain. If you removed the program first, reinstall the same version to perform client cleanup. If the hub moved first, restore its mapping before removing client settings.
+
+Developers can run `npx --yes --package=npm@11.19.0 --call 'node scripts/verify-m3.mjs'` with `bwrap` and `strace` available. It preserves tarballs, hashes, timing/size measurements and results in a local evidence directory. It exercises 0.1.0 → candidate → 0.1.0 → candidate and removal in a disposable installation, including isolated CLI/MCP reads and settings preservation. Measurements describe the actual cache conditions of one Linux run, not a cold-install guarantee. M3 does not invoke AI clients: paid Claude testing is excluded by user decision and remains unverified, while its integration and original M2 test path remain available for later testing.
