@@ -1,3 +1,4 @@
+import type { ReadObserver } from '../retrieval/read-observer.js';
 import { setupHub, connectProject, disconnectProject, resolveConnection, connectionOutcome, relocateHub } from '../connection/service.js';
 import { fail as connectionFail, ConnectionError, digest as connectionPlanDigest } from '../connection/contracts.js';
 import { connectionStatus, unavailableConnectionStatus, readConnectedWiki, readApprovedWiki, type WikiReadRequest } from '../application/wiki-read-service.js';
@@ -140,6 +141,7 @@ export interface CliIo {
 }
 
 export interface CliRuntime {
+  readonly readObserver?: ReadObserver;
   readonly configDir?: string;
   readonly artifactRoot?: string;
   readonly check?: ProjectCheckPort;
@@ -767,7 +769,7 @@ async function executeCommand(
       const progressive = command.options['--progressive'] === true;
       const cursor = stringOption(command, '--cursor');
       if (cursor !== undefined && !progressive) throw new CliUsageError('CLI_ARGUMENT_INVALID');
-      const reader = createKnowledgeWikiReader(join(runtime.cwd, 'knowledge'));
+      const reader = createKnowledgeWikiReader(join(runtime.cwd, 'knowledge'), runtime.readObserver ? { observer: runtime.readObserver } : {});
       if (task === undefined) {
         if (budget !== undefined || progressive) throw new CliUsageError('CLI_ARGUMENT_INVALID');
         return await reader.readMemory(projectId) ?? invalid();
@@ -788,7 +790,13 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       if (runtime.localWiki !== undefined || runtime.wikiRead !== undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
-      return createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).lookup(projectId,
+      const reader = createKnowledgeWikiReader(join(runtime.cwd, 'knowledge'), runtime.readObserver ? { observer: runtime.readObserver } : {});
+      const ids = stringOption(command, '--ids'), maxBytes = stringOption(command, '--max-bytes');
+      if (ids !== undefined) return reader.lookupBatch(projectId,
+        hash(requiredStringOption(command, '--expect-generation')),
+        choice(requiredStringOption(command, '--kind'), ['evidence', 'fact']), ids.split(',').map(id => hash(id)),
+        maxBytes === undefined ? {} : { maxBytes: Number(maxBytes) });
+      return reader.lookup(projectId,
         hash(requiredStringOption(command, '--expect-generation')),
         choice(requiredStringOption(command, '--kind'), ['evidence', 'fact']), hash(requiredStringOption(command, '--id')));
     }
@@ -1345,8 +1353,10 @@ function connectedRequest(command: ParsedCliCommand): WikiReadRequest {
     ['--view', 'view'], ['--cursor', 'cursor'], ['--task', 'task'], ['--kind', 'kind'], ['--id', 'id'], ['--intent', 'intent']]
     .flatMap(([option, key]) => option && key && stringOption(command, option) !== undefined ? [[key, stringOption(command, option)]] : []));
   const maxBytes = stringOption(command, '--max-bytes');
+  const ids = stringOption(command, '--ids');
   if (maxBytes !== undefined && (!/^\d+$/u.test(maxBytes) || !Number.isSafeInteger(Number(maxBytes)) || Number(maxBytes) < 1)) throw new CliUsageError('CLI_ARGUMENT_INVALID');
   return { operation, ...strings, ...(command.options['--progressive'] === true ? { progressive: true } : {}),
+    ...(ids === undefined ? {} : { ids: ids.split(',') }),
     ...(maxBytes === undefined ? {} : { maxBytes: Number(maxBytes) }),
     ...(stringOption(command, '--limit') === undefined ? {} : { limit: Number(stringOption(command, '--limit')) }) };
 }
@@ -1397,7 +1407,7 @@ export async function runCli(
               data.approval === 'invalid' ? 'KNOWLEDGE_INVALID' : 'APPROVAL_MISSING'), context), data };
           const rendered = renderCliResult(result, outputMode); writeRenderedCliResult(io, rendered); return rendered.exitCode;
         }
-        const read = await readConnectedWiki(connection, connectedRequest(invocation));
+        const read = await readConnectedWiki(connection, connectedRequest(invocation), runtime.readObserver ? { observer: runtime.readObserver } : {});
         const rendered = renderCliResult({ ...successResult(invocation, read.data), ...context,
           readContext: read.readContext, knowledgeRevision: read.knowledgeRevision }, outputMode);
         writeRenderedCliResult(io, rendered); return rendered.exitCode;

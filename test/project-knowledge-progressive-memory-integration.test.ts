@@ -43,9 +43,16 @@ describe('progressive memory approved reader integration', () => {
       const packetBefore = await reader.readPacket(f.projectId);
       const memory = await reader.readProgressiveMemory(f.projectId, { task: 'local' });
       if (!memory) throw new Error('Missing memory.');
+      expect(memory.selectionStrategy).toBe('lexical-claim-v2');
       const cli = await f.cli(['wiki', 'memory', '--project', f.projectId, '--task', 'local', '--progressive']);
       expect(cli.exitCode).toBe(0);
       expect(cli.data).toEqual(memory);
+      const legacyCursor = `pwm1:n:0:${digest({ projectId: f.projectId, generationDigest: memory.generationDigest,
+        task: 'local', position: 0, mode: 'n' })}`;
+      const legacy = await reader.readProgressiveMemory(f.projectId, { task: 'local', cursor: legacyCursor });
+      expect(legacy?.selectionStrategy).toBe('lexical-claim-v1');
+      const legacyCli = await f.cli(['wiki', 'memory', '--project', f.projectId, '--task', 'local', '--progressive', '--cursor', legacyCursor]);
+      expect(legacyCli.exitCode).toBe(0); expect(legacyCli.data).toEqual(legacy);
       const limitedBudget = memory.budget.serializedBytes - 1;
       const limited = await reader.readProgressiveMemory(f.projectId, { task: 'local', maxBytes: limitedBudget });
       if (!limited) throw new Error('Missing bounded memory.');

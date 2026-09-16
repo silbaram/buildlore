@@ -5,7 +5,7 @@ import { knowledgeDevelopmentMemory } from '../src/compiler/project-knowledge/re
 import { createKnowledgeGeneration } from '../src/compiler/project-knowledge/generation.js';
 import { digest, record } from '../src/knowledge/project-knowledge/guards.js';
 import type { KnowledgeGenerationV1 } from '../src/knowledge/project-knowledge/types.js';
-import { fixtureProposal, fixtureReview, knowledgeFixtureSnapshot } from './helpers/project-knowledge-fixture.js';
+import { fixtureFact, fixtureProposal, fixtureReview, knowledgeFixtureSnapshot } from './helpers/project-knowledge-fixture.js';
 
 async function fixture(): Promise<KnowledgeGenerationV1> {
   const snapshot = await knowledgeFixtureSnapshot(); const proposal = fixtureProposal(snapshot);
@@ -14,6 +14,99 @@ async function fixture(): Promise<KnowledgeGenerationV1> {
 const bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value) + '\n');
 
 import { knowledgeProgressiveMemory as project, validateProgressiveMemoryRequest, ProgressiveMemoryError } from '../src/compiler/project-knowledge/progressive-memory.js';
+
+function legacyCursor(g: KnowledgeGenerationV1, position = 0): string {
+  return `pwm1:n:${String(position)}:${digest({ projectId: g.projectId, generationDigest: g.generationDigest,
+    task: 'parcel', position, mode: 'n' })}`;
+}
+
+async function repeatedFixture(): Promise<KnowledgeGenerationV1> {
+  const g = await fixture(), page = g.pages[0], section = page?.sections[0], claim = section?.claims[0];
+  if (!page || !section || !claim) throw new Error('Missing fixture claim');
+  return { ...g, pages: [{ ...page, sections: [{ ...section,
+    claims: Array.from({ length: 8 }, (_, i) => ({ ...claim, claimId: `claim-${String(i)}`,
+      text: 'parcel 条件と例外 '.repeat(35) + (i < 6 ? 'repeat' : `distinct-${String(i)}`) })) }] }] };
+}
+
+describe('progressive distinct claim priority', () => {
+  it('defers exact repetitions without deleting them and improves bounded distinct coverage', async () => {
+    const g = await repeatedFixture(), before = JSON.stringify(g);
+    const all = project(g, { task: 'parcel', maxBytes: 65536 });
+    expect(all.selectionStrategy).toBe('lexical-claim-v2');
+    expect(all.units.map(u => u.claimIndex)).toEqual([0, 6, 7, 1, 2, 3, 4, 5]);
+    const first = project(g, { task: 'parcel' });
+    const legacy = project(g, { task: 'parcel', cursor: legacyCursor(g) });
+    expect(new Set(first.units.map(u => u.claim.text)).size).toBeGreaterThan(new Set(legacy.units.map(u => u.claim.text)).size);
+    expect(legacy.selectionStrategy).toBe('lexical-claim-v1');
+    expect(legacy.units.map(u => u.claimIndex)).toEqual(legacy.units.map((_, i) => i));
+    for (const initialCursor of [undefined, legacyCursor(g)]) {
+      const actual = []; let cursor = initialCursor;
+      for (let reads = 0; ; reads++) {
+        expect(reads).toBeLessThan(20);
+        const result = project(g, { task: 'parcel', ...(cursor ? { cursor } : {}), maxBytes: reads % 2 ? 10000 : 8192 });
+        expect(result.coverage.oversizedClaims).toBe(0);
+        expect(bytes(result)).toBeLessThanOrEqual(result.budget.maxBytes);
+        actual.push(...result.units.map(u => u.claimIndex));
+        if (!result.recovery.nextCursor) break;
+        cursor = result.recovery.nextCursor;
+        expect(cursor.startsWith(initialCursor ? 'pwm1:' : 'pwm2:')).toBe(true);
+      }
+      expect(actual).toEqual(initialCursor ? [0, 1, 2, 3, 4, 5, 6, 7] : [0, 6, 7, 1, 2, 3, 4, 5]);
+    }
+    expect(JSON.stringify(g)).toBe(before);
+  });
+  it('keeps identical wording in different pages and sections distinct', async () => {
+    const g = await fixture();
+    const changed = { ...g, pages: g.pages.map(p => ({ ...p,
+      sections: Array.from({ length: 2 }, () => ({ ...p.sections[0], title: 'Context',
+        claims: [0, 1].map(i => ({ ...(p.sections[0]?.claims[0] ?? (() => { throw new Error('Missing claim'); })()),
+          claimId: `claim-${String(i)}` })) })) })) };
+    const m = project(changed, { task: 'parcel', maxBytes: 65536 });
+    expect(m.units.slice(0, 6).map(u => [u.pageIndex, u.sectionIndex, u.claimIndex])).toEqual([
+      [0, 0, 0], [0, 1, 0], [1, 0, 0], [1, 1, 0], [2, 0, 0], [2, 1, 0],
+    ]);
+    expect(m.units).toHaveLength(12);
+  });
+  it('preserves relevance within each tier while deferring high-scoring repetitions', async () => {
+    const g = await fixture(), page = g.pages[0], section = page?.sections[0], claim = section?.claims[0];
+    if (!page || !section || !claim) throw new Error('Missing fixture');
+    const changed = { ...g, pages: [{ ...page, sections: [{ ...section,
+      claims: ['parcel conditions', 'parcel conditions', 'parcel only', 'parcel only'].map((text, i) => ({
+        ...claim, claimId: `claim-${String(i)}`, text })) }] }] };
+    expect(project(changed, { task: 'parcel conditions', maxBytes: 65536 }).units.map(u => u.claimIndex)).toEqual([0, 2, 1, 3]);
+  });
+  it('distinguishes fact identity, presentation and exact text but normalizes fact sets', async () => {
+    const snapshot = await knowledgeFixtureSnapshot();
+    const proposal = fixtureProposal(snapshot, [fixtureFact(snapshot), fixtureFact(snapshot, 'Parcel retains local manifests.')]);
+    const g = createKnowledgeGeneration(snapshot, proposal, fixtureReview(proposal), null, 'knowledge-markdown-v2');
+    const page = g.pages[0], section = page?.sections[0], claim = section?.claims[0];
+    const firstFact = g.records[0]?.id, secondFact = g.records[1]?.id;
+    if (!page || !section || !claim || !firstFact || !secondFact) throw new Error('Missing fixture');
+    const claims = [
+      { ...claim, factIds: [firstFact, secondFact] },
+      { ...claim, factIds: [secondFact, firstFact] },
+      { ...claim, factIds: [firstFact] },
+      { ...claim, factIds: [secondFact] },
+      { ...claim, factIds: [firstFact, secondFact], presentation: 'history' as const },
+      { ...claim, factIds: [firstFact, secondFact], text: claim.text + ' ' },
+      { ...claim, factIds: [firstFact, secondFact], text: claim.text + ' Except archived.' },
+      { ...claim, factIds: [secondFact, firstFact, secondFact] },
+    ].map((c, i) => ({ ...c, claimId: `claim-${String(i)}` }));
+    const changed = { ...g, pages: [{ ...page, sections: [{ ...section, claims }] }] };
+    const m = project(changed, { task: 'parcel', maxBytes: 65536 });
+    expect(m.units.map(u => u.claimIndex)).toEqual([0, 2, 3, 4, 5, 6, 1, 7]);
+    expect(m.units.map(u => u.claim)).toEqual([0, 2, 3, 4, 5, 6, 1, 7].map(i => knowledgeDevelopmentMemory(changed).pages[0]?.sections[0]?.claims[i]));
+  });
+  it('binds cursor version to its ordering and rejects rewritten or unknown versions', async () => {
+    const g = await repeatedFixture();
+    const cursor = project(g, { task: 'parcel' }).recovery.nextCursor;
+    if (!cursor) throw new Error('Missing cursor');
+    for (const invalid of [cursor.replace('pwm2:', 'pwm1:'), cursor.replace('pwm2:', 'pwm3:'),
+      legacyCursor(g).replace('pwm1:', 'pwm2:'), cursor.replace(/:[0-9]+:sha256/u, ':9007199254740992:sha256')]) {
+      expect(() => project(g, { task: 'parcel', cursor: invalid })).toThrow(ProgressiveMemoryError);
+    }
+  });
+});
 
 describe('progressive original claim memory', () => {
   it('preserves original claims and registry closure, legacy projections and input bytes', async () => {

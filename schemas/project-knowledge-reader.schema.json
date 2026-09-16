@@ -21,6 +21,9 @@
     },
     {
       "$ref": "#/$defs/progressiveMemory"
+    },
+    {
+      "$ref": "#/$defs/lookupBatch"
     }
   ],
   "$defs": {
@@ -1143,7 +1146,10 @@
           "$ref": "project-knowledge.schema.json#/$defs/digest"
         },
         "selectionStrategy": {
-          "const": "lexical-claim-v1"
+          "enum": [
+            "lexical-claim-v1",
+            "lexical-claim-v2"
+          ]
         },
         "coverage": {
           "type": "object",
@@ -1244,7 +1250,7 @@
               "oneOf": [
                 {
                   "type": "string",
-                  "pattern": "^pwm1:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
+                  "pattern": "^pwm[12]:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
                 },
                 {
                   "type": "null"
@@ -1279,7 +1285,7 @@
                     },
                     "cursor": {
                       "type": "string",
-                      "pattern": "^pwm1:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
+                      "pattern": "^pwm[12]:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
                     },
                     "requiredBytes": {
                       "type": "integer",
@@ -1385,6 +1391,136 @@
           }
         }
       }
+    },
+    "lookupBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "kind",
+        "egress",
+        "requestedCount",
+        "uniqueCount",
+        "items",
+        "budget"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-reader-lookup-batch.v1"
+        },
+        "projectId": {
+          "$ref": "project-knowledge-workflow.schema.json#/$defs/purpose/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "kind": {
+          "enum": [
+            "evidence",
+            "fact"
+          ]
+        },
+        "egress": {
+          "const": "none"
+        },
+        "requestedCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "uniqueCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "result"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "project-knowledge.schema.json#/$defs/digest"
+              },
+              "result": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/evidence"
+                  },
+                  {
+                    "$ref": "project-knowledge.schema.json#/$defs/factSupport"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxBytes",
+            "usedBytes"
+          ],
+          "properties": {
+            "maxBytes": {
+              "type": "integer",
+              "minimum": 2048,
+              "maximum": 65536
+            },
+            "usedBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evidence"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "items": {
+                "items": {
+                  "properties": {
+                    "result": {
+                      "$ref": "#/$defs/evidence"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "items": {
+                "items": {
+                  "properties": {
+                    "result": {
+                      "$ref": "project-knowledge.schema.json#/$defs/factSupport"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

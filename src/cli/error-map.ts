@@ -1,4 +1,5 @@
 import { ConnectionError } from '../connection/contracts.js';
+import { LookupBatchError } from '../compiler/project-knowledge/lookup-batch.js';
 import { ProgressiveMemoryError } from '../compiler/project-knowledge/progressive-memory.js';
 import { TaskMemoryError } from '../compiler/project-knowledge/task-memory.js';
 import { KnowledgeHistoryError } from '../retrieval/project-knowledge-history-store.js';
@@ -255,6 +256,10 @@ export function mapCliError(
       'Cursor must match this project, task and generation. Start a new progressive read if they changed.');
     return Object.freeze({ ...baseFailure(context, 3, error.code, 'Progressive memory metadata exceeds the requested byte budget.'),
       data: { minimumRequiredBytes: error.minimumRequiredBytes } });
+  }
+  if (error instanceof LookupBatchError) {
+    return Object.freeze({ ...baseFailure(context, 3, error.code, 'Lookup batch exceeds maxBytes. Split the batch or use single-ID lookup.'),
+      data: { requiredBytes: error.requiredBytes, maxBytes: error.maxBytes } });
   }
   if (error instanceof TaskMemoryError) {
     if (error.code === 'TASK_MEMORY_REQUEST_INVALID') return baseFailure(context, 2, 'CLI_ARGUMENT_INVALID',

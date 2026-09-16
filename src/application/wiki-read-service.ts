@@ -1,3 +1,5 @@
+import { LookupBatchError, validateLookupBatch } from '../compiler/project-knowledge/lookup-batch.js';
+import { measureRead, type ReadObserver } from '../retrieval/read-observer.js';
 import { TaskMemoryError } from '../compiler/project-knowledge/task-memory.js';
 import { ProgressiveMemoryError } from '../compiler/project-knowledge/progressive-memory.js';
 import { SecurityOperationError } from '../sanitizer/errors.js';
@@ -27,6 +29,7 @@ export interface WikiReadRequest {
   readonly progressive?: boolean;
   readonly kind?: 'evidence' | 'fact';
   readonly id?: string;
+  readonly ids?: readonly string[];
 }
 export interface ReadContextMetadata {
   readonly knowledgeRepositoryDigest: Digest;
@@ -35,7 +38,7 @@ export interface ReadContextMetadata {
   readonly readPolicy: 'connected-approved';
 }
 export interface WikiReadResult { readonly data: unknown; readonly readContext: ReadContextMetadata; readonly knowledgeRevision: string }
-export interface ReadServiceHooks { readonly afterSnapshot?: () => Promise<void> }
+export interface ReadServiceHooks { readonly afterSnapshot?: () => Promise<void>; readonly observer?: ReadObserver }
 function required(value: string | undefined): string { return value ?? fail(); }
 function expected(request: WikiReadRequest, policy: 'connected-approved' | 'hub-compatible'): Digest | undefined {
   if (request.expectedGeneration !== undefined) return digest(request.expectedGeneration);
@@ -61,11 +64,17 @@ export async function readApprovedWiki(hubRoot: string, projectId: string, reque
   const search = searchOptions(request, policy);
   const knowledgeRoot = join(hubRoot, 'knowledge');
   try {
-    const session = await openKnowledgeReadSession(knowledgeRoot, projectId, { hubRoot });
+    const session = await openKnowledgeReadSession(knowledgeRoot, projectId, { hubRoot,
+      ...(hooks.observer ? { observer: hooks.observer } : {}) });
     if (!session) fail('APPROVAL_MISSING');
     const generation = session.generationDigest ?? session.publication.projection.corpus.generationDigest;
     const format = session.generationDigest ? 'project-knowledge' : 'hierarchical';
     if (wanted !== undefined && generation !== wanted) fail('GENERATION_CHANGED');
+    if (request.operation === 'lookup') {
+      if ((request.id === undefined) === (request.ids === undefined) || request.id !== undefined && request.maxBytes !== undefined) fail();
+      if (request.ids !== undefined) validateLookupBatch(request.kind ?? fail(), request.ids.map(id => digest(id)),
+        request.maxBytes === undefined ? {} : { maxBytes: request.maxBytes });
+    }
     await hooks.afterSnapshot?.();
     let data: unknown;
     if (format === 'project-knowledge') {
@@ -75,7 +84,10 @@ export async function readApprovedWiki(hubRoot: string, projectId: string, reque
         case 'read': data = request.view === 'reader' ? await reader.readContext(projectId, required(request.page)) : await reader.read(projectId, required(request.page)); break;
         case 'citations': data = await reader.citations(projectId, required(request.page)); break;
         case 'search': data = await reader.search(projectId, required(request.query), search.mode, search.intent); break;
-        case 'lookup': data = await reader.lookup(projectId, generation, request.kind ?? fail(), digest(request.id)); break;
+        case 'lookup': data = request.ids === undefined
+          ? await reader.lookup(projectId, generation, request.kind ?? fail(), digest(request.id))
+          : await reader.lookupBatch(projectId, generation, request.kind ?? fail(), request.ids.map(id => digest(id)),
+            request.maxBytes === undefined ? {} : { maxBytes: request.maxBytes }); break;
         case 'memory': {
           if (request.task === undefined) {
             if (request.maxBytes !== undefined || request.progressive || request.cursor !== undefined) fail();
@@ -109,16 +121,17 @@ export async function readApprovedWiki(hubRoot: string, projectId: string, reque
     return { data, format, generation };
   } catch (e) {
     if (policy === 'hub-compatible') throw e;
-    if (e instanceof ConnectionError || e instanceof TaskMemoryError || e instanceof ProgressiveMemoryError || e instanceof SecurityOperationError) throw e;
+    if (e instanceof ConnectionError || e instanceof LookupBatchError || e instanceof TaskMemoryError || e instanceof ProgressiveMemoryError || e instanceof SecurityOperationError) throw e;
     return fail('KNOWLEDGE_INVALID');
   }
 }
 export async function readConnectedWiki(context: ConnectionContext, request: WikiReadRequest, hooks: ReadServiceHooks = {}): Promise<WikiReadResult> {
   expected(request, 'connected-approved');
-  const current = await assertConnectionCurrent(context);
+  const current = await measureRead(hooks.observer, 'connection', () => assertConnectionCurrent(context));
   const paths = connectionPaths(current);
   if (paths.pin !== 'matched') fail('KNOWLEDGE_PIN_MISMATCH');
-  const result = await readApprovedWiki(paths.hubRoot, context.projectId, request, 'connected-approved', { afterSnapshot: async () => {
+  const result = await readApprovedWiki(paths.hubRoot, context.projectId, request, 'connected-approved', {
+    ...(hooks.observer ? { observer: hooks.observer } : {}), afterSnapshot: async () => {
     if ((await gitRead(paths.knowledgeRoot, ['rev-parse', '--verify', 'HEAD^{commit}']))?.trim() !== paths.knowledgeRevision) fail('CONNECTION_CONFLICT');
     await hooks.afterSnapshot?.();
   } });

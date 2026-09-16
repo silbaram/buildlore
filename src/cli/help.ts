@@ -28,6 +28,7 @@ Connected source reads may omit --project. read/lookup/citations require --expec
   buildlore wiki packet --project <project-id> [--json]
   buildlore wiki memory --project <project-id> [--task <text> [--max-bytes <2048-65536>] [--progressive [--cursor <cursor>]]] [--json]
   buildlore wiki lookup --project <project-id> --kind evidence|fact --id <sha256:id> --expect-generation <sha256:generation> [--json]
+  buildlore wiki lookup --project <project-id> --kind evidence|fact --ids <sha256:id,...> --expect-generation <sha256:generation> [--max-bytes <2048-65536>] [--json]
   buildlore wiki citations --project <project-id> --page <page-type/slug|page-sha256-id> [--json]
   buildlore export --project <project-id> --format json|okf --output <directory> [--json]
   buildlore sync --project <project-id> [--dry-run] [--json]
@@ -94,6 +95,12 @@ Local semantic index:
   index status   Inspects approved projection, Markdown materialization, and semantic generation
   index rebuild  Explicitly rebuilds changed vectors; --full disables vector reuse
   Search never downloads a model, starts a server, or rebuilds an index implicitly.
+
+Evidence reading:
+  Reuse inspected excerpts bound to the current project, generation and source digest.
+  Listed IDs alone are not inspected support. Retrieve missing support with lookup.
+  --ids accepts 1-16 IDs of one kind; default batch budget is 32768 bytes.
+  Split oversized batches; cite only material actually read and preserve unknowns.
 
 Compatibility aliases:
   knowledge clone, knowledge init, knowledge status, project validate

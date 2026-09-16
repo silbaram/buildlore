@@ -229,5 +229,7 @@ export { approveKnowledgeWikiHistoryAuthority, latestKnowledgeGeneration, knowle
 export type { KnowledgeAuthorityExtension, KnowledgeAuthorityExtensionV2, KnowledgeHistoryAppendV1 } from './project-knowledge-authority.js';
 
 export { TaskMemoryError, type KnowledgeTaskMemoryV1, type TaskMemoryRequest } from '../compiler/project-knowledge/task-memory.js';
+export { LookupBatchError, type KnowledgeReaderLookupBatchV1, type LookupBatchOptions } from '../compiler/project-knowledge/lookup-batch.js';
+export type { ReadObserver, ReadMeasurement, ReadPhase } from './read-observer.js';
 
 export { knowledgeProgressiveMemory, validateProgressiveMemoryRequest, ProgressiveMemoryError, type KnowledgeProgressiveMemoryV1, type ProgressiveMemoryRequest } from '../compiler/project-knowledge/progressive-memory.js';

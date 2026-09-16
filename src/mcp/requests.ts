@@ -15,7 +15,11 @@ export const toolSchemas = {
   search: z.strictObject({ query: text.max(8192).refine(s => /[\p{L}\p{N}]/u.test(s)), expectedGeneration: generation.optional() }),
   read: z.strictObject({ page, view: z.literal('reader').optional(), expectedGeneration: generation }),
   citations: z.strictObject({ page, expectedGeneration: generation }),
-  lookup: z.strictObject({ kind: z.enum(['evidence', 'fact']), id: generation, expectedGeneration: generation }),
+  lookup: z.union([
+    z.strictObject({ kind: z.enum(['evidence', 'fact']), id: generation, expectedGeneration: generation }),
+    z.strictObject({ kind: z.enum(['evidence', 'fact']), ids: z.array(generation).min(1).max(16), expectedGeneration: generation,
+      maxBytes: z.number().int().min(2048).max(65536).optional() }),
+  ]),
   memory: z.strictObject({ task: text.refine(s => s.trim().length > 0 && Buffer.byteLength(s) <= 2048).optional(),
     maxBytes: z.number().int().min(2048).max(65536).optional(), progressive: z.boolean().optional(), cursor: text.max(16384).optional(), expectedGeneration: generation.optional() }),
 };

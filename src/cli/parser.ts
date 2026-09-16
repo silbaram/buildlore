@@ -168,8 +168,8 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
   command(['wiki', 'packet'], 'wiki.packet', 'wiki.packet', ['--project'], ['--project'], [], {}, '--project'),
   command(['wiki', 'memory'], 'wiki.memory', 'wiki.memory', ['--project', '--task', '--max-bytes', '--cursor'], ['--project'], ['--progressive'], {}, '--project'),
   command(['wiki', 'lookup'], 'wiki.lookup', 'wiki.lookup',
-    ['--project', '--kind', '--id', '--expect-generation'],
-    ['--project', '--kind', '--id', '--expect-generation'], [], {}, '--project'),
+    ['--project', '--kind', '--id', '--ids', '--expect-generation', '--max-bytes'],
+    ['--project', '--kind', '--expect-generation'], [], {}, '--project'),
   command(
     ['wiki', 'citations'],
     'wiki.citations',
@@ -650,8 +650,14 @@ function validateWikiOptions(
     throw new CliUsageError('CLI_ARGUMENT_INVALID');
   }
   if (commandId === 'wiki.lookup') {
+    const id = values['--id'], ids = values['--ids'], budget = values['--max-bytes'];
+    const hashes = typeof ids === 'string' ? ids.split(',') : [id];
     if (!['evidence', 'fact'].includes(String(values['--kind'])) ||
-        ['--id', '--expect-generation'].some(option => typeof values[option] !== 'string' ||
+        (id === undefined) === (ids === undefined) || hashes.length < 1 || hashes.length > 16 ||
+        hashes.some(value => typeof value !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(value)) ||
+        budget !== undefined && (ids === undefined || typeof budget !== 'string' || !/^\d+$/u.test(budget) ||
+          !Number.isSafeInteger(Number(budget)) || Number(budget) < 2048 || Number(budget) > 65536) ||
+        ['--expect-generation'].some(option => typeof values[option] !== 'string' ||
           !/^sha256:[a-f0-9]{64}$/u.test(String(values[option])))) throw new CliUsageError('CLI_ARGUMENT_INVALID');
     return;
   }
