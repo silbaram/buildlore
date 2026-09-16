@@ -1529,3 +1529,21 @@ Use the returned generation for a page read and its evidence lookup. If the Node
 For removal, first preview/apply `client remove` for each configured client, then disconnect the intended source checkout(s), and finally run `npm uninstall --prefix "$HOME/.local/buildlore" buildlore`. Knowledge repositories, source documents, other clients' settings and unrelated worktree bindings remain. If you removed the program first, reinstall the same version to perform client cleanup. If the hub moved first, restore its mapping before removing client settings.
 
 Developers can run `npx --yes --package=npm@11.19.0 --call 'node scripts/verify-m3.mjs'` with `bwrap` and `strace` available. It preserves tarballs, hashes, timing/size measurements and results in a local evidence directory. It exercises 0.1.0 → candidate → 0.1.0 → candidate and removal in a disposable installation, including isolated CLI/MCP reads and settings preservation. Measurements describe the actual cache conditions of one Linux run, not a cold-install guarantee. M3 does not invoke AI clients: paid Claude testing is excluded by user decision and remains unverified, while its integration and original M2 test path remain available for later testing.
+
+### Reusing support and batching missing evidence
+
+Start with progressive memory, then check which reasons, compatibility conditions and verification claims still lack support. A listed ID, an inspected excerpt and sufficient support are different things. Reuse a source range already read only when it is bound to the current project, generation and source digest. Cite that source location; do not claim canonical evidence was inspected unless it was. Read additional page context or canonical relationships when needed, and preserve unknowns.
+
+The existing single-ID lookup is unchanged. For missing IDs of the same kind, use:
+
+```sh
+buildlore wiki lookup --kind evidence --ids <digest-1>,<digest-2> --expect-generation <generation-digest> --max-bytes 32768 --json
+```
+
+Add `--project <id>` in the hub. MCP `lookup` accepts `ids: [digest1, digest2]` instead of `id`; the SDK provides `reader.lookupBatch(projectId, expectedGeneration, kind, ids, { maxBytes })`.
+
+A batch accepts 1–16 IDs (counted before deduplication), returns exact duplicates once in first-seen order, and retains each complete single-lookup result. The default data budget is 32768 bytes, with an allowed range of 2048–65536. `budget.usedBytes` counts compact UTF-8 JSON including the final newline; CLI/MCP framing is additional. `LOOKUP_BATCH_TOO_LARGE` means split the batch or use single lookup. Invalid or missing IDs, security failures and generation changes fail the entire request without partial items. `id` and `ids` are mutually exclusive; `maxBytes` applies only to batches.
+
+Carry `expectedGeneration` on follow-ups. Discard prior read bindings when the generation or connection changes. Check the final explanation once for missing support. This is a caller procedure; BuildLore does not run an automatic reasoning loop or store a persistent read history.
+
+For local profiling, `ReadServiceHooks.observer`, reader options `observer`, and `CliRuntime.readObserver` accept an optional synchronous callback. It receives only `{ phase, durationMs, count }`, never queries, IDs, paths or source text. Phase durations are inclusive, so do not sum nested intervals as exclusive work. Profiling is off by default and does not change response schemas or send telemetry.

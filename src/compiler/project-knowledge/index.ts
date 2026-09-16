@@ -38,6 +38,7 @@ export { preparePlannedKnowledgeSession, preparePlannedKnowledgeCompletenessSess
 export { createAnswerEvaluationContract, createReaderAnswerEvaluationContract, createCliReaderAnswerEvaluationContract, createPacketAnswerEvaluationContract,
   parseAnswerEvaluationContract } from './answer-evaluation-contract.js';
 export type { KnowledgeReaderPageV1, KnowledgeReaderLookupV1 } from './reader-surface.js';
+export { knowledgeReaderLookupBatch, LookupBatchError, type KnowledgeReaderLookupBatchV1, type LookupBatchOptions } from './lookup-batch.js';
 export { createAnswerEvaluation, createAnswerEvaluationWithHistory, parseAnswerEvaluationWithHistory, parseAnswerEvaluation } from './answer-evaluation.js';
 export { createKnowledgeAnswerEvaluationService } from './answer-evaluation-service.js';
 export type { KnowledgeAnswerEvaluationSessionV1, KnowledgeAnswerEvaluationInput, KnowledgeAnswerContextInspectionV1 } from './answer-evaluation-service.js';

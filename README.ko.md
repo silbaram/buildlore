@@ -1418,3 +1418,21 @@ buildlore wiki list --json
 제거할 때는 설정한 클라이언트마다 `client remove`를 먼저 미리보기·적용하고, 원하는 소스 checkout을 disconnect한 뒤 `npm uninstall --prefix "$HOME/.local/buildlore" buildlore`를 실행합니다. 지식 저장소·소스 문서·다른 클라이언트 설정·다른 worktree 연결은 남습니다. 프로그램을 먼저 제거했다면 같은 버전을 재설치해 설정 제거를 진행합니다. 허브를 먼저 옮겼다면 경로 복구 후 클라이언트 설정을 제거합니다.
 
 개발 검증은 `bwrap`과 `strace`가 준비된 환경에서 `npx --yes --package=npm@11.19.0 --call 'node scripts/verify-m3.mjs'`로 실행합니다. 폐기 가능한 설치에서 0.1.0 → 후보 → 0.1.0 → 후보 → 제거와 CLI/MCP 격리 조회·설정 보존을 검사하고, tarball·해시·설치 시간/용량·결과를 로컬 증거 디렉터리에 보관합니다. 측정은 해당 npm 캐시 조건의 Linux 단일 실행이며 빈 캐시 설치 성능을 보장하지 않습니다. M3 검증은 AI 클라이언트를 호출하지 않습니다. Claude 유료 실사용은 사용자 결정으로 제외·미검증이며, 연동 기능과 기존 M2 테스트 경로는 차후 실행할 수 있도록 유지합니다.
+
+### 읽은 근거 재사용과 부족한 근거 묶음 조회
+
+Progressive memory부터 읽고 변경 이유·호환 조건·검증 설명 중 지원이 부족한 부분을 확인합니다. ID가 나왔다는 사실, 실제 원문을 읽었다는 사실, 해당 원문이 결론을 충분히 뒷받침한다는 판단은 서로 다릅니다. 이미 읽은 원문 구간은 현재 프로젝트·generation·source digest에 결속할 수 있을 때 재사용합니다. 원문만 읽었다면 원문 위치를 인용하고, 읽지 않은 canonical evidence를 확인했다고 말하지 않습니다. 추가 문맥이나 정식 fact 관계가 필요하면 조회하며, 확인되지 않은 내용은 unknown으로 남깁니다.
+
+기존 단일 ID 조회는 그대로 사용합니다. 같은 종류의 부족한 근거는 묶어서 조회할 수 있습니다.
+
+```sh
+buildlore wiki lookup --kind evidence --ids <digest-1>,<digest-2> --expect-generation <generation-digest> --max-bytes 32768 --json
+```
+
+허브에서는 `--project <id>`를 추가합니다. MCP `lookup`은 `id` 대신 `ids: [digest1, digest2]`를 받습니다. SDK는 `reader.lookupBatch(projectId, expectedGeneration, kind, ids, { maxBytes })`입니다.
+
+묶음은 중복 제거 전 1~16개 ID를 받으며, 같은 ID는 최초 순서대로 한 번만 반환합니다. 각 항목의 원문과 결과는 단일 조회와 같습니다. 기본 data 예산은 32768바이트, 허용 범위는 2048~65536입니다. `budget.usedBytes`는 끝 개행을 포함한 compact UTF-8 JSON 크기이며 CLI·MCP 포장 비용은 별도입니다. `LOOKUP_BATCH_TOO_LARGE`이면 묶음을 나누거나 단일 조회를 사용합니다. 잘못되거나 없는 ID, 보안 실패, generation 변경은 전체 오류이며 일부 항목만 반환하지 않습니다. `id`와 `ids`는 함께 지정할 수 없고 `maxBytes`는 묶음에만 적용됩니다.
+
+후속 조회에 `expectedGeneration`을 전달하고 generation·연결이 바뀌면 이전 읽기 결속을 폐기합니다. 최종 설명의 부족한 지원을 한 차례 점검합니다. 이는 호출자가 따르는 절차이며 BuildLore가 자동 추론 루프나 영구 읽기 이력을 운영하지 않습니다.
+
+로컬 비용 측정에는 선택적 동기 callback인 `ReadServiceHooks.observer`, reader 옵션 `observer`, `CliRuntime.readObserver`를 사용할 수 있습니다. `{ phase, durationMs, count }`만 전달하며 query·ID·경로·원문은 전달하지 않습니다. 중첩 단계 시간은 포함 관계이므로 독립 작업 시간처럼 합산하지 않습니다. 기본값은 측정 비활성이며 응답 schema나 외부 telemetry를 추가하지 않습니다.

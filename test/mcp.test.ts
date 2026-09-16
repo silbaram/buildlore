@@ -1,4 +1,5 @@
 import { runCli } from '../src/cli/run-cli.js';
+import { LookupBatchError } from '../src/compiler/project-knowledge/lookup-batch.js';
 import { PassThrough, Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { createProjectMcpServer, type ReadPorts } from '../src/mcp/server.js';
@@ -49,6 +50,14 @@ function result(message: Record<string, unknown>): Record<string, unknown> {
   const v = message.result; if (typeof v !== 'object' || v === null) throw new Error('Missing result'); return v as Record<string, unknown>;
 }
 describe('project-bound MCP', () => {
+  it('returns safe batch size metadata without partial items', async () => {
+    const s = await start({ status: () => Promise.resolve({}), read: () => Promise.reject(new LookupBatchError(70000, 32768)) });
+    try {
+      const id = 'sha256:' + 'a'.repeat(64);
+      expect(result(await s.request('tools/call', { name: 'lookup', arguments: { kind: 'fact', ids: [id], expectedGeneration: id } })))
+        .toMatchObject({ isError: true, structuredContent: { data: { requiredBytes: 70000, maxBytes: 32768 }, errors: [{ code: 'LOOKUP_BATCH_TOO_LARGE' }] } });
+    } finally { await s.stop(); }
+  }, 30000);
   it('handshakes, exposes only read tools, preserves data and generation, and exits on EOF', async () => {
     const s = await start();
     try {
@@ -130,6 +139,7 @@ it('matches CLI envelopes for every successful read operation and status', async
       ['read', { page: 'overview', expectedGeneration: generation }, ['wiki', 'read', '--page', 'overview', '--expect-generation', generation]],
       ['citations', { page: 'overview', expectedGeneration: generation }, ['wiki', 'citations', '--page', 'overview', '--expect-generation', generation]],
       ['lookup', { kind: 'evidence', id, expectedGeneration: generation }, ['wiki', 'lookup', '--kind', 'evidence', '--id', id ?? '', '--expect-generation', generation]],
+      ['lookup', { kind: 'evidence', ids: [id, id], expectedGeneration: generation }, ['wiki', 'lookup', '--kind', 'evidence', '--ids', [id, id].join(','), '--expect-generation', generation]],
     ];
     for (const [name, arguments_, args] of cases) {
       let text = '';
@@ -138,6 +148,12 @@ it('matches CLI envelopes for every successful read operation and status', async
       const cli: unknown = JSON.parse(text);
       expect(result(await s.request('tools/call', { name, arguments: arguments_ })).structuredContent).toEqual(cli);
     }
+    const missing = 'sha256:' + 'f'.repeat(64);
+    const rejected = result(await s.request('tools/call', { name: 'lookup', arguments: {
+      kind: 'evidence', ids: [id, missing], expectedGeneration: generation,
+    } }));
+    expect(rejected).toMatchObject({ isError: true, structuredContent: { data: null, errors: [{ code: 'KNOWLEDGE_INVALID' }] } });
+    expect(JSON.stringify(rejected)).not.toContain(missing);
   } finally { await s.stop(); }
 }, 30000);
 it('returns a fixed parse error and closes on a malformed frame', async () => {

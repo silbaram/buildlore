@@ -1,3 +1,6 @@
+import { knowledgeReaderLookupBatch, validateLookupBatch, type KnowledgeReaderLookupBatchV1, type LookupBatchOptions } from '../compiler/project-knowledge/lookup-batch.js';
+import { measureRead, type ReadObserver } from './read-observer.js';
+import { assertReadActive } from '../application/read-cancellation.js';
 import { knowledgeProgressiveMemory, validateProgressiveMemoryRequest, type KnowledgeProgressiveMemoryV1, type ProgressiveMemoryRequest } from '../compiler/project-knowledge/progressive-memory.js';
 import { knowledgeTaskMemory, validateTaskMemoryRequest, type KnowledgeTaskMemoryV1, type TaskMemoryRequest } from '../compiler/project-knowledge/task-memory.js';
 import { knowledgeReaderPacket, type KnowledgeReaderPacketV1 } from '../compiler/project-knowledge/reader-packet.js';
@@ -47,6 +50,7 @@ export interface KnowledgeWikiReader {
   readTaskMemory(projectId: string, request: TaskMemoryRequest): Promise<KnowledgeTaskMemoryV1 | null>;
   readContext(projectId: string, pageRef: string): Promise<KnowledgeReaderPageV1 | null>;
   lookup(projectId: string, expectedGeneration: KnowledgeDigest, kind: 'evidence' | 'fact', id: KnowledgeDigest): Promise<KnowledgeReaderLookupV1>;
+  lookupBatch(projectId: string, expectedGeneration: KnowledgeDigest, kind: 'evidence' | 'fact', ids: readonly KnowledgeDigest[], options?: LookupBatchOptions): Promise<KnowledgeReaderLookupBatchV1>;
   citations(projectId: string, pageRef: string): Promise<Readonly<Record<string, unknown>> | null>;
   search(projectId: string, query: string, mode: 'lexical' | 'hybrid' | 'semantic' | 'graph', intent?: LocalWikiRetrievalIntent): Promise<Readonly<Record<string, unknown>> | null>;
   evidence(projectId: string, generationDigest: KnowledgeDigest, evidenceId: KnowledgeDigest): Promise<KnowledgeEvidenceV1>;
@@ -54,6 +58,7 @@ export interface KnowledgeWikiReader {
 }
 
 export interface CreateKnowledgeWikiReaderOptions {
+  readonly observer?: ReadObserver;
   /** Defaults to the parent of the Mode A knowledge checkout. */
   readonly hubRoot?: string;
   readonly provider?: EmbeddingProviderPort;
@@ -76,7 +81,7 @@ export function createKnowledgeWikiReader(knowledgeRoot: string,
 export async function openKnowledgeReadSession(knowledgeRoot: string, projectId: string,
   options: CreateKnowledgeWikiReaderOptions = {},
 ): Promise<Readonly<{ publication: ApprovedWikiPublicationSnapshotV1; reader: KnowledgeWikiReader; generationDigest: KnowledgeDigest | null }> | null> {
-  const publication = await createApprovedWikiPublicationReader(knowledgeRoot).read(projectId);
+  const publication = await measureRead(options.observer, 'publication', () => createApprovedWikiPublicationReader(knowledgeRoot).read(projectId));
   if (!publication) return null;
   const extension = publication.authority.knowledgeGeneration;
   return Object.freeze({ publication,
@@ -100,21 +105,25 @@ function createReader(knowledgeRoot: string, options: CreateKnowledgeWikiReaderO
   };
   const load = async (projectId: string) => {
     if (selected && selected.projectId !== projectId) invalid();
-    const publication = selected ? selected.publication : await publications.read(projectId).catch(() => invalid());
+    assertReadActive();
+    const publication = selected ? selected.publication : await measureRead(options.observer, 'publication', () => publications.read(projectId).catch(() => invalid()));
     if (publication === null) return null;
     const extension = publication.authority.knowledgeGeneration;
     if (!extension) return null;
     const generation = latestKnowledgeGeneration(extension);
-    const policy = await readSecurityPolicy(knowledgeRoot, projectId);
+    const policy = await measureRead(options.observer, 'policy', () => readSecurityPolicy(knowledgeRoot, projectId));
     if (!generation || generation.snapshot.sanitizerPolicyDigest !== policy.digest) invalid();
     // Re-screen only the materialized retrieval surface. The immutable generation
     // also carries the complete sanitized source snapshot for lineage checks; when
     // serialized as one wiki document, benign security-rule source fragments can
     // combine into prompt-injection false positives even though none are exposed by
     // the reader. Activation applies the same per-file boundary before persistence.
-    for (const file of renderKnowledgeFiles(generation)) {
-      await screen(projectId, `buildlore-hierarchy/${file.path}`, file.body, policy.digest);
-    }
+    await measureRead(options.observer, 'materialized-screen', async () => {
+      for (const file of renderKnowledgeFiles(generation)) {
+        assertReadActive();
+        await screen(projectId, `buildlore-hierarchy/${file.path}`, file.body, policy.digest);
+      }
+    });
     return { publication, extension, generation, policy };
   };
   const loadExpectedGeneration = async (projectId: string, expectedGeneration: KnowledgeDigest) => {
@@ -176,8 +185,26 @@ function createReader(knowledgeRoot: string, options: CreateKnowledgeWikiReaderO
     },
     async lookup(projectId, expectedGeneration, kind, id) {
       const loaded = await loadExpectedGeneration(projectId, expectedGeneration);
-      const result = knowledgeReaderLookup(loaded.generation, kind, id);
-      await screen(projectId, 'buildlore-hierarchy/reader-lookup.json', JSON.stringify(result), loaded.policy.digest);
+      const result = await measureRead(options.observer, 'lookup-project', () => Promise.resolve(knowledgeReaderLookup(loaded.generation, kind, id)));
+      await measureRead(options.observer, 'response-screen', () => screen(projectId, 'buildlore-hierarchy/reader-lookup.json', JSON.stringify(result), loaded.policy.digest));
+      assertReadActive();
+      return result;
+    },
+    async lookupBatch(projectId, expectedGeneration, kind, ids, batchOptions = {}) {
+      const validated = validateLookupBatch(kind, ids, batchOptions);
+      const inputIds = Object.freeze([...ids]);
+      const loaded = await loadExpectedGeneration(projectId, expectedGeneration);
+      assertReadActive();
+      const result = await measureRead(options.observer, 'lookup-project', () => Promise.resolve(
+        knowledgeReaderLookupBatch(loaded.generation, kind, inputIds, { maxBytes: validated.maxBytes })), inputIds.length);
+      await measureRead(options.observer, 'response-screen', async () => {
+        for (const item of result.items) {
+          assertReadActive();
+          await screen(projectId, 'buildlore-hierarchy/reader-lookup.json', JSON.stringify(item.result), loaded.policy.digest);
+        }
+        await screen(projectId, 'buildlore-hierarchy/reader-lookup-batch.json', JSON.stringify(result), loaded.policy.digest);
+      }, result.uniqueCount);
+      assertReadActive();
       return result;
     },
     async list(projectId, options = {}) {
