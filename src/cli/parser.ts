@@ -54,8 +54,10 @@ const LOCAL_MODEL_PROFILE_ID = 'multilingual-e5-small';
 export const CONNECTED_READ_COMMANDS: readonly CliCommandId[] = ['wiki.list', 'wiki.read', 'wiki.memory', 'wiki.lookup', 'wiki.citations', 'search'];
 
 const COMMAND_SPECS: readonly CommandSpec[] = [
+  command(['workspace', 'guide'], 'workspace.guide', 'workspace.guide', ['--project'], [], [], {}, '--project'),
+  command(['workspace', 'init'], 'workspace.init', 'workspace.init', ['--knowledge-repo']),
   command(['setup'], 'setup', 'setup', ['--hub', '--knowledge-repo'], ['--hub', '--knowledge-repo']),
-  command(['connect'], 'connect', 'connect', ['--hub', '--project', '--source-repo'], ['--hub', '--project'], [], {}, '--project'),
+  command(['connect'], 'connect', 'connect', ['--hub', '--workspace', '--project', '--source-repo'], ['--project'], [], {}, '--project'),
   command(['disconnect'], 'disconnect', 'disconnect', [], [], ['--remove-shared']),
   command(['connection', 'status'], 'connection.status', 'connection.status', ['--project'], [], [], {}, '--project'),
   command(['connection', 'relocate-hub'], 'connection.relocate-hub', 'connection.relocate-hub', ['--from', '--to', '--knowledge-repo', '--expect-plan'], ['--from', '--to', '--knowledge-repo'], ['--apply']),

@@ -60,7 +60,7 @@ export function createProjectMcpServer(context: ConnectionContext, signal: Abort
         const data = read ? read.data : await api.status(context);
         controller.signal.throwIfAborted();
         if (!read && typeof data === 'object' && data !== null && 'readable' in data && data.readable === false) {
-          throw new ConnectionError('pin' in data && data.pin !== 'matched' ? 'KNOWLEDGE_PIN_MISMATCH' :
+          throw new ConnectionError('pin' in data && data.pin !== 'matched' && data.pin !== 'not_applicable' ? 'KNOWLEDGE_PIN_MISMATCH' :
             'approval' in data && data.approval === 'invalid' ? 'KNOWLEDGE_INVALID' : 'APPROVAL_MISSING');
         }
         const envelope = normalizedEnvelope({ ...successResult({ command, projectId: context.projectId }, data),

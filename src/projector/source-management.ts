@@ -140,6 +140,7 @@ export interface SourceManagementPort {
 }
 
 export interface CreateSourceManagementOptions {
+  readonly knowledgeRoot?: string;
   readonly collectionAdapter?: SourceCollectionAdapter;
   readonly hubRoot: string;
   readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
@@ -695,7 +696,7 @@ async function storedDeclarationSources(
 export function createSourceManagement(
   options: CreateSourceManagementOptions,
 ): SourceManagementPort {
-  const knowledgeRoot = join(options.hubRoot, 'knowledge');
+  const knowledgeRoot = options.knowledgeRoot ?? join(options.hubRoot, 'knowledge');
   const collectionAdapter = options.collectionAdapter ?? createSourceCollectionAdapter({
     ...(options.jsonKnowledgeAdapters === undefined
       ? {}

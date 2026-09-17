@@ -1,3 +1,4 @@
+import type { WorkspaceGuide } from '../application/workspace-guide.js';
 import type { CliIo } from './run-cli.js';
 import {
   CLI_ENVELOPE_SCHEMA_VERSION,
@@ -63,6 +64,21 @@ function sessionPlanForDisplay(data: unknown): unknown {
 }
 
 function renderHuman(result: CliResult): string {
+  if (result.command === 'workspace.guide' && result.data && typeof result.data === 'object' &&
+      'schemaVersion' in result.data && result.data.schemaVersion === 'buildlore.workspace-guide.v1') {
+    const guide = result.data as WorkspaceGuide;
+    return [
+      `workspace guide: ${guide.overall} (${guide.mode})`,
+      ...guide.checks.map(check => `${check.id}: ${check.state} (${check.reasonCode})`),
+      ...guide.nextActions.flatMap(action => [
+        `Next, in the ${action.location} checkout: ${action.instruction}`,
+        ...(action.argv ? [`Command template: buildlore ${action.argv.join(' ')}`] : []),
+        ...(action.skill ? [`Packaged skill: node_modules/buildlore/${action.skill}`] : []),
+        ...(action.requiredInputs.length ? [`Supply: ${action.requiredInputs.join(', ')}`] : []),
+      ]),
+      'Client registration, AI quality and embeddings are not checked.', '',
+    ].join('\n');
+  }
   if (!result.ok) {
     const lines = [`${result.command}: failed`];
     const outcome = outcomeForDisplay(result.data);

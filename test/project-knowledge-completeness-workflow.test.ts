@@ -15,8 +15,8 @@ import { writeSecurityPolicy } from './fixtures/security-policy.js';
 
 const fixtures: KnowledgeWorkflowFixture[] = [];
 afterEach(async () => { await Promise.all(fixtures.splice(0).map(f => f.cleanup())); });
-async function setup() {
-  const f = await createKnowledgeWorkflowFixture('generic-md-json'); fixtures.push(f);
+async function setup(directWorkspace = false) {
+  const f = await createKnowledgeWorkflowFixture('generic-md-json', { directWorkspace }); fixtures.push(f);
   await writeSecurityPolicy(f.knowledgeRoot, f.projectId, { capabilities: ['compile'] });
   expect(await f.cli(['sync', '--project', f.projectId])).toMatchObject({ exitCode: 0 });
   const purpose = { schemaVersion: 'buildlore.hierarchical-workflow-purpose-input.v4', projectId: f.projectId,
@@ -64,8 +64,8 @@ describe('opt-in completeness CLI persistence and recovery', () => {
     expect(await readFile(w.stored, 'utf8')).toBe(committed);
   }, 60_000);
 
-  it.each([false, true])('resumes every role stage, reviews and separate approval/activation (correction=%s)', async correction => {
-    const w = await setup(), { f, args, exchange } = w, data = completenessFixture(exchange, correction);
+  it.each([{ correction: false, directWorkspace: false }, { correction: true, directWorkspace: false }, { correction: false, directWorkspace: true }, { correction: true, directWorkspace: true }])('resumes every role stage, reviews and separate approval/activation ($correction, direct=$directWorkspace)', async ({ correction, directWorkspace }) => {
+    const w = await setup(directWorkspace), { f, args, exchange } = w, data = completenessFixture(exchange, correction);
     const readOriginal = await readFile(w.stored, 'utf8'), stamp = (await stat(w.stored)).mtimeMs;
     const before = await w.status('author');
     expect(await f.cli(['compile', 'hierarchy', 'review', ...args, '--role', 'author'])).toMatchObject({ exitCode: 0, data: before });

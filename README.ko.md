@@ -14,7 +14,7 @@ Git 기반 도구입니다. v0.1은 재사용 가능한 TypeScript CLI와 명확
 4. 검색 계층이 커밋된 지식 파일을 로컬 에이전트에 제공합니다.
 5. Git 검토와 이력이 협업 및 출처 추적의 기준으로 유지됩니다.
 
-각 소스 저장소는 코드와 이식 가능한 문서 선택 매니페스트를 소유합니다. 별도의
+각 소스 저장소는 코드와 이식 가능한 문서 선택 매니페스트를 소유합니다. 기존 Mode A의 별도
 BuildLore 허브는 `knowledge/`에 Git 서브모듈로 연결된 하나의 지식 저장소와
 머신 로컬 소스 바인딩을 소유합니다. **Mode A**에서는 한 허브가 여러 독립 소스
 체크아웃을 연결하고, 각 컴파일러 작업공간을
@@ -26,13 +26,121 @@ BuildLore 허브는 `knowledge/`에 Git 서브모듈로 연결된 하나의 지�
 컴파일된 지식 산출물을 의미합니다. `project-id`는 입력과 출력을 연결하고
 격리하는 안정적인 키입니다.
 
-## 로컬 설치 및 실행
+## 권장: 지식 저장소에 npm 로컬 설치
+
+Node.js 24 이상, npm 11.19.0, Git이 필요합니다. 지식 저장소 하나에 여러 프로젝트를 보관하고 **그 저장소에 BuildLore 패키지를 설치**합니다. 제품 소스를 복사하거나 별도 허브를 만들지 않습니다.
+
+현재는 npm 레지스트리 미게시 상태입니다. 배포용 `.tgz`를 받아 다음처럼 설치합니다. 게시 후에는 설치 줄을 `npm install buildlore`로 바꿀 수 있습니다. 소스에서 패키지를 만드는 것은 아래 개발자 절차입니다.
+
+```sh
+git clone <지식-저장소-URL> my-knowledge
+cd my-knowledge
+npm install --save-exact /path/to/buildlore-0.1.1-rc.1.tgz
+node node_modules/buildlore/dist/cli/bin.js workspace init --json
+```
+
+Git 원격이 없다면 초기화에 `--knowledge-repo <이식-가능한-저장소-ID>`를 명시합니다. 기존 허브나 소스 프로젝트를 지식 저장소로 자동 변환하지 않습니다.
+
+```text
+my-knowledge/
+  package.json                  # Git으로 관리
+  package-lock.json             # Git으로 관리; 다른 PC에 .tgz도 별도 전달
+  node_modules/                 # 로컬 설치 결과, Git 제외
+  .buildlore/workspace.json      # 저장소 모드와 이식 가능한 식별 정보
+  .buildlore/local-projects.json # 내 PC의 소스 경로, Git 제외
+  manifest.json
+  projects/<project-id>/
+```
+
+### 현재 상태와 다음 단계 확인
+
+지식 저장소에서 `node node_modules/buildlore/dist/cli/bin.js workspace guide --project my-project`를 실행하세요. 파일을 변경하지 않고 누락된 단계·실행 위치·필요한 입력을 안내합니다. 각 단계를 실행한 뒤 다시 조회하면 됩니다. `--json` 출력 계약은 `buildlore.workspace-guide.v1`입니다. 프로젝트는 하나여도 자동 선택하지 않습니다.
+
+`ready`는 확인한 로컬 Wiki와 연결 상태를 뜻합니다. AI 클라이언트 등록, AI 작성 품질, 임베딩 준비는 별도 확인이 필요합니다. `blocked`는 손상·경로 문제를 뜻하며, 승인 기록을 임의로 재작성하지 말고 신뢰하는 Git 기록에서 복구하세요. 소스 프로젝트의 연결 문제는 그 폴더에서 `doctor` 또는 `connection status`로 확인합니다.
+
+### 프로젝트 등록 → Wiki 생성 → MCP 조회
+
+1. 소스 프로젝트에 `.buildlore/sources.json`을 작성하여 읽을 자료를 명시합니다. 아래 식별 정보로 시작한 뒤, 등록 후 CLI로 자료를 추가합니다. JSON은 아래 키 순서·두 칸 들여쓰기·마지막 줄바꿈을 유지해 저장하세요. `projectId`와 `sourceRepository`는 등록할 값과 일치해야 합니다.
+
+```json
+{
+  "projectId": "my-project",
+  "schemaVersion": "buildlore.sources.v2",
+  "sourceRepository": "https://example.org/team/my-project.git",
+  "sources": []
+}
+```
+
+2. **지식 저장소 폴더에서** 등록과 Wiki 작업을 수행합니다.
+
+```sh
+node node_modules/buildlore/dist/cli/bin.js project add --id my-project --source-repo https://example.org/team/my-project.git --source-root /work/my-project --json
+node node_modules/buildlore/dist/cli/bin.js source add --project my-project --id docs --kind markdown --path docs --recursive --json
+
+```
+
+새 프로젝트의 보안 정책은 기본적으로 외부 컴파일을 허용하지 않습니다. 먼저 `projects/my-project/security-policy.json`의 분류·허용 범위를 아래 보안 정책 절차에 따라 검토하세요. `sync --dry-run`으로 선택 자료와 차단 사유를 확인하며, 오류를 피하려고 비밀정보 탐지를 끄지 않습니다.
+
+```sh
+node node_modules/buildlore/dist/cli/bin.js sync --project my-project --dry-run --json
+node node_modules/buildlore/dist/cli/bin.js sync --project my-project --json
+```
+
+Wiki 작성에는 패키지의 `skills/buildlore-authoring/SKILL.md`, 승인·활성화에는 `skills/buildlore-activation/SKILL.md`를 사용합니다. AI에게 `node_modules/buildlore/skills/…/SKILL.md`를 읽도록 지정하거나 해당 클라이언트의 **지식 저장소 로컬 스킬 폴더**에 복사할 수 있습니다. 전역 스킬 설치는 필수가 아닙니다. 작성·검토 뒤 사용자가 승인한 세대를 활성화해야 MCP로 읽을 수 있습니다. 자동으로 승인을 대신하지 않습니다.
+
+3. **소스 프로젝트 폴더에서** 지식 저장소에 설치된 CLI로 연결합니다. 비어 있던 지식 저장소라면, 생성된 초기 설정·레지스트리·npm 메타데이터를 먼저 검토하고 커밋하여 `HEAD`를 만드세요. 연결에는 지식 저장소의 실제 Git 커밋이 필요합니다.
+
+```sh
+cd /work/my-project
+node /work/my-knowledge/node_modules/buildlore/dist/cli/bin.js connect --workspace /work/my-knowledge --project my-project --json
+node /work/my-knowledge/node_modules/buildlore/dist/cli/bin.js client configure --client codex --project-dir /work/my-project --json
+# 미리보기 결과를 확인한 뒤, 반환된 planDigest로 적용
+node /work/my-knowledge/node_modules/buildlore/dist/cli/bin.js client configure --client codex --project-dir /work/my-project --apply --expect-plan <planDigest> --json
+```
+
+위 전체 작성 흐름은 Linux에서 검증합니다. Windows에서는 경로·연결·동기화 검증을 수행했지만, 문서 작성 상태 저장의 POSIX 전용 파일 권한 검사로 `HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED`가 발생합니다. 따라서 Windows의 전체 작성 흐름은 아직 지원 검증을 통과하지 못했습니다. Windows CLI는 `node .../bin.js`로 실행하며 실제 드라이브 경로와 공백 경로의 따옴표를 사용합니다. MCP는 연결한 프로젝트의 승인된 지식만 읽습니다. 소스 프로젝트마다 BuildLore를 다시 설치하지 않습니다.
+
+프로젝트 지식을 publish하기 전에 초기 설정과 npm 메타데이터(`.gitignore`, `.buildlore/workspace.json`, `package.json`, `package-lock.json`)를 별도 커밋하세요. 루트 파일이 변경된 상태에서는 publish를 중단하며, npm 파일을 Wiki 콘텐츠로 선택하지 않습니다.
+
+활성화한 Wiki는 검증된 승인 기록에서 게시 이력을 계산하며, 새 복제본에서 복원하는 데 필요한 불변 이력 파일도 함께 커밋합니다. 모델 정보는 작성자가 선언한 정보이며 실제 제공자 호출을 증명하지 않습니다. 프롬프트 식별자는 기록된 작성 요청에 연결됩니다. 승인된 문서 게시에는 임베딩 제공자 설정이 필요하지 않습니다. 소스 저장소의 detached HEAD도 지원하지만 지식 저장소에는 게시 브랜치가 필요합니다. 초기화는 로컬 npm·실행 파일의 Git 제외 규칙이 실제 적용되도록 보완하며, 이미 추적 중인 파일이 있으면 중단합니다. 사용자 파일의 추적을 임의로 해제하지 않습니다.
+
+새 방식은 지식 저장소 자체의 커밋·생성 버전·승인 기록을 추적합니다. 상위 허브가 없으므로 상위 Git 커밋 고정(`knowledge pin`)은 `not_applicable`이며, 기존 허브의 pin 보장과 동일하지 않습니다. 기존 `setup --hub`, `connect --hub`와 submodule 방식은 계속 지원합니다. 이전은 자동 실행하지 않습니다.
+
+개발 검증: `npm run verify:installed-workspace`는 만든 패키지를 임시 지식 저장소에 로컬 설치해 Wiki 작성·승인·활성화·게시 커밋과 두 프로젝트 MCP 조회를 실행합니다. Linux에서는 제품 소스를 숨기고 MCP의 쓰기·네트워크를 막습니다. 고정 데이터로 프로토콜을 검증하며 유료 AI의 작성 품질 평가를 의미하지 않습니다.
+
+### 새 PC 또는 새 복제본에서 복원
+
+로컬 `.tgz` 설치는 파일 경로를 npm 메타데이터에 저장합니다. Git clone만 하고 `npm ci`를 실행해도 원래 `.tgz` 경로가 없으면 설치되지 않습니다. **동일한 배포 파일을 별도로 전달**하고 전달받은 경로로 다시 설치하세요.
+
+```sh
+cd /new/my-knowledge
+npm install --save-exact /new/downloads/buildlore-0.1.1-rc.1.tgz
+node node_modules/buildlore/dist/cli/bin.js workspace guide --project my-project
+node node_modules/buildlore/dist/cli/bin.js workspace init --json
+node node_modules/buildlore/dist/cli/bin.js project bind --project my-project --source-root /new/my-project --json
+cd /new/my-project
+node /new/my-knowledge/node_modules/buildlore/dist/cli/bin.js connect --workspace /new/my-knowledge --project my-project --json
+node /new/my-knowledge/node_modules/buildlore/dist/cli/bin.js doctor --json
+```
+
+소스 저장소와 `.buildlore/sources.json`도 새 PC에 준비해야 합니다. 복제본의 Git origin은 workspace에 기록된 지식 저장소를 가리켜야 합니다. `workspace init` 재실행은 Git이 보존하지 않는 로컬 폴더 권한·바인딩 저장소를 준비하며, 기존 Wiki나 승인 기록을 교체하지 않습니다. 프로젝트마다 bind/connect를 반복하고, AI 클라이언트 설정도 새 경로로 미리보기 후 적용하세요. 재설치로 바뀐 npm 메타데이터는 검토해 별도 커밋합니다.
+
+### 메인테이너: 로컬 배포와 마지막 npm 준비
+
+1. Node 24+와 npm **11.19.0**에서 build/test/lint/typecheck 및 `npm run verify:installed-workspace`를 통과시킵니다. Linux 검증은 `bwrap`이 필요하며, 없으면 실패로 기록합니다.
+2. `npm pack --json --pack-destination <배포폴더>`로 `.tgz`와 파일 목록·용량·integrity를 확인합니다. 같은 파일의 `sha256sum <파일.tgz>`도 전달합니다. `.tgz`에는 실행 코드·공개 스키마·작성/활성화 스킬이 들어가며 제품 소스·테스트·사용자 지식·로컬 상태는 제외합니다.
+3. 현재 `private: true`를 유지합니다. 향후 npm 게시 직전에 패키지 이름 사용 가능 여부·버전·라이선스·게시 파일·계정 권한을 확인하고, 별도 게시 승인 후에만 공개 설정을 바꿉니다. 이 절차는 npm 게시를 실행하지 않습니다.
+
+설치 검증은 두 프로젝트의 CLI 초기 등록·자료 선언·작성·검토·명시적 테스트 승인·활성화·게시, 새 clone 재설치와 MCP 검색/읽기·격리를 확인합니다. 원래 `.tgz`를 제거하고 새 경로로 전달한 동일 파일을 사용합니다. 실제 AI 작성 품질이나 실제 클라이언트 대화 검증은 아니며, Windows OS 검증은 후속 작업입니다.
+
+## 제품 개발 및 기존 허브 방식
+
 
 - Node.js 24 이상(Node.js 24 LTS가 기준 런타임)
 - npm 11(저장소에 선언된 정확한 버전은 `npm@11.19.0`)
 - Git과 기존 지식 저장소에 대한 접근 권한
 
-새로 복제한 저장소에서 다음을 실행합니다.
+다음은 제품 개발 체크아웃에서 패키지를 빌드하는 절차입니다. 사용자 설치는 위의 지식 저장소 로컬 설치를 사용합니다.
 
 ```sh
 npm ci --ignore-scripts

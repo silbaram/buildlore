@@ -4,6 +4,9 @@ Usage:
   buildlore --version
   buildlore mcp --project-dir <absolute-source-root> --read-only
   buildlore client configure|remove --client codex|claude-code --project-dir <absolute-source-root> [--apply --expect-plan <digest>] [--json]
+  buildlore workspace guide [--project <id>] [--json]
+  buildlore workspace init [--knowledge-repo <portable-locator>] [--json]
+  buildlore connect --workspace <knowledge-repository-path> --project <id> [--source-repo <locator>] [--json]
   buildlore setup --hub <path> --knowledge-repo <portable-locator> [--json]
   buildlore connect --hub <path> --project <id> [--source-repo <locator>] [--json]
   buildlore disconnect [--remove-shared] [--json]

@@ -1,3 +1,5 @@
+import { inspectKnowledgeWorkspace } from '../knowledge/knowledge-workspace.js';
+import { sameRepository, containsPath } from '../knowledge/repository-paths.js';
 import { lstat, readdir, realpath, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { containsCredentialMaterial } from '../sanitizer/service.js';
@@ -24,7 +26,7 @@ export interface ConnectionHooks { readonly afterSharedWrite?: () => Promise<voi
 export interface HubInspection {
   readonly hub: HubBinding;
   readonly knowledgeRevision: string;
-  readonly pin: 'matched' | 'mismatched' | 'conflicted';
+  readonly pin: 'matched' | 'mismatched' | 'conflicted' | 'not_applicable';
   readonly dirty: 'clean' | 'dirty' | 'unknown';
 }
 // Only this module can issue capabilities. Neither paths nor mutable registry data serialize.
@@ -41,18 +43,28 @@ const connectionOutcomes = new WeakMap<ConnectionContext, 'created' | 'unchanged
 export function connectionOutcome(context: ConnectionContext): 'created' | 'unchanged' { return connectionOutcomes.get(context) ?? fail(); }
 export function connectionPaths(context: ConnectionContext): Readonly<{ hubRoot: string; knowledgeRoot: string; sourceRoot: string; knowledgeRevision: string; pin: HubInspection['pin']; dirty: HubInspection['dirty'] }> {
   const c = capabilities.get(context) ?? fail();
-  return { hubRoot: c.inspection.hub.hubRoot, knowledgeRoot: join(c.inspection.hub.hubRoot, 'knowledge'), sourceRoot: c.root,
+  return { hubRoot: c.inspection.hub.hubRoot, knowledgeRoot: bindingKnowledgeRoot(c.inspection.hub), sourceRoot: c.root,
     knowledgeRevision: c.inspection.knowledgeRevision, pin: c.inspection.pin, dirty: c.inspection.dirty };
+}
+function bindingKnowledgeRoot(hub: HubBinding): string {
+  return hub.mode === 'knowledge' ? hub.hubRoot : join(hub.hubRoot, 'knowledge');
+}
+async function inspectBinding(path: string, expected?: HubBinding, selectedProject?: string, direct = expected?.mode === 'knowledge'): Promise<HubInspection> {
+  if (!direct) return inspectHub(path, expected, selectedProject);
+  const root = resolve(path);
+  const marker = await inspectKnowledgeWorkspace(root);
+  const hub: HubBinding = { mode: 'knowledge', hubRoot: root, knowledgeRepository: marker.knowledgeRepository,
+    knowledgeRepositoryDigest: hash(marker.knowledgeRepository) };
+  if (expected && identityDigest(expected) !== identityDigest(hub)) fail('KNOWLEDGE_IDENTITY_MISMATCH');
+  const revision = (await gitRead(root, ['rev-parse', '--verify', 'HEAD^{commit}']))?.trim();
+  if (!revision || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(revision)) fail('KNOWLEDGE_INVALID');
+  const status = await gitRead(root, ['status', '--porcelain=v1', '--untracked-files=normal',
+    ...(selectedProject === undefined ? [] : ['--', `projects/${projectId(selectedProject)}`])]);
+  return { hub, knowledgeRevision: revision, pin: 'not_applicable', dirty: status?.trim() ? 'dirty' : 'clean' };
 }
 async function registry(config: string): Promise<{ data: ReadRegistry; digest: Digest | null }> {
   const f = await readConfig(join(config, 'connections.json'), MAX_REGISTRY);
   return { data: f ? parseRegistry(f.value) : emptyRegistry(), digest: f?.digest ?? null };
-}
-async function sameRepository(a: string, aRoot: string, b: string, bRoot: string): Promise<boolean> {
-  // A Git origin may be absolute for a local clone; it never becomes a public locator.
-  const remote = (v: string): boolean => /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(v) || /^(?:[^/@:]+@)?[^/:]+:/u.test(v);
-  if (remote(a) || remote(b)) return a === b;
-  try { return await realpath(resolve(aRoot, a)) === await realpath(resolve(bRoot, b)); } catch { return false; }
 }
 export async function inspectHub(path: string, expected?: HubBinding, selectedProject?: string, metadataOnly = false): Promise<HubInspection> {
   let root: string;
@@ -92,7 +104,7 @@ export async function inspectHub(path: string, expected?: HubBinding, selectedPr
   }
 }
 async function validateSource(root: string, hub: HubBinding, id: string, declared?: string): Promise<string> {
-  const project = await showProject(join(hub.hubRoot, 'knowledge'), id).catch(() => fail('PROJECT_MISMATCH'));
+  const project = await showProject(bindingKnowledgeRoot(hub), id).catch(() => fail('PROJECT_MISMATCH'));
   const repository = locator(project.entry.sourceRepository);
   const f = await readConfig(join(root, '.buildlore', 'sources.json'), 64 * 1024);
   if (f) {
@@ -117,8 +129,9 @@ export async function resolveConnection(cwd: string, options: ConnectionOptions 
   const shared = parseConnection(f.value);
   if (f.digest !== binding.connectionDigest || shared.projectId !== binding.projectId || shared.knowledgeRepositoryDigest !== binding.knowledgeRepositoryDigest) fail('CONNECTION_CONFLICT');
   const hub = r.data.hubs.find(h => h.knowledgeRepositoryDigest === binding.knowledgeRepositoryDigest) ?? fail('CONNECTION_INCOMPLETE');
-  const inspection = await inspectHub(hub.hubRoot, hub, binding.projectId);
-  const project = await showProject(join(hub.hubRoot, 'knowledge'), binding.projectId).catch(() => fail('PROJECT_MISMATCH'));
+  if (shared.mode !== hub.mode) fail('KNOWLEDGE_IDENTITY_MISMATCH');
+  const inspection = await inspectBinding(hub.hubRoot, hub, binding.projectId);
+  const project = await showProject(bindingKnowledgeRoot(hub), binding.projectId).catch(() => fail('PROJECT_MISMATCH'));
   const repository = await validateSource(root, hub, binding.projectId, project.entry.sourceRepository);
   if (hash(repository) !== binding.sourceRepositoryDigest || identityDigest(await sourceIdentity(root)) !== identityDigest(binding.sourceIdentity)) fail('SOURCE_IDENTITY_MISMATCH');
   const context = ConnectionContext.issue(issueToken, shared.projectId, shared.knowledgeRepositoryDigest, f.digest);
@@ -136,7 +149,7 @@ export async function assertConnectionCurrent(context: ConnectionContext): Promi
   return current;
 }
 async function saveRegistry(config: string, data: ReadRegistry, expected: Digest | null, validate?: () => Promise<void>): Promise<void> {
-  const normalized = parseRegistry({ ...data, hubs: [...data.hubs].sort((a, b) => a.knowledgeRepositoryDigest.localeCompare(b.knowledgeRepositoryDigest)),
+  const normalized = parseRegistry({ ...data, schemaVersion: data.schemaVersion === 'buildlore.read-connections.v2' || data.hubs.some(h => h.mode === 'knowledge') ? 'buildlore.read-connections.v2' : 'buildlore.read-connections.v1', hubs: [...data.hubs].sort((a, b) => a.knowledgeRepositoryDigest.localeCompare(b.knowledgeRepositoryDigest)),
     bindings: [...data.bindings].sort((a, b) => a.sourceRoot.localeCompare(b.sourceRoot)) });
   await replaceConfig(join(config, 'connections.json'), normalized, expected, MAX_REGISTRY, validate);
 }
@@ -176,18 +189,18 @@ export async function relocateHub(input: HubRelocationInput, options: Connection
     if (!old) fail('CONNECTION_MISSING');
     if (old.knowledgeRepository !== repository || (old.hubRoot !== from && old.hubRoot !== to)) fail('CONNECTION_CONFLICT');
     if (r.data.hubs.some(h => h.hubRoot === to && h.knowledgeRepositoryDigest !== repositoryDigest)) fail('CONNECTION_CONFLICT');
-    if (r.data.bindings.some(b => b.sourceRoot === to || b.sourceRoot.startsWith(to + '/') || to.startsWith(b.sourceRoot + '/'))) fail('READ_BOUNDARY_VIOLATION');
-    const inspected = await inspectHub(to, undefined, undefined, true);
+    if (r.data.bindings.some(b => containsPath(to, b.sourceRoot) || containsPath(b.sourceRoot, to))) fail('READ_BOUNDARY_VIOLATION');
+    const inspected = old.mode === 'knowledge' ? await inspectBinding(to, undefined, undefined, true) : await inspectHub(to, undefined, undefined, true);
     if (inspected.hub.hubRoot !== to) fail('READ_BOUNDARY_VIOLATION');
     if (inspected.hub.knowledgeRepository !== repository) fail('KNOWLEDGE_IDENTITY_MISMATCH');
-    if (inspected.pin !== 'matched') fail('KNOWLEDGE_PIN_MISMATCH');
-    const hubIdentity = await sourceIdentity(to), knowledgeIdentity = await sourceIdentity(join(to, 'knowledge'));
-    const identities = await Promise.all([hubIdentity.gitCommonDir, knowledgeIdentity.gitCommonDir, join(to, '.gitmodules')].map(async path => {
+    if (inspected.pin !== 'matched' && inspected.pin !== 'not_applicable') fail('KNOWLEDGE_PIN_MISMATCH');
+    const hubIdentity = await sourceIdentity(to), knowledgeIdentity = await sourceIdentity(bindingKnowledgeRoot(inspected.hub));
+    const identities = await Promise.all([hubIdentity.gitCommonDir, knowledgeIdentity.gitCommonDir, join(to, old.mode === 'knowledge' ? '.buildlore/workspace.json' : '.gitmodules')].map(async path => {
       const stat = await lstat(path, { bigint: true });
       if (stat.isSymbolicLink()) fail('READ_BOUNDARY_VIOLATION');
       return { device: String(stat.dev), inode: String(stat.ino), size: String(stat.size), modified: String(stat.mtimeNs) };
     }));
-    const modules = await gitRead(to, ['config', '--file', '.gitmodules', '--null', '--list']);
+    const modules = old.mode === 'knowledge' ? JSON.stringify(await inspectKnowledgeWorkspace(to)) : await gitRead(to, ['config', '--file', '.gitmodules', '--null', '--list']);
     const planDigest = valueDigest({ operation: 'relocate-hub', from, to, repository, registry: r.digest,
       hub: inspected, hubIdentity, knowledgeIdentity, identities, modulesDigest: hash(modules ?? '') });
     return { ...r, plan: { schemaVersion: 'buildlore.hub-relocation-plan.v1', knowledgeRepositoryDigest: repositoryDigest,
@@ -258,13 +271,16 @@ export async function setupHub(path: string, repository: string, options: Connec
   });
   return { outcome: unchanged ? 'unchanged' : existing ? 'existing' : 'created', projectId: null, connectionDigest: null, readable: false };
 }
-export async function connectProject(cwd: string, input: Readonly<{ hub: string; projectId: string; sourceRepository?: string }>, options: ConnectionOptions = {}, hooks: ConnectionHooks = {}): Promise<ConnectionContext> {
+export async function connectProject(cwd: string, input: Readonly<{ hub?: string; workspace?: string; projectId: string; sourceRepository?: string }>, options: ConnectionOptions = {}, hooks: ConnectionHooks = {}): Promise<ConnectionContext> {
   const root = await worktreeRoot(cwd), config = absolute(options.configDir ?? configDirectory());
-  const id = projectId(input.projectId), inspection = await inspectHub(resolve(input.hub));
-  if (root === inspection.hub.hubRoot || root.startsWith(inspection.hub.hubRoot + '/')) fail('READ_BOUNDARY_VIOLATION');
+  if ((input.hub === undefined) === (input.workspace === undefined)) fail();
+  const target = input.workspace ?? input.hub ?? fail();
+  const id = projectId(input.projectId), inspection = await inspectBinding(resolve(target), undefined, id, input.workspace !== undefined);
+  if (containsPath(inspection.hub.hubRoot, root)) fail('READ_BOUNDARY_VIOLATION');
   const repository = await validateSource(root, inspection.hub, id, input.sourceRepository);
   const identity = await sourceIdentity(root);
-  const shared: SharedConnection = { schemaVersion: 'buildlore.connection.v1', knowledgeRepository: inspection.hub.knowledgeRepository,
+  const shared: SharedConnection = { schemaVersion: input.workspace === undefined ? 'buildlore.connection.v1' : 'buildlore.connection.v2',
+    ...(input.workspace === undefined ? {} : { mode: 'knowledge' as const }), knowledgeRepository: inspection.hub.knowledgeRepository,
     knowledgeRepositoryDigest: inspection.hub.knowledgeRepositoryDigest, projectId: id };
   let outcome: 'created' | 'unchanged' = 'created';
   await withRegistryLock(config, root, async () => {

@@ -15,7 +15,7 @@ long-running service.
 4. Retrieval reads the committed knowledge files for local agent use.
 5. Git review and history remain the source of collaboration and provenance.
 
-Each source repository owns its code and a portable source-selection manifest. A
+Each source repository owns its code and a portable source-selection manifest. In legacy Mode A, a
 separate BuildLore hub owns one knowledge repository checked out at `knowledge/` as
 a Git submodule plus machine-local source bindings. In **Mode A**, one hub can bind
 multiple independent source checkouts, while each isolated compiler workspace lives
@@ -26,13 +26,123 @@ only the registry and Git boundary; it is never a compiler workspace.
 sanitized, compiled knowledge artifact. A `project-id` is the stable isolation key
 that binds those inputs and outputs.
 
-## Install and run locally
+## Recommended: install locally in the knowledge repository
+
+Use Node.js 24+, npm 11.19.0 and Git. Install the **distributed npm package into your knowledge Git checkout**, which can hold several projects. The checkout itself manages the Wiki; no separate hub or product source copy is needed.
+
+The package is not published to the npm registry yet. Install a supplied release tarball as below. After publication, the install command can become `npm install buildlore`. Building a tarball from product source is a maintainer step described below.
+
+```sh
+git clone <knowledge-repository-URL> my-knowledge
+cd my-knowledge
+npm install --save-exact /path/to/buildlore-0.1.1-rc.1.tgz
+node node_modules/buildlore/dist/cli/bin.js workspace init --json
+```
+
+Without a Git origin, supply an explicit portable `--knowledge-repo <repository-id>`. Initialization does not convert existing hubs or source checkouts.
+
+```text
+my-knowledge/
+  package.json                  # version in Git
+  package-lock.json             # version in Git; local tarball must also be delivered
+  node_modules/                 # installed package; ignored by Git
+  .buildlore/workspace.json      # portable workspace mode/identity
+  .buildlore/local-projects.json # local source paths; ignored by Git
+  manifest.json
+  projects/<project-id>/
+```
+
+### Find the next setup step
+
+From the knowledge checkout, run `node node_modules/buildlore/dist/cli/bin.js workspace guide --project my-project`. It inspects without writing and shows the next step, execution location and required inputs. Rerun after each step. Add `--json` for the `buildlore.workspace-guide.v1` contract. A project is never selected automatically, even when only one exists.
+
+`ready` covers inspected local Wiki and connection state. AI client registration, AI quality and embeddings remain unchecked. `blocked` indicates damage or a path problem; restore trusted Git data instead of recreating approval records. Diagnose source connections with `doctor` or `connection status` from that source checkout.
+
+### Register → create a Wiki → read through MCP
+
+1. In the source repository, declare selected inputs in `.buildlore/sources.json`. Start with the following identity manifest; add document selections with the CLI after registration. Save the JSON with this key order, two-space indentation and a final newline. Use the same project ID and source repository when registering:
+
+```json
+{
+  "projectId": "my-project",
+  "schemaVersion": "buildlore.sources.v2",
+  "sourceRepository": "https://example.org/team/my-project.git",
+  "sources": []
+}
+```
+
+2. Register and author from the **knowledge repository**:
+
+```sh
+node node_modules/buildlore/dist/cli/bin.js project add --id my-project --source-repo https://example.org/team/my-project.git --source-root /work/my-project --json
+node node_modules/buildlore/dist/cli/bin.js source add --project my-project --id docs --kind markdown --path docs --recursive --json
+
+```
+
+New projects deny external compilation by default. Review classification and allowed capabilities in `projects/my-project/security-policy.json` using the security policy section below before authoring. Inspect selections and policy failures with `sync --dry-run`; never disable secret detection to bypass a failure.
+
+```sh
+node node_modules/buildlore/dist/cli/bin.js sync --project my-project --dry-run --json
+node node_modules/buildlore/dist/cli/bin.js sync --project my-project --json
+```
+
+Use the packaged `skills/buildlore-authoring/SKILL.md` for authoring and `skills/buildlore-activation/SKILL.md` for approval/activation. Ask your AI to read `node_modules/buildlore/skills/…/SKILL.md`, or copy the skill into your client's **knowledge-workspace-local skill directory**. Global skill installation is optional. MCP reads require an explicitly approved and activated generation; writing a draft does not authorize approval.
+
+3. Connect from each **source repository**, using the package installed in the knowledge repository:
+
+```sh
+cd /work/my-project
+node /work/my-knowledge/node_modules/buildlore/dist/cli/bin.js connect --workspace /work/my-knowledge --project my-project --json
+node /work/my-knowledge/node_modules/buildlore/dist/cli/bin.js client configure --client codex --project-dir /work/my-project --json
+# Review the preview, then apply using its returned planDigest.
+node /work/my-knowledge/node_modules/buildlore/dist/cli/bin.js client configure --client codex --project-dir /work/my-project --apply --expect-plan <planDigest> --json
+```
+
+The complete authoring workflow is verified on Linux. Native Windows path, connection and sync checks have been exercised, but authoring state storage fails with `HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED` because its existing file permission checks require POSIX modes. The complete Windows authoring workflow has not passed support validation. Use `node .../bin.js` on Windows with actual drive paths and quote paths containing spaces. MCP reads only the selected project's approved knowledge. No separate BuildLore installation is needed in each source project.
+
+Commit workspace initialization and npm metadata (`.gitignore`, `.buildlore/workspace.json`, `package.json`, `package-lock.json`) separately before project publication. Root metadata changes deliberately block `publish`; it never selects npm files as Wiki content.
+
+For an activated Wiki, publication derives lineage from verified approval records and includes the immutable history needed by a fresh clone. Model identities describe the declared authoring actors, not proof of a provider invocation; prompt identity binds the recorded authoring exchanges. Publishing approved text requires no embedding provider. A detached source HEAD is supported; the knowledge repository still needs a publication branch. Initialization reasserts effective ignore rules for local npm/run files and stops if those files are already tracked; it does not untrack user files.
+
+Direct workspaces track knowledge commits, generations and approval history. They have no parent gitlink, so parent pin is `not_applicable` and `knowledge pin` is unsupported. This does not provide the legacy parent-commit pin guarantee. Existing `setup --hub`, `connect --hub`, submodule and pin workflows remain supported; migration is never automatic.
+
+Developer verification: `npm run verify:installed-workspace` installs the tarball into a temporary knowledge repository and executes authoring, approval, activation, a publication commit and two-project MCP reads. On Linux it hides the product source and blocks writes/network for MCP. It uses deterministic protocol fixtures, not a paid AI quality evaluation.
+
+### Restore on another PC or in a fresh clone
+
+A local `.tgz` installation records a file path in npm metadata. A Git clone followed by `npm ci` is insufficient when that original tarball path is unavailable. **Deliver the same tarball separately**, then reinstall from its new location:
+
+```sh
+cd /new/my-knowledge
+npm install --save-exact /new/downloads/buildlore-0.1.1-rc.1.tgz
+node node_modules/buildlore/dist/cli/bin.js workspace guide --project my-project
+node node_modules/buildlore/dist/cli/bin.js workspace init --json
+node node_modules/buildlore/dist/cli/bin.js project bind --project my-project --source-root /new/my-project --json
+cd /new/my-project
+node /new/my-knowledge/node_modules/buildlore/dist/cli/bin.js connect --workspace /new/my-knowledge --project my-project --json
+node /new/my-knowledge/node_modules/buildlore/dist/cli/bin.js doctor --json
+```
+
+Restore the source checkout and its `.buildlore/sources.json` too. The clone's Git origin must identify the knowledge repository recorded in the workspace. Rerunning `workspace init` prepares local folder permissions and binding storage that Git does not preserve; it retains existing Wiki and approval records. Repeat bind/connect for each project, and preview client configuration with the new paths before applying it. Review and commit changed npm metadata separately.
+
+### Maintainers: local distribution, then npm preparation
+
+1. With Node 24+ and **npm 11.19.0**, pass build/test/lint/typecheck and `npm run verify:installed-workspace`. Linux verification requires `bwrap`; its absence is reported as failure.
+2. Use `npm pack --json --pack-destination <distribution-directory>` to inspect the tarball file list, size and integrity. Deliver `sha256sum <file.tgz>` with the identical archive. It contains runtime code, public schemas and authoring/activation skills; product source, tests, user knowledge and local state are excluded.
+3. Keep `private: true` for now. Immediately before a future registry release, verify name availability, version, license, package contents and account permissions; change public-release settings only with separate publication approval. This workflow does not publish to npm.
+
+Installed verification covers CLI registration, source selection, authoring, review, explicit test approval, activation and publication for two projects, then clone/reinstall and MCP search/read/isolation. It removes the original tarball and uses a separately delivered copy. Deterministic inputs test protocols, not actual AI quality or a real client conversation. Windows OS verification remains follow-up work.
+
+Local archive behavior follows the official [npm pack](https://docs.npmjs.com/cli/v11/commands/npm-pack/) and [npm install](https://docs.npmjs.com/cli/v11/commands/npm-install/) commands.
+
+## Product development and legacy hub usage
+
 
 - Node.js 24 or newer (Node.js 24 LTS is the reference runtime)
 - npm 11, specifically the repository-declared `npm@11.19.0`
 - Git, plus access to an existing knowledge repository
 
-From a clean clone:
+For maintainers building the package from a product source checkout (users follow the local package installation above):
 
 ```sh
 npm ci --ignore-scripts

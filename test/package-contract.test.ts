@@ -293,7 +293,7 @@ describe('package contract', () => {
     expect(packageJson.exports['./profiles/buildlore.profile.v1.json']).toBe(
       './profiles/buildlore.profile.v1.json',
     );
-    expect(packageJson.files).toEqual(['dist', 'schemas', 'profiles']);
+    expect(packageJson.files).toEqual(['dist', 'schemas', 'profiles', 'skills']);
     expect(packageJson.dependencies).toEqual(approvedRuntimeDependencies);
     expect(packageJson.engines).toEqual({ node: '>=24', npm: '>=11 <12' });
     expect(packageJson.devDependencies).toEqual(approvedDevDependencies);
@@ -307,6 +307,7 @@ describe('package contract', () => {
       test: 'vitest run',
       typecheck: 'tsc -p tsconfig.json --noEmit',
       'verify:installed-read': 'node scripts/verify-installed-read.mjs',
+      'verify:installed-workspace': 'node scripts/verify-installed-workspace.mjs',
     });
   });
 

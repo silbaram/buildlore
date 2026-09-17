@@ -1,3 +1,4 @@
+import { resolveWorkspaceLayout } from '../knowledge/knowledge-workspace.js';
 import { createHash } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -679,7 +680,7 @@ async function initialState(
   failure: HubSyncFailurePort,
   jsonKnowledgeAdapters: readonly RegisteredJsonKnowledgeAdapterV1[] = [],
 ): Promise<PlannedState> {
-  const knowledgeRoot = join(input.hubRoot, 'knowledge');
+  const knowledgeRoot = (await resolveWorkspaceLayout(input.hubRoot)).knowledgeRoot;
   let project;
   let workspace;
   let binding;
@@ -744,7 +745,7 @@ async function assertInputsUnchanged(
   jsonKnowledgeAdapters: readonly RegisteredJsonKnowledgeAdapterV1[] = [],
 ): Promise<void> {
   try {
-    const knowledgeRoot = join(input.hubRoot, 'knowledge');
+    const knowledgeRoot = (await resolveWorkspaceLayout(input.hubRoot)).knowledgeRoot;
     const project = await showProject(knowledgeRoot, input.projectId);
     const workspace = await resolveProjectWorkspace(knowledgeRoot, input.projectId, {
       mustExist: true,
@@ -897,7 +898,7 @@ export async function runHubProjectSync(
     return failure.fail('SYNC_SELECTION_FAILED', 'selection', { cause });
   }
 
-  const knowledgeRoot = join(input.hubRoot, 'knowledge');
+  const knowledgeRoot = (await resolveWorkspaceLayout(input.hubRoot)).knowledgeRoot;
   const security = createProjectSecurityService({ knowledgeRoot, sourceIngestion: true });
   const maskSecrets = (await readSecurityPolicy(knowledgeRoot, input.projectId)).policy.sourceSecretHandling === 'mask';
   if (!await boundRawSourceInputsAreSafe(collection, {

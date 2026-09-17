@@ -1,10 +1,11 @@
+import { connectionRecovery } from './connection-recovery.js';
+import { resolveWorkspaceLayout } from '../knowledge/knowledge-workspace.js';
 import { LookupBatchError, validateLookupBatch } from '../compiler/project-knowledge/lookup-batch.js';
 import { measureRead, type ReadObserver } from '../retrieval/read-observer.js';
 import { TaskMemoryError } from '../compiler/project-knowledge/task-memory.js';
 import { ProgressiveMemoryError } from '../compiler/project-knowledge/progressive-memory.js';
 import { SecurityOperationError } from '../sanitizer/errors.js';
 import { readSecurityPolicy } from '../sanitizer/policy.js';
-import { join } from 'node:path';
 import { openKnowledgeReadSession } from '../retrieval/project-knowledge-reader.js';
 import { createLocalWikiOperator } from '../retrieval/local-wiki-operator.js';
 import { latestKnowledgeGeneration } from '../retrieval/project-knowledge-authority.js';
@@ -62,7 +63,7 @@ export async function readApprovedWiki(hubRoot: string, projectId: string, reque
 ): Promise<Readonly<{ data: unknown; format: ReadContextMetadata['format']; generation: Digest }>> {
   const wanted = expected(request, policy);
   const search = searchOptions(request, policy);
-  const knowledgeRoot = join(hubRoot, 'knowledge');
+  const knowledgeRoot = (await resolveWorkspaceLayout(hubRoot)).knowledgeRoot;
   try {
     const session = await openKnowledgeReadSession(knowledgeRoot, projectId, { hubRoot,
       ...(hooks.observer ? { observer: hooks.observer } : {}) });
@@ -129,12 +130,14 @@ export async function readConnectedWiki(context: ConnectionContext, request: Wik
   expected(request, 'connected-approved');
   const current = await measureRead(hooks.observer, 'connection', () => assertConnectionCurrent(context));
   const paths = connectionPaths(current);
-  if (paths.pin !== 'matched') fail('KNOWLEDGE_PIN_MISMATCH');
+  if (paths.pin !== 'matched' && paths.pin !== 'not_applicable') fail('KNOWLEDGE_PIN_MISMATCH');
   const result = await readApprovedWiki(paths.hubRoot, context.projectId, request, 'connected-approved', {
     ...(hooks.observer ? { observer: hooks.observer } : {}), afterSnapshot: async () => {
     if ((await gitRead(paths.knowledgeRoot, ['rev-parse', '--verify', 'HEAD^{commit}']))?.trim() !== paths.knowledgeRevision) fail('CONNECTION_CONFLICT');
     await hooks.afterSnapshot?.();
   } });
+  const after = connectionPaths(await assertConnectionCurrent(current));
+  if (after.knowledgeRevision !== paths.knowledgeRevision) fail('CONNECTION_CONFLICT');
   return { data: result.data, knowledgeRevision: paths.knowledgeRevision,
     readContext: { knowledgeRepositoryDigest: context.knowledgeRepositoryDigest, format: result.format, generation: result.generation, readPolicy: 'connected-approved' } };
 }
@@ -160,10 +163,10 @@ export async function connectionStatus(context: ConnectionContext): Promise<Read
       if (head && revisions.length) sourceRevisionComparison = revisions.some(r => r !== head) ? 'different' : revisions.length === sources.length ? 'match' : 'unknown';
     }
   } catch { approval = 'invalid'; }
-  return { schemaVersion: 'buildlore.connection-status.v1', connected: true, readable: approval === 'ready' && paths.pin === 'matched',
+  return { schemaVersion: paths.pin === 'not_applicable' ? 'buildlore.connection-status.v2' : 'buildlore.connection-status.v1', ...(paths.pin === 'not_applicable' ? { mode: 'knowledge' } : {}), connected: true, readable: approval === 'ready' && (paths.pin === 'matched' || paths.pin === 'not_applicable'),
     projectId: context.projectId, connectionDigest: context.connectionDigest, hubState: 'ready', knowledgeRevision: paths.knowledgeRevision,
     pin: paths.pin, dirty: paths.dirty, approval, generation, format, readPolicy: 'connected-approved', remote: 'not_checked', sourceRevisionComparison,
-    recoveryCommands: approval === 'ready' && paths.pin === 'matched' ? [] : [['knowledge', 'status'], ['project', 'show', '--project', context.projectId]] };
+    recoveryCommands: approval === 'ready' && (paths.pin === 'matched' || paths.pin === 'not_applicable') ? [] : paths.pin === 'not_applicable' ? [['workspace', 'guide', '--project', context.projectId]] : [['knowledge', 'status'], ['project', 'show', '--project', context.projectId]] };
 }
 
 export function unavailableConnectionStatus(error: unknown): Readonly<Record<string, unknown>> {
@@ -171,5 +174,5 @@ export function unavailableConnectionStatus(error: unknown): Readonly<Record<str
   return { schemaVersion: 'buildlore.connection-status.v1', connected: false, readable: false,
     projectId: null, connectionDigest: null, hubState: code === 'KNOWLEDGE_IDENTITY_MISMATCH' ? 'identity_mismatch' : 'unavailable',
     knowledgeRevision: null, pin: code === 'KNOWLEDGE_UNINITIALIZED' ? 'uninitialized' : 'unknown', dirty: 'unknown', approval: ['CONNECTION_MISSING', 'CONNECTION_INCOMPLETE', 'HUB_UNAVAILABLE', 'KNOWLEDGE_UNINITIALIZED'].includes(code) ? 'missing' : 'invalid', generation: null, format: null,
-    readPolicy: 'connected-approved', remote: 'not_checked', sourceRevisionComparison: 'unknown', recoveryCommands: [['--help']] };
+    readPolicy: 'connected-approved', remote: 'not_checked', sourceRevisionComparison: 'unknown', recoveryCommands: [connectionRecovery(code).command] };
 }
