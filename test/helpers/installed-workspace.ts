@@ -9,7 +9,6 @@ import type { KnowledgeWorkflowFixture } from './project-knowledge-workflow.js';
 import { activate, git } from './connected-fixture.js';
 import { record } from '../../src/knowledge/project-knowledge/guards.js';
 import { serializeSecurityPolicy, parseSecurityPolicy } from '../../src/sanitizer/policy.js';
-import { createProfileBindingV2 } from '../../src/profile/index.js';
 import { parseSourceCollectionManifestV2 } from '../../src/projector/source-manifest.js';
 import { serializeCanonicalJson } from '../../src/knowledge/atomic-file.js';
 
@@ -66,15 +65,15 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
       await cp(join(fixtureInput, 'settings.json'), join(sourceRoot, 'settings.json'));
       await git(sourceRoot, 'init', '--initial-branch=main');
       await mkdir(join(sourceRoot, '.buildlore'));
-      // User-owned source identity input only; installed CLI declares all document selections below.
+      // Cover both an existing JSON declaration and an empty source manifest.
       await writeFile(join(sourceRoot, '.buildlore/sources.json'), serializeCanonicalJson(parseSourceCollectionManifestV2({ schemaVersion: 'buildlore.sources.v2', projectId,
-        sourceRepository: `https://example.test/${projectId}.git`, sources: [] })));
+        sourceRepository: `https://example.test/${projectId}.git`, sources: projectId === 'parcel' ? [{
+          adapterId: 'buildlore.json', adapterVersion: 1, id: 'settings', kind: 'json', path: 'settings.json', pathType: 'file',
+        }] : [] })));
       await git(sourceRoot, 'add', '.'); await git(sourceRoot, 'commit', '-m', 'fixed source inputs');
       await invoke(['project', 'add', '--id', projectId, '--source-repo', `https://example.test/${projectId}.git`, '--source-root', sourceRoot]);
-      // Explicit language/adapter configuration input for generic Markdown and JSON.
-      await writeFile(join(workspace, 'projects', projectId, 'profile-binding.json'), serializeCanonicalJson(createProfileBindingV2('general', 'en')));
-      const empty = await invoke(['workspace', 'guide', '--project', projectId]);
-      assert(JSON.stringify(empty.data).includes('SOURCE_DECLARATIONS_REQUIRED'));
+      const initial = await invoke(['workspace', 'guide', '--project', projectId]);
+      assert(JSON.stringify(initial.data).includes(projectId === 'parcel' ? 'SOURCE_DECLARATIONS_VALID' : 'SOURCE_DECLARATIONS_REQUIRED'));
       await invoke(['source', 'add', '--project', projectId, '--id', 'docs', '--kind', 'markdown', '--path', 'docs', '--recursive']);
       await invoke(['source', 'add', '--project', projectId, '--id', 'settings', '--kind', 'json', '--path', 'settings.json']);
       // Explicit fixture policy input, never approval/registration state or secret suppression.

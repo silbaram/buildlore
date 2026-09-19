@@ -3,6 +3,10 @@ export { createKnowledgeProposal, parseKnowledgeProposal, parseKnowledgeSemantic
 export { createKnowledgeGeneration, parseKnowledgeGenerationChain } from './generation.js';
 export { createKnowledgeSessionService } from './session.js';
 export { createKnowledgeCompletenessSessionService } from './completeness-session.js';
+export type { KnowledgeCompletenessProofV1, KnowledgeCompletenessProofV2, KnowledgeCompletenessProof } from './completeness-proof.js';
+export { parseKnowledgeCompletenessMaterialRequest, COMPLETENESS_MATERIAL_REQUEST } from './completeness-inspection.js';
+export type { KnowledgeCompletenessMaterialRequest, KnowledgeCompletenessMaterialInspection,
+  CompletenessMaterialCollection } from './completeness-inspection.js';
 export type { KnowledgeCompletenessSessionV1, KnowledgeCompletenessPrepareInput, KnowledgeCompletenessPhase,
   KnowledgeCompletenessAction, KnowledgeCompletenessStageViewV1, KnowledgeCompletenessProseSubmissionV1,
   KnowledgeCompletenessReviewRoundV1 } from './completeness-session.js';
@@ -12,7 +16,7 @@ export { COMPLETENESS_CATEGORIES, COMPLETENESS_LIMITS, KnowledgeCompletenessBudg
   parseKnowledgeCompletenessProseMapping, parseKnowledgeCompletenessReview } from './completeness.js';
 export type { KnowledgeCompletenessInventoryDiagnostic, CompletenessBinding, CompletenessCategory, CompletenessInventoryRole, CompletenessRole,
   CompletenessItem, CompletenessCategoryEntry, CompletenessItemRef, CompletenessInventoryJudgment, CompletenessProseLocator,
-  KnowledgeCompletenessExchangeV1, KnowledgeCompletenessInventoryV1, KnowledgeCompletenessInventoryReviewV1,
+  KnowledgeCompletenessExchangeV1, KnowledgeCompletenessExchangeV2, KnowledgeCompletenessExchange, KnowledgeCompletenessInventoryV1, KnowledgeCompletenessInventoryReviewV1,
   KnowledgeCompletenessInventoryReconciliationV1, KnowledgeCompletenessAcceptedInventoryV1,
   KnowledgeCompletenessProseMappingV1, KnowledgeCompletenessReviewV1 } from './completeness.js';
 export { parseKnowledgeChangeImpactRequest, KnowledgeChangeImpactBudgetError, KNOWLEDGE_CHANGE_IMPACT_REQUEST_VERSION,
@@ -57,3 +61,15 @@ export { inspectDevelopmentMemoryContent, inspectDevelopmentMemoryContentWithHis
 export { knowledgeTaskMemory, validateTaskMemoryRequest, TaskMemoryError, type KnowledgeTaskMemoryV1, type TaskMemoryRequest, type TaskEvidenceContext } from './task-memory.js';
 
 export { knowledgeProgressiveMemory, validateProgressiveMemoryRequest, ProgressiveMemoryError, type KnowledgeProgressiveMemoryV1, type ProgressiveMemoryRequest } from './progressive-memory.js';
+
+export { MAX_INVENTORY_CORRECTIONS, completenessCorrectionCause, requiredInventoryCorrectionTargets,
+  parseKnowledgeCompletenessInventoryCorrection, parseKnowledgeCompletenessInventoryCorrectionReview } from './completeness-correction.js';
+export type { KnowledgeCompletenessInventoryCorrectionV1, KnowledgeCompletenessInventoryCorrectionReviewV1,
+  InventoryCorrectionTarget } from './completeness-correction.js';
+export { parseCompletenessReviewSubmission } from './completeness-review-binding.js';
+export type { CompletenessReviewSubmissionV1, CompletenessReviewBinding } from './completeness-review-binding.js';
+
+export { createKnowledgeWikiSession, type KnowledgeWikiSession, type KnowledgeWikiState } from './wiki-session.js';
+export { createKnowledgeWikiDraft, createKnowledgeWikiReview, knowledgeWikiReviewTargets, knowledgeWikiAssessment,
+  parseKnowledgeWikiPurpose, parseKnowledgeWikiProof, WIKI_CORRECTION_LIMIT, type KnowledgeWikiPurpose,
+  type KnowledgeWikiReview, type KnowledgeWikiFinding, type KnowledgeWikiProof } from './wiki-contracts.js';

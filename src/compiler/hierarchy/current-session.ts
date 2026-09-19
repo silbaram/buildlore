@@ -1948,8 +1948,7 @@ async function inspectExternalRequestForEgress(
     prepared.inputBodyDigest !== bodyDigest ||
     prepared.policyDigest !== expectedPolicyDigest ||
     prepared.sourceKind !== 'provider-request' ||
-    prepared.sourceRevisionOrContentSha256 !== bodyDigest ||
-    prepared.untrustedData
+    prepared.sourceRevisionOrContentSha256 !== bodyDigest
   ) invalid(projectId);
   return prepared.classification;
 }
@@ -1994,8 +1993,7 @@ async function sanitizeExternalProposalOutput(
     prepared.inputBodyDigest !== bodyDigest ||
     prepared.policyDigest !== expectedPolicyDigest ||
     prepared.sourceKind !== 'wiki' ||
-    prepared.sourceRevisionOrContentSha256 !== bodyDigest ||
-    prepared.untrustedData
+    prepared.sourceRevisionOrContentSha256 !== bodyDigest
   ) invalid(projectId);
   return bodyDigest;
 }
@@ -2339,8 +2337,7 @@ export function createCurrentSessionGenerationService(
               prepared.inputBodyDigest !== bodyDigest ||
               prepared.policyDigest !== currentPolicy.digest ||
               prepared.sourceKind !== 'wiki' ||
-              prepared.sourceRevisionOrContentSha256 !== bodyDigest ||
-              prepared.untrustedData
+              prepared.sourceRevisionOrContentSha256 !== bodyDigest
             ) invalid(expectedProjectId);
             const receipt = createReceipt(exchange, proposal, bodyDigest);
             const result = verifyCurrentSessionGenerationResult(

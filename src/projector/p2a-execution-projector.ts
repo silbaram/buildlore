@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { hasUntrustedInstructions } from '../sanitizer/findings.js';
 import { resolveProjectWorkspace, showProject } from '../knowledge/index.js';
 import {
   consumePreparedSource,
@@ -225,8 +226,7 @@ function consumePrepared(
       binding.approvedBodyDigest !== sha256(binding.approvedBody) ||
       binding.policyDigest !== policyDigest ||
       binding.rulesVersion !== SANITIZER_RULES_VERSION ||
-      binding.untrustedData !== item.report.summaries.some((summary) =>
-        summary.action === 'quarantine' && summary.count > 0) ||
+      binding.untrustedData !== hasUntrustedInstructions(item.report.summaries) ||
       binding.approvedBody !== `${item.input.title}\n${item.input.body}`) {
     return fail('PROJECTION_SANITIZATION_FAILED', 'A prepared execution source binding is invalid.');
   }

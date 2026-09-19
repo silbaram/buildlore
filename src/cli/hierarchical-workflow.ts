@@ -495,8 +495,7 @@ async function assertSafePurpose(
         prepared.inputBodyDigest !== bodyDigest || prepared.policyDigest !== policy.digest ||
         prepared.projectId !== projectId || prepared.rulesVersion !== SANITIZER_RULES_VERSION ||
         prepared.source !== source || prepared.sourceKind !== 'planning' ||
-        prepared.sourceRevisionOrContentSha256 !== purpose.purposeDigest ||
-        prepared.untrustedData) {
+        prepared.sourceRevisionOrContentSha256 !== purpose.purposeDigest) {
       fail('HIERARCHICAL_WORKFLOW_INPUT_INVALID');
     }
   } catch (error) {

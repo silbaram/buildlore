@@ -872,51 +872,14 @@
       "x-buildlore-digestExcludes": ["blueprintDigest"]
     },
     "wikiOutline": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schemaVersion",
-        "projectId",
-        "snapshotDigest",
-        "graphDigest",
-        "interpretationSetDigest",
-        "purposeDigest",
-        "policyDigest",
-        "activationState",
-        "rootPageId",
-        "blueprints",
-        "reviewNotes",
-        "outlineDigest"
-      ],
-      "properties": {
-        "schemaVersion": { "const": "buildlore.wiki-outline.v2" },
-        "projectId": { "$ref": "#/$defs/projectId" },
-        "snapshotDigest": { "$ref": "#/$defs/digest" },
-        "graphDigest": { "$ref": "#/$defs/digest" },
-        "interpretationSetDigest": { "$ref": "#/$defs/digest" },
-        "purposeDigest": { "$ref": "#/$defs/digest" },
-        "policyDigest": { "$ref": "#/$defs/digest" },
-        "activationState": { "const": "candidate" },
-        "rootPageId": { "$ref": "#/$defs/pageId" },
-        "blueprints": {
-          "type": "array",
-          "minItems": 2,
-          "maxItems": 97,
-          "items": { "$ref": "#/$defs/pageBlueprint" },
-          "x-buildlore-canonicalOrderBy": "generationOrder",
-          "x-buildlore-uniqueBy": "pageId"
+      "oneOf": [
+        {
+          "$ref": "#/$defs/wikiOutlineLegacy"
         },
-        "reviewNotes": {
-          "type": "array",
-          "maxItems": 64,
-          "uniqueItems": true,
-          "items": { "$ref": "#/$defs/portableIdentifier" },
-          "x-buildlore-canonicalOrder": "ascending"
-        },
-        "outlineDigest": { "$ref": "#/$defs/digest" }
-      },
-      "x-buildlore-digestExcludes": ["outlineDigest"],
-      "x-buildlore-maxUtf8Bytes": 33554432
+        {
+          "$ref": "#/$defs/wikiOutlineGeneric"
+        }
+      ]
     },
     "wikiOutlineDiff": {
       "type": "object",
@@ -1330,6 +1293,230 @@
       "x-buildlore-digestExcludes": ["policyDigest"]
     },
     "pageQualityReport": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/pageQualityReportLegacy"
+        },
+        {
+          "$ref": "#/$defs/pageQualityReportReviewed"
+        },
+        {
+          "$ref": "#/$defs/pageQualityReportGeneric"
+        }
+      ]
+    },
+    "pageQualityReportReviewed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "blueprintDigest",
+        "proposalDigest",
+        "evidencePackDigest",
+        "policyDigest",
+        "sectionCoverageBasisPoints",
+        "claimGroundingBasisPoints",
+        "claimEvidenceSupportBasisPoints",
+        "titleGroundingBasisPoints",
+        "summaryGroundingBasisPoints",
+        "titleGrounded",
+        "summaryGrounded",
+        "optionalSectionCount",
+        "unsupportedParagraphCount",
+        "repeatedLineBasisPoints",
+        "questionCoverageBasisPoints",
+        "unansweredKeyQuestionCount",
+        "maximumNearDuplicateBasisPoints",
+        "requiredDistinctSources",
+        "observedDistinctSources",
+        "unresolvedConflictCount",
+        "unresolvedGapCount",
+        "missingRequiredLinkCount",
+        "substantiveUtf8Bytes",
+        "uniqueTokenCount",
+        "nearDuplicatePageIds",
+        "reasonCodes",
+        "hardQualityPassed",
+        "eligibleForApproval",
+        "llmJudgeUsed",
+        "embeddingSimilarityUsed",
+        "canonicalMutationAuthorized",
+        "reportDigest",
+        "semanticReviewDigest",
+        "knowledgeGenerationDigest",
+        "lexicalClaimEvidenceSupportBasisPoints"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.page-quality-report.v3"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "pageId": {
+          "$ref": "#/$defs/pageId"
+        },
+        "blueprintDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "proposalDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "evidencePackDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "policyDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "sectionCoverageBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "claimGroundingBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "claimEvidenceSupportBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "titleGroundingBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "summaryGroundingBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "titleGrounded": {
+          "type": "boolean"
+        },
+        "summaryGrounded": {
+          "type": "boolean"
+        },
+        "optionalSectionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "unsupportedParagraphCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "questionCoverageBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "unansweredKeyQuestionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "repeatedLineBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "maximumNearDuplicateBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "requiredDistinctSources": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "observedDistinctSources": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "unresolvedConflictCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "unresolvedGapCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "missingRequiredLinkCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 96
+        },
+        "substantiveUtf8Bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 524288
+        },
+        "uniqueTokenCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nearDuplicatePageIds": {
+          "type": "array",
+          "maxItems": 96,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/pageId"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "reasonCodes": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/portableIdentifier"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "hardQualityPassed": {
+          "type": "boolean"
+        },
+        "eligibleForApproval": {
+          "type": "boolean"
+        },
+        "llmJudgeUsed": {
+          "const": false
+        },
+        "embeddingSimilarityUsed": {
+          "const": false
+        },
+        "canonicalMutationAuthorized": {
+          "const": false
+        },
+        "reportDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "semanticReviewDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "knowledgeGenerationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "lexicalClaimEvidenceSupportBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      },
+      "x-buildlore-digestExcludes": [
+        "reportDigest"
+      ]
+    },
+    "pageQualityReportLegacy": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -1395,6 +1582,154 @@
       "x-buildlore-digestExcludes": ["reportDigest"]
     },
     "corpusQualityReport": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/corpusQualityReportLegacy"
+        },
+        {
+          "$ref": "#/$defs/corpusQualityReportReviewed"
+        },
+        {
+          "$ref": "#/$defs/corpusQualityReportGeneric"
+        }
+      ]
+    },
+    "corpusQualityReportReviewed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "outlineDigest",
+        "reconciliationDigest",
+        "policyDigest",
+        "candidateCount",
+        "expectedCandidateCount",
+        "pageReportDigests",
+        "reachablePageCount",
+        "orphanPageIds",
+        "intentionalOrphanPageIds",
+        "orphanBasisPoints",
+        "uncategorizedPageCount",
+        "reasonCodes",
+        "hardQualityPassed",
+        "eligibleForApproval",
+        "deterministicChecksOnly",
+        "llmJudgeCanOverride",
+        "embeddingSimilarityCanOverride",
+        "canonicalMutationAuthorized",
+        "reportDigest",
+        "semanticReviewDigest",
+        "knowledgeGenerationDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.corpus-quality-report.v3"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "outlineDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "reconciliationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "policyDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "candidateCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 97
+        },
+        "expectedCandidateCount": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 97
+        },
+        "pageReportDigests": {
+          "type": "array",
+          "maxItems": 97,
+          "items": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "reachablePageCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 97
+        },
+        "orphanPageIds": {
+          "type": "array",
+          "maxItems": 97,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/pageId"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "intentionalOrphanPageIds": {
+          "type": "array",
+          "maxItems": 97,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/pageId"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "orphanBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "uncategorizedPageCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 97
+        },
+        "reasonCodes": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/portableIdentifier"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "hardQualityPassed": {
+          "type": "boolean"
+        },
+        "eligibleForApproval": {
+          "type": "boolean"
+        },
+        "deterministicChecksOnly": {
+          "const": true
+        },
+        "llmJudgeCanOverride": {
+          "const": false
+        },
+        "embeddingSimilarityCanOverride": {
+          "const": false
+        },
+        "canonicalMutationAuthorized": {
+          "const": false
+        },
+        "reportDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "semanticReviewDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "knowledgeGenerationDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "x-buildlore-digestExcludes": [
+        "reportDigest"
+      ]
+    },
+    "corpusQualityReportLegacy": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -1466,7 +1801,7 @@
         "snapshotDigest": { "$ref": "#/$defs/digest" },
         "proposalDigest": { "$ref": "#/$defs/digest" },
         "sanitizerPolicyDigest": { "$ref": "#/$defs/digest" },
-        "sanitizerRulesVersion": { "const": "buildlore.sanitizer-rules.v8" },
+        "sanitizerRulesVersion": { "const": "buildlore.sanitizer-rules.v9" },
         "sanitizerInputDigest": { "$ref": "#/$defs/digest" },
         "generationActor": { "const": "current-agent-session" },
         "proposalOutputSanitized": { "const": true },
@@ -2261,6 +2596,507 @@
         "policyDigest": { "$ref": "#/$defs/digest" }
       },
       "x-buildlore-digestExcludes": ["policyDigest"]
+    },
+    "wikiOutlineLegacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "graphDigest",
+        "interpretationSetDigest",
+        "purposeDigest",
+        "policyDigest",
+        "activationState",
+        "rootPageId",
+        "blueprints",
+        "reviewNotes",
+        "outlineDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.wiki-outline.v2"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "snapshotDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "graphDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "interpretationSetDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "purposeDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "policyDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "activationState": {
+          "const": "candidate"
+        },
+        "rootPageId": {
+          "$ref": "#/$defs/pageId"
+        },
+        "blueprints": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 97,
+          "items": {
+            "$ref": "#/$defs/pageBlueprint"
+          },
+          "x-buildlore-canonicalOrderBy": "generationOrder",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "reviewNotes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/portableIdentifier"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "outlineDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "x-buildlore-digestExcludes": [
+        "outlineDigest"
+      ],
+      "x-buildlore-maxUtf8Bytes": 33554432
+    },
+    "wikiOutlineGeneric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "snapshotDigest",
+        "graphDigest",
+        "interpretationSetDigest",
+        "purposeDigest",
+        "policyDigest",
+        "activationState",
+        "rootPageId",
+        "blueprints",
+        "reviewNotes",
+        "outlineDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.wiki-outline.v3"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "snapshotDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "graphDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "interpretationSetDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "purposeDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "policyDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "activationState": {
+          "const": "candidate"
+        },
+        "rootPageId": {
+          "$ref": "#/$defs/pageId"
+        },
+        "blueprints": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/pageBlueprint"
+          },
+          "x-buildlore-canonicalOrderBy": "generationOrder",
+          "x-buildlore-uniqueBy": "pageId"
+        },
+        "reviewNotes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/portableIdentifier"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "outlineDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "x-buildlore-digestExcludes": [
+        "outlineDigest"
+      ],
+      "x-buildlore-maxUtf8Bytes": 33554432
+    },
+    "pageQualityReportGeneric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "pageId",
+        "blueprintDigest",
+        "proposalDigest",
+        "evidencePackDigest",
+        "policyDigest",
+        "sectionCoverageBasisPoints",
+        "claimGroundingBasisPoints",
+        "claimEvidenceSupportBasisPoints",
+        "titleGroundingBasisPoints",
+        "summaryGroundingBasisPoints",
+        "titleGrounded",
+        "summaryGrounded",
+        "optionalSectionCount",
+        "unsupportedParagraphCount",
+        "repeatedLineBasisPoints",
+        "questionCoverageBasisPoints",
+        "unansweredKeyQuestionCount",
+        "maximumNearDuplicateBasisPoints",
+        "requiredDistinctSources",
+        "observedDistinctSources",
+        "unresolvedConflictCount",
+        "unresolvedGapCount",
+        "missingRequiredLinkCount",
+        "substantiveUtf8Bytes",
+        "uniqueTokenCount",
+        "nearDuplicatePageIds",
+        "reasonCodes",
+        "hardQualityPassed",
+        "eligibleForApproval",
+        "llmJudgeUsed",
+        "embeddingSimilarityUsed",
+        "canonicalMutationAuthorized",
+        "reportDigest",
+        "semanticReviewDigest",
+        "knowledgeGenerationDigest",
+        "lexicalClaimEvidenceSupportBasisPoints",
+        "advisoryReasonCodes"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.page-quality-report.v4"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "pageId": {
+          "$ref": "#/$defs/pageId"
+        },
+        "blueprintDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "proposalDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "evidencePackDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "policyDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "sectionCoverageBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "claimGroundingBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "claimEvidenceSupportBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "titleGroundingBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "summaryGroundingBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "titleGrounded": {
+          "type": "boolean"
+        },
+        "summaryGrounded": {
+          "type": "boolean"
+        },
+        "optionalSectionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "unsupportedParagraphCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "questionCoverageBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "unansweredKeyQuestionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "repeatedLineBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "maximumNearDuplicateBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "requiredDistinctSources": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "observedDistinctSources": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "unresolvedConflictCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "unresolvedGapCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "missingRequiredLinkCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 96
+        },
+        "substantiveUtf8Bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 524288
+        },
+        "uniqueTokenCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nearDuplicatePageIds": {
+          "type": "array",
+          "maxItems": 96,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/pageId"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "reasonCodes": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/portableIdentifier"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "hardQualityPassed": {
+          "type": "boolean"
+        },
+        "eligibleForApproval": {
+          "type": "boolean"
+        },
+        "llmJudgeUsed": {
+          "const": false
+        },
+        "embeddingSimilarityUsed": {
+          "const": false
+        },
+        "canonicalMutationAuthorized": {
+          "const": false
+        },
+        "reportDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "semanticReviewDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "knowledgeGenerationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "lexicalClaimEvidenceSupportBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "advisoryReasonCodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/portableIdentifier"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "x-buildlore-digestExcludes": [
+        "reportDigest"
+      ]
+    },
+    "corpusQualityReportGeneric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "outlineDigest",
+        "reconciliationDigest",
+        "policyDigest",
+        "candidateCount",
+        "expectedCandidateCount",
+        "pageReportDigests",
+        "reachablePageCount",
+        "orphanPageIds",
+        "intentionalOrphanPageIds",
+        "orphanBasisPoints",
+        "uncategorizedPageCount",
+        "reasonCodes",
+        "hardQualityPassed",
+        "eligibleForApproval",
+        "deterministicChecksOnly",
+        "llmJudgeCanOverride",
+        "embeddingSimilarityCanOverride",
+        "canonicalMutationAuthorized",
+        "reportDigest",
+        "semanticReviewDigest",
+        "knowledgeGenerationDigest"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.corpus-quality-report.v4"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "outlineDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "reconciliationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "policyDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "candidateCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 97
+        },
+        "expectedCandidateCount": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 97
+        },
+        "pageReportDigests": {
+          "type": "array",
+          "maxItems": 97,
+          "items": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "reachablePageCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 97
+        },
+        "orphanPageIds": {
+          "type": "array",
+          "maxItems": 97,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/pageId"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "intentionalOrphanPageIds": {
+          "type": "array",
+          "maxItems": 97,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/pageId"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "orphanBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "uncategorizedPageCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 97
+        },
+        "reasonCodes": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/portableIdentifier"
+          },
+          "x-buildlore-canonicalOrder": "ascending"
+        },
+        "hardQualityPassed": {
+          "type": "boolean"
+        },
+        "eligibleForApproval": {
+          "type": "boolean"
+        },
+        "deterministicChecksOnly": {
+          "const": true
+        },
+        "llmJudgeCanOverride": {
+          "const": false
+        },
+        "embeddingSimilarityCanOverride": {
+          "const": false
+        },
+        "canonicalMutationAuthorized": {
+          "const": false
+        },
+        "reportDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "semanticReviewDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "knowledgeGenerationDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "x-buildlore-digestExcludes": [
+        "reportDigest"
+      ]
     }
   }
 }

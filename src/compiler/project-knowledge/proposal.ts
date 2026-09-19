@@ -6,14 +6,20 @@ import { createProposedKnowledgeRecord, parseKnowledgeActor,
 import type { KnowledgeGenerationV1, KnowledgePageV1, KnowledgeProposalV1, KnowledgeSemanticReviewV1,
   KnowledgeSnapshotV1 } from '../../knowledge/project-knowledge/types.js';
 
-function pages(value: unknown): readonly KnowledgePageV1[] {
+export function knowledgePageKey(value: unknown): string {
+  const key = text(value, 64);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(key) || ['knowledge', 'evidence', 'manifest'].includes(key)) invalid();
+  return key;
+}
+
+function pages(value: unknown, generic: boolean): readonly KnowledgePageV1[] {
   const claimIds = new Set<string>();
-  const result = list(value, 3).map((item) => {
+  const result = list(value, generic ? 32 : 3).map((item) => {
     const page = record(item);
     keys(page, ['role', 'title', 'sections']);
     const sections = list(page.sections, 32).map((sectionValue) => {
       const section = record(sectionValue);
-      keys(section, ['title', 'claims']);
+      keys(section, ['title', 'claims', ...(generic ? ['sectionId'] : [])]);
       const claims = list(section.claims, 256).map((claimValue) => {
         const claim = record(claimValue);
         keys(claim, ['claimId', 'text', 'factIds', 'presentation']);
@@ -27,25 +33,29 @@ function pages(value: unknown): readonly KnowledgePageV1[] {
           presentation: choice(claim.presentation, ['current', 'history', 'uncertainty']) });
       });
       if (claims.length === 0) invalid();
-      return Object.freeze({ title: text(section.title, 256), claims: Object.freeze(claims) });
+      return Object.freeze({ ...(generic ? { sectionId: knowledgePageKey(section.sectionId) } : {}),
+        title: text(section.title, 256), claims: Object.freeze(claims) });
     });
-    if (sections.length === 0 || Buffer.byteLength(JSON.stringify(page)) > 262_144) invalid();
-    return Object.freeze({ role: choice(page.role, ['overview', 'architecture', 'decisions']),
+    if (sections.length === 0 || generic && new Set(sections.map(section => section.sectionId)).size !== sections.length ||
+        Buffer.byteLength(JSON.stringify(page)) > 262_144) invalid();
+    return Object.freeze({ role: generic ? knowledgePageKey(page.role) : choice(page.role, ['overview', 'architecture', 'decisions']),
       title: text(page.title, 256), sections: Object.freeze(sections) });
   }).sort((a, b) => compare(a.role, b.role));
-  if (result.length !== 3 || new Set(result.map((p) => p.role)).size !== 3) invalid();
+  if ((generic ? result.length === 0 : result.length !== 3) || new Set(result.map((p) => p.role)).size !== result.length) invalid();
   return Object.freeze(result);
 }
 
 export function createKnowledgeProposal(value: unknown, snapshotValue: KnowledgeSnapshotV1): KnowledgeProposalV1 {
   const snapshot = parseKnowledgeSnapshot(snapshotValue, snapshotValue.projectId);
   const input = record(boundedJson(value));
+  const generic = input.schemaVersion === 'buildlore.knowledge-proposal.v2';
   keys(input, ['projectId', 'snapshotDigest', 'baselineGenerationDigest', 'actor', 'facts', 'pages',
-    'supersessions', 'conflicts']);
+    'supersessions', 'conflicts', ...(generic ? ['schemaVersion', 'rootPageId'] : [])]);
   const actor = parseKnowledgeActor(input.actor);
   const facts = list(input.facts, 2048).map((f) => createProposedKnowledgeRecord(f, snapshot, actor));
   const basis = {
-    schemaVersion: 'buildlore.knowledge-proposal.v1' as const,
+    schemaVersion: generic ? 'buildlore.knowledge-proposal.v2' as const : 'buildlore.knowledge-proposal.v1' as const,
+    ...(generic ? { rootPageId: knowledgePageKey(input.rootPageId) } : {}),
     projectId: project(input.projectId, snapshot.projectId), snapshotDigest: hash(input.snapshotDigest),
     baselineGenerationDigest: input.baselineGenerationDigest === null ? null : hash(input.baselineGenerationDigest),
     actor, facts, pages: input.pages, supersessions: input.supersessions, conflicts: input.conflicts,
@@ -61,9 +71,10 @@ export function parseKnowledgeProposal(value: unknown, snapshot: KnowledgeSnapsh
 function parseProposal(value: unknown, snapshot: KnowledgeSnapshotV1,
   canonicalize: boolean): KnowledgeProposalV1 {
   const input = record(boundedJson(value));
+  const generic = input.schemaVersion === 'buildlore.knowledge-proposal.v2';
   keys(input, ['schemaVersion', 'projectId', 'snapshotDigest', 'baselineGenerationDigest',
-    'actor', 'facts', 'pages', 'supersessions', 'conflicts', 'proposalDigest']);
-  if (input.schemaVersion !== 'buildlore.knowledge-proposal.v1' || input.snapshotDigest !== snapshot.snapshotDigest) invalid();
+    'actor', 'facts', 'pages', 'supersessions', 'conflicts', 'proposalDigest', ...(generic ? ['rootPageId'] : [])]);
+  if ((!generic && input.schemaVersion !== 'buildlore.knowledge-proposal.v1') || input.snapshotDigest !== snapshot.snapshotDigest) invalid();
   const actor = parseKnowledgeActor(input.actor);
   const facts = verifyProposedKnowledgeRecords(input.facts, snapshot, actor);
   const supersessions = list(input.supersessions, 2048).map((item) => {
@@ -86,10 +97,26 @@ function parseProposal(value: unknown, snapshot: KnowledgeSnapshotV1,
     return Object.freeze({ factIds });
   }).sort((a, b) => compare(digest(a), digest(b)));
   if (new Set(conflicts.map(digest)).size !== conflicts.length) invalid();
-  const basis = { schemaVersion: 'buildlore.knowledge-proposal.v1' as const,
+  const parsedPages = pages(input.pages, generic);
+  const rootPageId = generic ? knowledgePageKey(input.rootPageId) : undefined;
+  if (rootPageId !== undefined && !parsedPages.some(page => page.role === rootPageId)) invalid();
+  if (generic) {
+    const claims = parsedPages.flatMap(page => page.sections.flatMap(section => section.claims));
+    // Generic draft conversion creates one exact statement per claim. This permits
+    // one source judgment to cover the identical statement and its display claim.
+    if (claims.length !== facts.length || supersessions.length !== 0 || conflicts.length !== 0 ||
+        new Set(claims.flatMap(claim => claim.factIds)).size !== facts.length || parsedPages.some(page =>
+          page.sections.some(section => section.claims.some(claim => {
+          const fact = facts.find(item => item.id === claim.factIds[0]);
+          return claim.factIds.length !== 1 || !fact || fact.statement !== claim.text || fact.subject !== `wiki:${page.role}:${claim.claimId}` ||
+            fact.scope !== 'selected source material' || fact.predicate !== null || fact.lifecycle !== 'current';
+        })))) invalid();
+  }
+  const basis = { schemaVersion: generic ? 'buildlore.knowledge-proposal.v2' as const : 'buildlore.knowledge-proposal.v1' as const,
+    ...(rootPageId === undefined ? {} : { rootPageId }),
     projectId: project(input.projectId, snapshot.projectId), snapshotDigest: snapshot.snapshotDigest,
     baselineGenerationDigest: input.baselineGenerationDigest === null ? null : hash(input.baselineGenerationDigest),
-    actor, facts, pages: pages(input.pages), supersessions: Object.freeze(supersessions), conflicts: Object.freeze(conflicts) };
+    actor, facts, pages: parsedPages, supersessions: Object.freeze(supersessions), conflicts: Object.freeze(conflicts) };
   const result = Object.freeze({ ...basis, proposalDigest: digest(basis) });
   knowledgeReviewTargets(result);
   if (!canonicalize && digest(input) !== digest(result)) invalid();
@@ -104,7 +131,7 @@ export function knowledgeReviewTargets(proposal: KnowledgeProposalV1): readonly 
     ...proposal.conflicts.map((conflict) => `conflict:${digest(conflict)}`),
     // Titles are author-controlled claims too; they cannot escape coverage review.
     ...proposal.pages.flatMap((page) => [`title:${page.role}`,
-      ...page.sections.map((_, index) => `section:${page.role}:${String(index)}`)]),
+      ...page.sections.map((section, index) => `section:${page.role}:${section.sectionId ?? String(index)}`)]),
   ].sort(compare);
   if (targets.length > 8192 || new Set(targets).size !== targets.length) invalid();
   return Object.freeze(targets);

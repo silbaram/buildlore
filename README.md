@@ -79,6 +79,8 @@ node node_modules/buildlore/dist/cli/bin.js source add --project my-project --id
 
 ```
 
+`project add` creates `projects/my-project/profile-binding.json` with the built-in general v2 profile, including JSON support. Existing workspace settings are preserved and must support the declared inputs before registration succeeds.
+
 New projects deny external compilation by default. Review classification and allowed capabilities in `projects/my-project/security-policy.json` using the security policy section below before authoring. Inspect selections and policy failures with `sync --dry-run`; never disable secret detection to bypass a failure.
 
 ```sh
@@ -344,7 +346,8 @@ path; it does not require one entry per file:
 ```
 
 The project `profile-binding.json` must use `buildlore.profile-binding.v2` and bind
-the exact adapter registration digest. Generate this contract with the exported
+the exact adapter registration digest. `project add` generates this configuration
+for new workspaces. For an explicit update of an older workspace, generate it with the exported
 `createProfileBindingV2(...)` API instead of inventing a digest. Existing v1 profile
 bindings remain readable but intentionally authorize only their legacy adapters.
 After the v2 binding is installed, `source add --kind json` can add the built-in JSON
@@ -391,12 +394,12 @@ unsupported, or mismatched closure inputs fail selection before collection.
 Run `sync --dry-run` first. JSON parse/profile/adapter failures and quarantine entries
 return value-free reason codes; correct the source, binding, profile, or index and run
 the preview again. The sanitizer scans every selected JSON field, including fields
-excluded from projected text, so hiding a suspected secret with an extraction rule
+excluded from projected text, so hiding a credential with an extraction rule
 cannot make the source eligible. After closure verification, the P2A reference adapter
 normalizes only exact schema-bound technical metadata and segments structured
 path/taxonomy values so each component is still scanned. The common sanitizer may redact
-workspace paths; suspected credentials, unknown high-entropy components, and unsafe
-trace content still fail closed. A failed preview or sync writes no partial source and
+workspace paths. Recognizable credentials and structural safety failures stop ingestion;
+uncertain high-entropy components and suspicious instructions produce warnings. A failed preview or sync writes no partial source and
 does not replace healthy Wiki or semantic-index authority.
 
 ### 3. Register and bind projects from the hub
@@ -454,7 +457,7 @@ separate explicit project-scoped operation. Neither command reads or changes pro
 B or C while project A is selected.
 
 Source checkouts are read-only to BuildLore. Traversal, symlinks, non-regular files,
-identity mismatches, size/count limits, drift, and suspected secrets fail closed
+identity mismatches, size/count limits, drift, and recognizable credentials fail closed
 before persistence. Rejected values and absolute source roots are not echoed. The
 sanitized source, wiki, and compiler state remain confined to
 `/d/knowledge/projects/<project-id>/`.
@@ -526,19 +529,32 @@ source identity and exact source revision/content digest. Changing the selected
 bytes makes the old override stop matching. Never put the matched value or a secret
 in an override or `auditRef`. Omit any egress rule that the project does not need.
 
-To opt into source-only masking, add `"sourceSecretHandling": "mask"` after
-`overrides`. Omission or `"reject"` preserves existing security behavior. Intake
-masks detected credential and entropy spans, rescans the entire derivative, and
-uses only the approved derivative for sync and compilation. Original source files
-are not edited. After changing this digest-bound policy, resync and prepare a new
-Wiki generation run.
+The default ingestion policy blocks recognizable API keys, authentication tokens,
+password literals and private keys. High entropy alone, uncertain token-like identifiers,
+and suspicious instructions produce `sanitization-risk-warning` results and processing
+continues. Warnings contain rule IDs, counts and bounded safe source references, never
+matched values. Counts describe detector findings across scanned representations;
+they are not a count of unique secrets. Warning-only source text stays unchanged
+except for independent path redactions. Treat source instructions as untrusted data.
 
-Private keys, prompt injection (even with an override), ambiguous overlap, scan
-overflow, residual findings and unsafe citation metadata still fail closed. This
-option does not change AI proposal/review/evaluation validation or egress permissions.
-`<REDACTED:CREDENTIAL>` and `<REDACTED:SECRET>` denote unavailable values; affected
-lines are excluded from factual evidence in new knowledge snapshots. Masking
-handles detected risk; it does not guarantee detection of every secret.
+To opt into source-only masking, add `"sourceSecretHandling": "mask"` after
+`overrides`. Omission or `"reject"` blocks credential-bearing ingestion. Explicit
+masking removes detected credential spans, rescans the entire derivative, and
+uses only the approved derivative for sync and compilation. Original source files
+are not edited. Heuristic warnings do not cause masking. After changing this
+digest-bound policy, resync and prepare a new Wiki generation run.
+
+Private keys, ambiguous redaction overlap, excessive non-warning findings, residual
+credentials and unsafe citation metadata still fail closed. Warning counts do not
+consume the credential detection budget. Egress classification, provider permissions,
+and Wiki review/activation requirements remain separate from warning handling.
+`<REDACTED:CREDENTIAL>` and legacy `<REDACTED:SECRET>` denote unavailable values;
+affected lines are excluded from factual evidence in new knowledge snapshots.
+Detection is local and cannot identify every secret. JWT detection checks compact
+structure, not signature validity or whether a token is active.
+
+Security evidence now binds `buildlore.sanitizer-rules.v9`. Evidence from older rule
+versions requires resync/revalidation; it is not silently treated as current approval.
 
 ### 6. Compile and verify the wiki
 
@@ -594,14 +610,15 @@ The isolated project workspace contains flat sanitized sources under `sources/`,
 generated pages under `wiki/`, compiler state under `.llmwiki/`, and the applied
 language-neutral lifecycle profile.
 
-#### Project knowledge mode (opt-in, phase 1)
+#### Legacy question-bound project knowledge authoring
 
 This mode organizes generic Markdown/JSON into project facts and exactly three pages:
 overview, architecture and decisions. P2A is an optional source adapter, not the
-knowledge model. It is an opt-in development feature; protocol tests are not evidence
+knowledge model. This is the compatibility authoring path; protocol tests are not evidence
 that an independent AI can answer project questions correctly.
 
-Use this question-bound purpose file with the existing `compile hierarchy start` command.
+Use this older question-bound purpose file with `compile hierarchy start --allow-legacy-authoring`.
+For normal new Wiki generation, use [generic Wiki authoring](skills/buildlore-authoring/references/generic-wiki.md). The following three-page protocol is retained for compatibility.
 Choose questions and source requirements for the selected project before drafting:
 
 ```json
@@ -870,9 +887,16 @@ It reports `available`, `heading-only`, or `unavailable` plus matching evidence 
 field does not mean an empty array, and this helper neither collects omitted inputs nor changes adapters.
 For example, `{ id: "storage", sourceRef: "settings.json", jsonPointer: "/storage", contentKind: "json-value" }`
 requires the value, not just its heading. `compiler.inspectKnowledgeProposalGrounding(snapshot, proposal,
-projectId, previousGenerations?)` exposes the existing lexical-overlap check per claim before finalization.
-It does not change the threshold or replace semantic review; do not pad claims or unrelated evidence
-to satisfy it. Both helpers are pure codecs, not sanitizer or persistence boundaries: use the session's
+projectId, previousGenerations?)` exposes lexical overlap per claim as an authoring diagnostic.
+New independently reviewed project-knowledge runs use their bound semantic judgments for support,
+so translated prose does not need to share words with the source. Question coverage follows reviewed
+sections and their cited claims; the page title need not be repeated in the body. The v3 quality reports
+record the generation/review digests and retain lexical overlap as a diagnostic. Structural, citation,
+conflict, size and integrity checks still apply. Approval, activation and reads replay this same contract
+from the stored generation and review; serialized pass flags grant no authority. Existing v2 reports
+and pending finalized runs retain their original lexical policy and digests. Package upgrades do not
+approve or activate a Wiki. Do not pad claims or unrelated evidence to satisfy a diagnostic.
+Both helpers are pure codecs, not sanitizer or persistence boundaries: use the session's
 sanitized exchange as input. No producer-specific fields are hardcoded in these helpers.
 
 For each authoring question, `compiler.inspectKnowledgeQuestionCoverage(snapshot, proposal,
@@ -1064,9 +1088,10 @@ authors a hierarchical Wiki. Every handoff path is relative to the BuildLore hub
 every digest argument must be copied exactly from the preceding command result.
 
 ```sh
-# Refresh the sanitized project corpus, then create and inspect a durable local run.
+# Legacy hierarchy protocol: refresh the corpus and explicitly select compatibility authoring.
 node dist/cli/bin.js sync --project example
 node dist/cli/bin.js compile hierarchy start \
+  --allow-legacy-authoring \
   --project example \
   --purpose handoffs/wiki-purpose.json \
   --json
@@ -1466,7 +1491,13 @@ The pinned local embedding profile uses a versioned topical admission policy (`s
 
 ### Completeness authoring and knowledge limits
 
-The opt-in `completeness-v1` workflow maps reviewed inventory items to exact Wiki claims and requires both source/currentness review and omission review. A known unknown must be explained in the mapped prose; a citation or inventory label alone is insufficient.
+The explicitly selected strict `completeness-v2` workflow uses: a v5 purpose with source-bound `authoringQuestions` starts a v6 run. It maps reviewed inventory items to exact Wiki claims and requires both source/currentness review and omission review. A known unknown must be explained in the mapped prose; a citation or inventory label alone is insufficient. New basic/legacy starts require the explicit `--allow-legacy-authoring` compatibility option and report completeness as `unassessed`. Previously saved runs retain their original resume protocol.
+
+The authoring skill coordinates separate author, omission-review and source-support AI contexts. The omission reviewer inventories current selected sources before seeing the author's draft, including important unchanged information omitted by an older Wiki. Unavailable independent reviewers leave the work incomplete; changing an actor string does not establish independence. Human content inspection is not the routine quality step; approval and activation remain separate explicit actions.
+
+Role views carry a compact exchange projection and source counts instead of full source bodies. Use bound `inspect` requests and cursors for current sources/evidence and baseline records/evidence. `knowledge-completeness-material-request.v1` accepts `collection`, `cursor`, `limit` and `maxBytes`; the maximum response is 1 MiB. Oversized items retain their cursor and report the needed size. Inputs are never silently clipped or marked inspected because a view omitted them.
+
+New `knowledge-generation.v2` objects persist bounded completeness proof: frozen questions, source-first inventories, reconciliation, exact prose mappings and both reviews, including an admitted correction attempt. The same validator reconstructs these bindings during finalization, history approval, activation and reads. Old v1 generations and v4 runs preserve their original digests. Status distinguishes `pending`, `failed`, `verified`, `legacy-local-review` and `unassessed`; these describe the recorded review contract and do not guarantee semantic completeness.
 
 A supported current statement such as “the selected evidence does not establish production performance” uses `current` presentation. The unknown concerns the measurement, while the statement of the evidence limit is supported. `uncertainty` presentation remains reserved for claims referencing uncertain facts; do not fabricate stale or disputed records to use it. Stage views provide this guidance without changing stored exchange bindings.
 
@@ -1657,3 +1688,16 @@ A batch accepts 1–16 IDs (counted before deduplication), returns exact duplica
 Carry `expectedGeneration` on follow-ups. Discard prior read bindings when the generation or connection changes. Check the final explanation once for missing support. This is a caller procedure; BuildLore does not run an automatic reasoning loop or store a persistent read history.
 
 For local profiling, `ReadServiceHooks.observer`, reader options `observer`, and `CliRuntime.readObserver` accept an optional synchronous callback. It receives only `{ phase, durationMs, count }`, never queries, IDs, paths or source text. Phase durations are inclusive, so do not sum nested intervals as exclusive work. Profiling is off by default and does not change response schemas or send telemetry.
+
+In `completeness-v2`, unsupported or incomplete inventory statements can be explicitly corrected twice per run. Each correction preserves the blind inventory and all prior evidence, requires a full independent inventory re-review, then fresh prose mappings and both prose reviews. A transient run-status claim is corrected or removed with a recorded reason. Genuine source gaps and exhausted limits remain blocking; old failed runs retain their historical status. See [inventory correction](skills/buildlore-authoring/references/completeness.md#inventory-correction-in-completeness-v2).
+
+
+## Generic Wiki writing (default)
+
+Use the locally installed [authoring skill](skills/buildlore-authoring/SKILL.md) in the knowledge repository. `compile wiki` chooses 1–32 source-driven pages without requiring development questions or a pre-prose inventory. Business, policy, research and development material share the format; the development template is opt-in.
+
+The flow is **sync → draft → independent review → targeted corrections → finalize → explicit approval/activation → MCP reading**. The author writes page/section/statement/evidence input; BuildLore constructs internal fact IDs and bindings. A separate reviewer examines actual sources and prose. Up to two revisions preserve prior findings and resolutions. Supported useful prose can finish with `needs-attention`; unsupported statements are withheld and unresolved issues remain visible. Entirely unsupported/unusable content stays an incomplete draft. Structural, credential, project and source-drift checks still apply.
+
+Readers use existing MCP list/search/read/lookup/memory tools. Generic responses include `knowledgeReview` (status, open count, details page), including selective memory within its byte budget. A normal page read includes the remaining review findings. Approval does not mean every question is answered.
+
+See [commands and input examples](skills/buildlore-authoring/references/generic-wiki.md) and [the generic schema](schemas/project-wiki.schema.json). Previous strict completeness runs, three-page generations, history and active Wikis keep their original protocol and digests.

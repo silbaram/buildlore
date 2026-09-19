@@ -4,6 +4,7 @@ import { lstat, open, opendir, realpath } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative } from 'node:path';
 import { TextDecoder } from 'node:util';
 
+import { hasUntrustedInstructions } from '../sanitizer/findings.js';
 import { consumePreparedSource } from '../sanitizer/approval.js';
 import {
   createProjectSecurityService,
@@ -410,8 +411,7 @@ async function buildManifest(
         prepared.rulesVersion !== SANITIZER_RULES_VERSION ||
         prepared.source !== input.source || prepared.sourceKind !== input.sourceKind ||
         prepared.sourceRevisionOrContentSha256 !== input.sourceRevisionOrContentSha256 ||
-        prepared.untrustedData !== result.report.summaries.some((summary) =>
-          summary.action === 'quarantine' && summary.count > 0)) return denied();
+        prepared.untrustedData !== hasUntrustedInstructions(result.report.summaries)) return denied();
     classifications.add(result.report.classification);
     bindings.push([
       result.report.sourceIdentitySha256,

@@ -83,7 +83,7 @@ describe('project knowledge current-session handoff', () => {
     expect(instructions).toContain('Include unresolved development context');
     expect(instructions).toContain('sanitized evidence is read by the current AI session');
     expect(instructions).toContain('compiler/project-knowledge/session.ts');
-    expect(instructions).toContain('exact detected credential or entropy-risk spans');
+    expect(instructions).toContain('exact detected credential spans');
     expect(instructions).toContain('before the first migration of an existing Wiki');
     expect(instructions).toContain('unknown-full-history');
   });
@@ -110,7 +110,7 @@ describe('project knowledge current-session handoff', () => {
     expect(result.proposal.proposalDigest).toBe(proposal.proposalDigest);
   });
 
-  it('bridges independently reviewed text through existing hierarchy receipts and integrity', async () => {
+  it.each(['reviewed', 'lexical'] as const)('bridges %s text through existing hierarchy receipts and integrity', async qualityMode => {
     const fixture = await sessionFixture(true);
     const session = await fixture.service.prepare(fixture.input);
     const snapshot = session.exchange.snapshot;
@@ -148,19 +148,27 @@ describe('project knowledge current-session handoff', () => {
     const aggregateScan = await fixture.security.prepareSource({ projectId: 'parcel',
       source: 'project-knowledge-reader.md', sourceKind: 'wiki', body: serializedGeneration,
       bodyDigest: serializedDigest, sourceRevisionOrContentSha256: serializedDigest });
-    expect(aggregateScan.ok).toBe(false);
+    expect(aggregateScan.ok).toBe(true);
     expect(aggregateScan.report.summaries).toContainEqual(expect.objectContaining({
-      ruleId: 'prompt-injection.secret-exfiltration', action: 'quarantine',
+      ruleId: 'prompt-injection.secret-exfiltration', action: 'warn',
     }));
     const nextFixture = await sessionFixture(true);
     const resumed = await nextFixture.service.prepare({ ...nextFixture.input, previousGenerations: [generation] });
     expect(resumed.exchange.baselineGenerationDigest).toBe(generation.generationDigest);
     expect(resumed.exchange.previousRecords).toEqual(generation.records);
     const bridge = await bridgeKnowledgeToHierarchy({ knowledgeRoot: fixture.root, generation,
-      baselineGenerationDigest: null, baselineProposals: [] });
+      baselineGenerationDigest: null, baselineProposals: [], qualityMode });
     expect(bridge.pageMappings.map((m) => m.role).sort()).toEqual([...roles].sort());
     expect(bridge.finalization.integrityReport).toBeDefined();
-    expect(() => finalizeCompileRun(bridge.finalization, 'parcel')).not.toThrow();
+    expect(() => finalizeCompileRun(bridge.finalization, 'parcel', bridge.reviewedQuality)).not.toThrow();
+    const expectedLedgerDigest = finalizeCompileRun(bridge.finalization, 'parcel', bridge.reviewedQuality).ledgerDigest;
+    const restoredBridge = await bridgeKnowledgeToHierarchy({ knowledgeRoot: fixture.root, generation,
+      baselineGenerationDigest: null, baselineProposals: [], expectedLedgerDigest });
+    expect(finalizeCompileRun(restoredBridge.finalization, 'parcel', restoredBridge.reviewedQuality).ledgerDigest).toBe(expectedLedgerDigest);
+    expect(restoredBridge.finalization.corpusQualityReport.schemaVersion).toBe(bridge.finalization.corpusQualityReport.schemaVersion);
+    await expect(bridgeKnowledgeToHierarchy({ knowledgeRoot: fixture.root, generation,
+      baselineGenerationDigest: null, baselineProposals: [], expectedLedgerDigest: digest('different ledger') }))
+      .rejects.toMatchObject({ code: 'KNOWLEDGE_DRIFT' });
     for (const e of generation.evidence) {
       const sourceId = `source-${digestHierarchyValue({ projectId: 'parcel', evidenceId: e.evidenceId }).slice(7)}`;
       const unit = bridge.snapshot.textUnits.find((u) => u.sourceId === sourceId);

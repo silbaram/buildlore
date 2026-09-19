@@ -35,7 +35,7 @@ export interface KnowledgeWorkflowFixture {
 }
 
 export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' | 'optional-p2a',
-  options: Readonly<{ sourceDetails?: boolean; projectId?: string; directWorkspace?: boolean }> = {}): Promise<KnowledgeWorkflowFixture> {
+  options: Readonly<{ sourceDetails?: boolean; projectId?: string; directWorkspace?: boolean; legacyAuthoring?: boolean }> = {}): Promise<KnowledgeWorkflowFixture> {
   const root = await mkdtemp(join(tmpdir(), 'buildlore-knowledge-e2e-'));
   const sourceRoot = join(root, 'source');
   const hubRoot = join(root, 'hub');
@@ -118,7 +118,11 @@ export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' |
       async cli(args) {
         let stdout = '';
         let stderr = '';
-        const exitCode = await runCli([...args, '--json'], { stdout: (v) => { stdout += v; }, stderr: (v) => { stderr += v; } }, { cwd: hubRoot });
+        // Historical reader fixtures intentionally retain their legacy writing protocol.
+        // Standard-authoring tests opt out and exercise the actual default admission gate.
+        const compatibility = options.legacyAuthoring !== false && !args.includes('--allow-legacy-authoring') && args.slice(0, 3).join(' ') === 'compile hierarchy start'
+          ? ['--allow-legacy-authoring'] : [];
+        const exitCode = await runCli([...args, ...compatibility, '--json'], { stdout: (v) => { stdout += v; }, stderr: (v) => { stderr += v; } }, { cwd: hubRoot });
         const parsed = stdout === '' ? {} : record(JSON.parse(stdout) as unknown);
         return { exitCode, data: record(parsed.data ?? parsed), stderr };
       },

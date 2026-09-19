@@ -152,6 +152,9 @@
     },
     "mode": {
       "const": "knowledge"
+    },
+    "knowledgeReview": {
+      "$ref": "project-wiki.schema.json#/$defs/readMetadata"
     }
   }
 }

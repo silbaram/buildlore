@@ -1,3 +1,5 @@
+import { createProjectWikiWorkflow } from './project-wiki-workflow.js';
+import { safeSyncSourceRef } from '../projector/sync-sanitization-diagnostics.js';
 import { workspaceGuide } from '../application/workspace-guide.js';
 import { createWorkspacePublicationService, normalizeWorkspacePublication } from '../knowledge/workspace-publication.js';
 import { initializeKnowledgeWorkspace, resolveWorkspaceLayout, inspectKnowledgeWorkspace, type WorkspaceLayout } from '../knowledge/knowledge-workspace.js';
@@ -51,6 +53,7 @@ import {
 } from '../projector/index.js';
 import { SECURITY_RULES } from '../sanitizer/index.js';
 import { readSourceCollectionManifest } from '../projector/source-manifest.js';
+import { createProfileBindingV2, resolveRegisteredProfileBinding } from '../profile/index.js';
 import {
   createKnowledgePublicationService,
   createParentKnowledgePinService,
@@ -101,7 +104,7 @@ import {
 } from './hierarchical-workflow.js';
 import { createProjectKnowledgeWorkflow, type ProjectKnowledgeWorkflowService } from './project-knowledge-workflow.js';
 import { createKnowledgeWikiReader } from '../retrieval/project-knowledge-reader.js';
-import { hash, choice, invalid } from '../knowledge/project-knowledge/guards.js';
+import { hash, choice, invalid, ProjectKnowledgeError } from '../knowledge/project-knowledge/guards.js';
 import { HELP_TEXT } from './help.js';
 import { CliUsageError, CONNECTED_READ_COMMANDS, inferCliCommand, parseCliArguments } from './parser.js';
 import { renderCliResult, writeRenderedCliResult } from './presentation.js';
@@ -346,7 +349,7 @@ type RoutedHierarchyWorkflow = {
 };
 
 function createDefaultHierarchyWorkflow(runtime: CliRuntime, role?: CompletenessRole,
-  stageBound = false): RoutedHierarchyWorkflow {
+  stageBound = false, allowLegacyAuthoring = false): RoutedHierarchyWorkflow {
   const legacy = createHierarchicalWorkflowService({
     compiler: createProjectSessionCompiler({
       hubRoot: runtime.cwd,
@@ -363,6 +366,7 @@ function createDefaultHierarchyWorkflow(runtime: CliRuntime, role?: Completeness
   return {
     async start(projectId, purposeFile) {
       if (await completeness.handlesPurpose(projectId, purposeFile)) return completeness.start(projectId, purposeFile);
+      if (!allowLegacyAuthoring) throw new ProjectKnowledgeError('KNOWLEDGE_COMPLETENESS_REQUIRED');
       return (await knowledge.handlesPurpose(projectId, purposeFile) ? knowledge : legacy).start(projectId, purposeFile);
     },
     async status(projectId, runId) {
@@ -654,18 +658,27 @@ async function executeCommand(
         sourceRepository,
         sourceRoot,
       });
-      await readSourceCollectionManifest(candidate.checkout, projectId, {
+      const sources = await readSourceCollectionManifest(candidate.checkout, projectId, {
         sourceAdapterRegistry: CLI_SOURCE_ADAPTER_REGISTRY,
       });
+      const declaredAdapters = new Set(sources.manifest.sources.map(source =>
+        'adapterId' in source ? source.adapterId :
+          source.documentKind === 'p2a-planning' ? 'buildlore.p2a' : 'buildlore.generic'));
+      const registrations = CLI_JSON_KNOWLEDGE_ADAPTERS
+        .filter(adapter => declaredAdapters.has(adapter.registration.adapterId));
       let binding: Awaited<ReturnType<typeof bindLocalProject>> | undefined;
       const project = await addProject(runtimeKnowledgeRoot(runtime), {
         displayName: stringOption(command, '--name') ?? projectId,
         projectId,
         sourceRepository,
       }, {
+        initialProfileBinding: createProfileBindingV2('general', 'en', registrations),
         afterRegistration: async () => {
+          const profile = await resolveRegisteredProfileBinding(runtimeKnowledgeRoot(runtime), projectId, {
+            registrations: CLI_JSON_KNOWLEDGE_ADAPTERS,
+          });
           await readSourceCollectionManifest(candidate.checkout, projectId, {
-            sourceAdapterRegistry: CLI_SOURCE_ADAPTER_REGISTRY,
+            sourceAdapterRegistry: profile.sourceAdapters,
           });
           binding = await bindLocalProject(runtime.cwd, {
             expectedBindingDigest: null,
@@ -919,10 +932,35 @@ async function executeCommand(
         projectId,
       });
     }
+    case 'compile.wiki.start':
+    case 'compile.wiki.status':
+    case 'compile.wiki.inspect':
+    case 'compile.wiki.submit':
+    case 'compile.wiki.review':
+    case 'compile.wiki.revise':
+    case 'compile.wiki.finalize':
+    case 'compile.wiki.approve': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const service = createProjectWikiWorkflow({ hubRoot: runtime.cwd, knowledgeRoot: runtimeKnowledgeRoot(runtime),
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+      if (command.command === 'compile.wiki.start') return service.start(projectId, requiredStringOption(command, '--purpose'));
+      const runId = requiredStringOption(command, '--run');
+      if (command.command === 'compile.wiki.status') return service.status(projectId, runId);
+      if (command.command === 'compile.wiki.approve') return service.approve(projectId, runId,
+        requiredStringOption(command, '--expect-ledger') as `sha256:${string}`, command.options['--confirm-approval'] === true);
+      const stage = requiredStringOption(command, '--expect-stage') as `sha256:${string}`;
+      if (command.command === 'compile.wiki.finalize') return service.finalize(projectId, runId, stage);
+      const input = requiredStringOption(command, '--input');
+      if (command.command === 'compile.wiki.inspect') return service.inspect(projectId, runId, input, stage);
+      if (command.command === 'compile.wiki.review') return service.review(projectId, runId, input, stage);
+      return service.submit(projectId, runId, input, stage, command.command === 'compile.wiki.revise');
+    }
     case 'compile.hierarchy.start': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
-      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).start(
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime, undefined, false,
+        command.options['--allow-legacy-authoring'] === true)).start(
         projectId,
         requiredStringOption(command, '--purpose'),
       );
@@ -1005,13 +1043,14 @@ async function executeCommand(
     case 'compile.hierarchy.completeness.submit':
     case 'compile.hierarchy.completeness.review':
     case 'compile.hierarchy.completeness.source-review':
-    case 'compile.hierarchy.completeness.correct': {
+    case 'compile.hierarchy.completeness.correct':
+    case 'compile.hierarchy.completeness.correct-inventory': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const service = createProjectKnowledgeCompletenessWorkflow({ hubRoot: runtime.cwd,
         knowledgeRoot: runtimeKnowledgeRoot(runtime), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
       const action = command.command.slice('compile.hierarchy.completeness.'.length);
-      const names = ['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct'] as const;
+      const names = ['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct', 'correct-inventory'] as const;
       const selected = names.find(name => name === action);
       if (selected === undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
       return service.write(selected, projectId, requiredStringOption(command, '--run'), requiredStringOption(command, '--input'),
@@ -1199,7 +1238,7 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
   if (typeof data !== 'object' || data === null || !('warnings' in data) ||
       !Array.isArray(data.warnings)) return [];
   const redactionRuleIds = new Set(SECURITY_RULES
-    .filter((rule) => rule.action === 'redact')
+    .filter((rule) => rule.action === 'redact' || rule.action === 'warn')
     .map((rule) => rule.ruleId));
   const warnings = data.warnings.map((warning: unknown) => {
     if (typeof warning === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(warning)) {
@@ -1212,7 +1251,7 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
         typeof warning.code !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(warning.code)) {
       return null;
     }
-    if (warning.code !== 'sanitization-redaction-applied') {
+    if (warning.code !== 'sanitization-redaction-applied' && warning.code !== 'sanitization-risk-warning') {
       return Object.freeze({
         code: warning.code,
         message: 'The command completed with a structured warning.',
@@ -1220,7 +1259,7 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
     }
     if (
       Object.keys(warning).some((key) =>
-        !['code', 'occurrenceCount', 'ruleId', 'sourceCount'].includes(key)) ||
+        !['code', 'occurrenceCount', 'ruleId', 'sourceCount', 'sourceRefs', 'omittedSourceCount'].includes(key)) ||
       !('ruleId' in warning) || typeof warning.ruleId !== 'string' ||
       !redactionRuleIds.has(warning.ruleId) ||
       !('occurrenceCount' in warning) || typeof warning.occurrenceCount !== 'number' ||
@@ -1229,9 +1268,14 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
       !Number.isSafeInteger(warning.sourceCount) || warning.sourceCount <= 0 ||
       warning.sourceCount > warning.occurrenceCount
     ) return null;
+    const refs = 'sourceRefs' in warning && Array.isArray(warning.sourceRefs)
+      ? warning.sourceRefs.slice(0, 32).filter((ref: unknown): ref is string =>
+          typeof ref === 'string' && safeSyncSourceRef(ref) === ref) : [];
     return Object.freeze({
       code: warning.code,
-      message: `Sanitizer rule ${warning.ruleId} redacted ${warning.occurrenceCount} occurrence(s) across ${warning.sourceCount} source(s).`,
+      message: warning.code === 'sanitization-risk-warning'
+        ? `Sanitizer rule ${warning.ruleId} flagged ${warning.occurrenceCount} occurrence(s) across ${warning.sourceCount} source(s); processing continued.${refs.length > 0 ? ` Files: ${refs.join(', ')}.` : ''}`
+        : `Sanitizer rule ${warning.ruleId} redacted ${warning.occurrenceCount} occurrence(s) across ${warning.sourceCount} source(s).`,
     });
   });
   if (warnings.some((warning) => warning === null)) return [];

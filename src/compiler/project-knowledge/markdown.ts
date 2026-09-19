@@ -1,3 +1,5 @@
+import { knowledgeWikiAssessment } from './wiki-contracts.js';
+import { knowledgeCitationSeparator } from './hierarchy-prose.js';
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
 import { digest, invalid, sha256 } from '../../knowledge/project-knowledge/guards.js';
 import type { KnowledgeDigest, KnowledgeGenerationV1, KnowledgePageV1 } from '../../knowledge/project-knowledge/types.js';
@@ -18,10 +20,12 @@ function renderPageV2(generation: KnowledgeGenerationV1, page: KnowledgePageV1):
   const evidenceIds = [...new Set(supports.flatMap(s => s.fact.evidenceIds))].sort();
   return [`# ${label(page.title)}`, '', `Project: ${generation.projectId}`, `Generation: ${generation.generationDigest}`,
     `Snapshot: ${generation.snapshot.snapshotDigest}`, '',
+    ...(generation.wikiProof === undefined ? [] : [`Review: ${knowledgeWikiAssessment(generation)?.status}; open issues: ${knowledgeWikiAssessment(generation)?.openFindingCount}.`,
+      'Unsupported assertions are withheld. Review findings and unresolved source gaps: knowledge.json (assessment).', '']),
     'Cite [evidence:sha256:…] for source content and [fact:sha256:…] for recorded knowledge state. ' +
       'A heading is not a value. State does not prove running code; absent evidence does not prove feature removal.', '',
     ...page.sections.flatMap(section => [`## ${label(section.title)}`, '', ...section.claims.flatMap(claim => [
-      `${claim.presentation === 'current' ? '' : `[${claim.presentation}] `}${claim.text} ` +
+      `${claim.presentation === 'current' ? '' : `[${claim.presentation}] `}${claim.text}${knowledgeCitationSeparator(claim.text, generation.rendererVersion === 'knowledge-markdown-v3')}` +
         claim.factIds.map(id => `[^citation-${id.slice(7)}]`).join(' '), ''])]),
     '## Knowledge state', '', ...supports.map(s => {
       const f = s.fact;
@@ -49,7 +53,7 @@ export function renderKnowledgeFiles(generation: KnowledgeGenerationV1): readonl
   const facts = new Map(generation.records.map((r) => [r.id, r]));
   const evidence = new Map(generation.evidence.map((e) => [e.evidenceId, e]));
   for (const page of generation.pages) {
-    if (generation.rendererVersion === 'knowledge-markdown-v2') {
+    if (generation.rendererVersion === 'knowledge-markdown-v2' || generation.rendererVersion === 'knowledge-markdown-v3') {
       const body = renderPageV2(generation, page);
       if (Buffer.byteLength(body) > 262_144) invalid();
       result.push(file(`${page.role}.md`, body));
@@ -86,8 +90,9 @@ export function renderKnowledgeFiles(generation: KnowledgeGenerationV1): readonl
     if (Buffer.byteLength(body) > 262_144) invalid();
     result.push(file(`${page.role}.md`, body));
   }
-  result.push(file('knowledge.json', serializeCanonicalJson({ schemaVersion: 'buildlore.knowledge-records.v1',
-    projectId: generation.projectId, generationDigest: generation.generationDigest, records: generation.records })));
+  result.push(file('knowledge.json', serializeCanonicalJson({ schemaVersion: generation.wikiProof === undefined ? 'buildlore.knowledge-records.v1' : 'buildlore.knowledge-records.v2',
+    projectId: generation.projectId, generationDigest: generation.generationDigest, records: generation.records,
+    ...(generation.wikiProof === undefined ? {} : { assessment: knowledgeWikiAssessment(generation) }) })));
   result.push(file('evidence.json', serializeCanonicalJson({ schemaVersion: 'buildlore.knowledge-evidence-manifest.v1',
     projectId: generation.projectId, generationDigest: generation.generationDigest, evidence: generation.evidence })));
   const basis = { schemaVersion: 'buildlore.knowledge-materialization.v1', projectId: generation.projectId,

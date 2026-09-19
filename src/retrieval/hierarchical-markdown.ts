@@ -1,3 +1,4 @@
+import { knowledgePageKey } from '../compiler/project-knowledge/proposal.js';
 import { latestKnowledgeGeneration } from './project-knowledge-authority.js';
 import { createHash } from 'node:crypto';
 
@@ -20,6 +21,7 @@ export const HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION =
   'buildlore.hierarchical-markdown-materialization-manifest.v2' as const;
 export const KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION =
   'buildlore.hierarchical-markdown-materialization-manifest.v3' as const;
+export const GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION = 'buildlore.hierarchical-markdown-materialization-manifest.v4' as const;
 export const HIERARCHICAL_MARKDOWN_STATUS_SCHEMA_VERSION =
   'buildlore.hierarchical-markdown-materialization-status.v2' as const;
 export const HIERARCHICAL_MARKDOWN_PAGE_SCHEMA_VERSION =
@@ -91,6 +93,8 @@ const KNOWLEDGE_MARKDOWN_V2_RENDERER_DIGEST = digestValue({ schemaVersion: 'buil
 export function knowledgeMarkdownRendererDigest(version: KnowledgeRendererVersion): `sha256:${string}` {
   if (version === 'knowledge-markdown-v1') return KNOWLEDGE_MARKDOWN_RENDERER_DIGEST;
   if (version === 'knowledge-markdown-v2') return KNOWLEDGE_MARKDOWN_V2_RENDERER_DIGEST;
+  if (version === 'knowledge-markdown-v3') return digestValue({ schemaVersion: 'buildlore.knowledge-markdown-renderer.v3',
+    pages: 'source-selected-free-page-keys', prose: 'independently-supported-only', issues: 'visible-assessment-and-knowledge-metadata' });
   return fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
 }
 
@@ -156,7 +160,7 @@ export interface HierarchicalMarkdownMaterializationManifestV1 {
   readonly recordDigest: `sha256:${string}`;
   readonly rendererDigest: `sha256:${string}`;
   readonly sanitizerPolicyDigest: `sha256:${string}`;
-  readonly schemaVersion: typeof HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION | typeof KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION;
+  readonly schemaVersion: typeof HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION | typeof KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION | typeof GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION;
 }
 
 export interface HierarchicalMarkdownRenderedFileV1 extends
@@ -795,9 +799,9 @@ function renderKnowledgeMaterialization(publication: ApprovedWikiPublicationSnap
   const basis = { authorityDigest: publication.authorityDigest, corpusDigest: publication.projection.corpus.corpusDigest,
     files: files.map(({ body, ...metadata }) => { void body; return metadata; }),
     generationDigest: publication.projection.corpus.generationDigest, knowledgeGenerationDigest: generation.generationDigest,
-    pageCount: 3, projectId: generation.projectId, projectionDigest: publication.projection.projectionDigest,
+    pageCount: generation.pages.length, projectId: generation.projectId, projectionDigest: publication.projection.projectionDigest,
     recordDigest: publication.recordDigest, rendererDigest: knowledgeMarkdownRendererDigest(generation.rendererVersion),
-    sanitizerPolicyDigest: publication.projection.sanitizerPolicyDigest, schemaVersion: KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION };
+    sanitizerPolicyDigest: publication.projection.sanitizerPolicyDigest, schemaVersion: generation.rendererVersion === 'knowledge-markdown-v3' ? GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION : KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION };
   const manifest = { ...basis, materializationDigest: digestValue(basis) };
   const manifestBody = serializeCanonicalJson(manifest);
   if (Buffer.byteLength(manifestBody) > HIERARCHICAL_MARKDOWN_MAXIMUM_MANIFEST_BYTES ||
@@ -806,9 +810,12 @@ function renderKnowledgeMaterialization(publication: ApprovedWikiPublicationSnap
 }
 
 function parseKnowledgeManifest(value: Readonly<Record<string, unknown>>, projectId: string): HierarchicalMarkdownMaterializationManifestV1 {
+  const generic = value.schemaVersion === GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION;
+  if (generic && (typeof value.pageCount !== 'number' || !Number.isSafeInteger(value.pageCount) || value.pageCount < 1 || value.pageCount > 32 ||
+    value.rendererDigest !== knowledgeMarkdownRendererDigest('knowledge-markdown-v3'))) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
   if (!exactKeys(value, [...MANIFEST_PROPERTIES, 'knowledgeGenerationDigest']) || value.projectId !== projectId ||
-      value.schemaVersion !== KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION || value.pageCount !== 3 ||
-      !Array.isArray(value.files) || value.files.length !== 5) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+      (!generic && (value.schemaVersion !== KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION || value.pageCount !== 3)) ||
+      !Array.isArray(value.files) || value.files.length !== Number(value.pageCount) + 2) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
   const files: HierarchicalMarkdownFileRecordV1[] = value.files.map((file: unknown) => {
     if (!isRecord(file) || typeof file.path !== 'string' || !isDigest(file.sha256) ||
         typeof file.byteLength !== 'number' || !Number.isSafeInteger(file.byteLength) || file.byteLength < 1) return fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
@@ -818,7 +825,7 @@ function parseKnowledgeManifest(value: Readonly<Record<string, unknown>>, projec
       return { path: file.path, byteLength: file.byteLength, sha256: file.sha256, kind: file.kind };
     }
     if (!exactKeys(file, ['path', 'byteLength', 'sha256', 'kind', 'role', 'pageId', 'proposalDigest', 'claimIds']) ||
-        file.kind !== 'page' || !['overview', 'architecture', 'decisions'].includes(String(file.role)) ||
+        file.kind !== 'page' || (generic ? knowledgePageKey(file.role) !== file.role : !['overview', 'architecture', 'decisions'].includes(String(file.role))) ||
         file.path !== `${String(file.role)}.md` || file.byteLength > 262_144 ||
         typeof file.pageId !== 'string' || !PAGE_ID_PATTERN.test(file.pageId) || !isDigest(file.proposalDigest) ||
         !Array.isArray(file.claimIds) || file.claimIds.length === 0 || file.claimIds.length > 8192 ||
@@ -828,8 +835,10 @@ function parseKnowledgeManifest(value: Readonly<Record<string, unknown>>, projec
       role: file.role as KnowledgePageRole, pageId: file.pageId, proposalDigest: file.proposalDigest,
       claimIds: file.claimIds as readonly string[] };
   });
-  if (files.map((f) => f.path).join('\0') !== ['architecture.md', 'decisions.md', 'evidence.json', 'knowledge.json', 'overview.md'].join('\0') ||
-      new Set(files.filter((f) => f.kind === 'page').map((f) => f.pageId)).size !== 3 ||
+  const expectedPaths = generic ? [...files.filter(f => f.kind === 'page').map(f => f.path), 'knowledge.json', 'evidence.json'].sort()
+    : ['architecture.md', 'decisions.md', 'evidence.json', 'knowledge.json', 'overview.md'];
+  if (files.map(f => f.path).join('\0') !== expectedPaths.join('\0') || new Set(expectedPaths).size !== expectedPaths.length ||
+      new Set(files.filter((f) => f.kind === 'page').map((f) => f.pageId)).size !== value.pageCount ||
       ['authorityDigest', 'corpusDigest', 'generationDigest', 'knowledgeGenerationDigest', 'materializationDigest',
         'projectionDigest', 'recordDigest', 'rendererDigest', 'sanitizerPolicyDigest'].some((key) => !isDigest(value[key]))) {
     fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
@@ -900,7 +909,7 @@ export function parseHierarchicalMarkdownManifest(
   value: unknown,
   projectId: string,
 ): HierarchicalMarkdownMaterializationManifestV1 {
-  if (isRecord(value) && value.schemaVersion === KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION) return parseKnowledgeManifest(value, projectId);
+  if (isRecord(value) && (value.schemaVersion === KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION || value.schemaVersion === GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION)) return parseKnowledgeManifest(value, projectId);
   if (!isRecord(value) || !exactKeys(value, MANIFEST_PROPERTIES) ||
       value.schemaVersion !== HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION ||
       value.projectId !== projectId || typeof value.pageCount !== 'number' ||

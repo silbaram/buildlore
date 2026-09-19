@@ -133,7 +133,7 @@ describe('hierarchical current-session JSON Schema', () => {
     expect(serialized).toContain('buildlore.external-generation-audit.v1');
     expect(serialized).toContain('sanitized-evidence-only');
     expect(serialized).toContain('current-agent-session');
-    expect(serialized).toContain('buildlore.sanitizer-rules.v8');
+    expect(serialized).toContain('buildlore.sanitizer-rules.v9');
     expect(serialized).toContain('sanitizerInputDigest');
     expect(serialized).not.toContain('claimId');
     expect(schema.$defs.generationExchange['x-buildlore-maxUtf8Bytes']).toBe(524_288);

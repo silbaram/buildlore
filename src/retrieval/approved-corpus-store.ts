@@ -1,3 +1,5 @@
+import type { ReviewedKnowledgeQuality } from '../compiler/hierarchy/reviewed-quality.js';
+import { knowledgeReviewedQuality, latestKnowledgeGeneration } from './project-knowledge-authority.js';
 import { createKnowledgeGenerationHistoryStore, type KnowledgeGenerationHistoryStorePort } from './project-knowledge-history-store.js';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -633,11 +635,16 @@ function verifyAuthority(
       : 'APPROVED_WIKI_PROJECTION_PROJECT_MISMATCH');
   }
   try {
+    let reviewedQuality: ReviewedKnowledgeQuality | undefined;
     if (value.schemaVersion === 'buildlore.approved-wiki-authority.v3' && historyMode) {
       verifyResolvedKnowledgeAuthorityExtension(value.knowledgeGeneration, value);
+      reviewedQuality = knowledgeReviewedQuality(latestKnowledgeGeneration(value.knowledgeGeneration), value.finalization);
       if (value.baselineRecordDigest !== null && !DIGEST_PATTERN.test(value.baselineRecordDigest)) fail('APPROVED_WIKI_PROJECTION_INVALID');
       if ((value.currentState === null) !== (value.baselineRecordDigest === null)) fail('APPROVED_WIKI_PROJECTION_INVALID');
-    } else if (knowledgeMode) parseKnowledgeAuthorityExtension(value.knowledgeGeneration, value);
+    } else if (knowledgeMode) {
+      const extension = parseKnowledgeAuthorityExtension(value.knowledgeGeneration, value);
+      reviewedQuality = knowledgeReviewedQuality(latestKnowledgeGeneration(extension), value.finalization);
+    }
     const expectedState = verifyCompileRunApproval({
       currentState: value.currentState,
       finalization: value.finalization,
@@ -645,7 +652,7 @@ function verifyAuthority(
       ledger: value.ledger,
       liveSnapshot: value.liveSnapshot,
       ownershipGraph: value.ownershipGraph,
-    }, expectedProjectId);
+    }, expectedProjectId, reviewedQuality);
     if (!sameValue(expectedState, value.state)) fail('APPROVED_WIKI_PROJECTION_INVALID');
     const expectedCheck = checkAuthoritativeWikiState(
       expectedState,

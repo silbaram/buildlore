@@ -1,3 +1,5 @@
+import { knowledgeWikiReadMetadata } from './wiki-contracts.js';
+import { knowledgeCitationSeparator } from './hierarchy-prose.js';
 import { invalid } from '../../knowledge/project-knowledge/guards.js';
 import type { KnowledgeGenerationV1 } from '../../knowledge/project-knowledge/types.js';
 
@@ -9,16 +11,17 @@ function label(value: string): string {
  * No ranking, oracle, truncation, summarization or mutation of stored Markdown.
  * Full prose, scope, state and evidence identities stay visible; excerpts use lookup.
  */
-export function renderKnowledgeReaderPages(input: Pick<KnowledgeGenerationV1, 'projectId' | 'records' | 'pages'>):
+export function renderKnowledgeReaderPages(input: Pick<KnowledgeGenerationV1, 'projectId' | 'records' | 'pages'> & Partial<Pick<KnowledgeGenerationV1, 'schemaVersion' | 'wikiProof' | 'proposal' | 'generationDigest'>>):
 readonly Readonly<{ path: string; body: string }>[] {
   const records = new Map(input.records.map(fact => [fact.id, fact]));
   return Object.freeze(input.pages.map(page => {
     const used = [...new Set(page.sections.flatMap(section => section.claims.flatMap(claim => claim.factIds)))].sort();
     const body = [`# ${label(page.title)}`, '', `Project: ${input.projectId}; reading format: knowledge-reader-v1`, '',
+      ...(input.schemaVersion === 'buildlore.knowledge-generation.v3' ? [JSON.stringify(knowledgeWikiReadMetadata(input as KnowledgeGenerationV1)), ''] : []),
       'Full Wiki prose below. Source excerpts and full fact provenance are available through lookup, not omitted facts. ' +
       'Fact state is not proof of running code. Read source evidence before making source-level assertions.', '',
       ...page.sections.flatMap(section => [`## ${label(section.title)}`, '', ...section.claims.flatMap(claim => [
-        `${claim.presentation === 'current' ? '' : `[${claim.presentation}] `}${claim.text} ` +
+        `${claim.presentation === 'current' ? '' : `[${claim.presentation}] `}${claim.text}${knowledgeCitationSeparator(claim.text, input.schemaVersion === 'buildlore.knowledge-generation.v3')}` +
           claim.factIds.map(id => `[fact:${id}]`).join(' '), ''])]),
       '## Fact scope, state and source lookup IDs', '', ...used.map(id => {
         const fact = records.get(id);

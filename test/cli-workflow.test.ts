@@ -1166,6 +1166,23 @@ describe('canonical CLI workflow', () => {
     expect(human.stdout).toContain('warning p2a-additive-field-ignored:');
   });
 
+  it('shows heuristic warnings and safe source references while keeping a successful exit', async () => {
+    const cwd = await createConfiguredRepository();
+    const runtime: CliRuntime = { cwd, sync: { sync: input => Promise.resolve({
+      ...syncSummary(input), partial: true, warnings: [{ code: 'sanitization-risk-warning',
+        occurrenceCount: 3, ruleId: 'entropy.candidate', sourceCount: 1,
+        sourceRefs: ['docs/reference.md'], omittedSourceCount: 0 }],
+    }) } };
+    for (const args of [['sync', '--project', 'alpha', '--dry-run'],
+      ['sync', '--project', 'alpha', '--dry-run', '--json']]) {
+      const result = await capture(args, runtime);
+      expect(result).toMatchObject({ exitCode: 0, stderr: '' });
+      expect(result.stdout).toContain('sanitization-risk-warning');
+      expect(result.stdout).toContain('processing continued');
+      expect(result.stdout).toContain('docs/reference.md');
+    }
+  });
+
   it('presents every value-free sanitizer redaction aggregate without code-based loss', async () => {
     const cwd = await createConfiguredRepository();
     const sentinel = '/opt/synthetic-buildlore/private-source.md';

@@ -1,5 +1,6 @@
 import { isAbsolute, posix, win32 } from 'node:path';
 
+import { containsCredentialMaterial } from '../sanitizer/service.js';
 import {
   SANITIZATION_REPORT_SCHEMA_VERSION,
   SANITIZER_RULES_VERSION,
@@ -13,6 +14,7 @@ import type {
   ProjectSyncSanitizationRuleSummary,
   ProjectSyncSanitizationSource,
   ProjectSyncRedactionWarning,
+  ProjectSyncRiskWarning,
 } from './sync.js';
 
 export const MAX_SYNC_SANITIZATION_DIAGNOSTIC_SOURCES = 32;
@@ -77,14 +79,14 @@ function hasUnsafeCharacter(value: string): boolean {
   return false;
 }
 
-function safeSourceRef(value: string | null): string | null {
+export function safeSyncSourceRef(value: string | null): string | null {
   if (value === null) return null;
   const segments = value.split('/');
   return value.length > 0 && value.length <= 512 && value === value.normalize('NFC') &&
     !isAbsolute(value) && !win32.isAbsolute(value) && !/^[A-Za-z]:/u.test(value) &&
     !value.includes('\\') && !value.endsWith('/') && posix.normalize(value) === value &&
     segments.every((segment) => segment !== '' && segment !== '.' && segment !== '..') &&
-    !hasUnsafeCharacter(value) && !CREDENTIAL_PATH_PATTERN.test(value)
+    !hasUnsafeCharacter(value) && !CREDENTIAL_PATH_PATTERN.test(value) && !containsCredentialMaterial(value)
     ? value
     : null;
 }
@@ -124,14 +126,14 @@ function aggregate(
         findingsOverflow: input.findingsOverflow,
         sourceIdentitySha256: input.sourceIdentitySha256,
         sourceKind: input.sourceKind,
-        sourceRef: safeSourceRef(input.sourceRef),
+        sourceRef: safeSyncSourceRef(input.sourceRef),
         overflowedSummaryKeys: new Set(),
         summaries: new Map(),
       };
       groups.set(key, group);
     } else {
       group.findingsOverflow ||= input.findingsOverflow;
-      const candidateRef = safeSourceRef(input.sourceRef);
+      const candidateRef = safeSyncSourceRef(input.sourceRef);
       if (
         candidateRef !== null &&
         (group.sourceRef === null || compareText(candidateRef, group.sourceRef) < 0)
@@ -218,16 +220,17 @@ export function buildProjectSyncSanitizationDiagnostics(
 
 export function buildProjectSyncRedactionWarnings(
   inputs: readonly SyncSanitizationDiagnosticInput[],
-): readonly ProjectSyncRedactionWarning[] | null {
+): readonly (ProjectSyncRedactionWarning | ProjectSyncRiskWarning)[] | null {
   const aggregates = new Map<string, {
     occurrenceCount: number;
     readonly sources: Set<string>;
+    readonly refs: Set<string>;
   }>();
   for (const input of inputs) {
     if (!DIGEST_PATTERN.test(input.sourceIdentitySha256) || !SOURCE_KINDS.has(input.sourceKind)) {
       return null;
     }
-    const sourceKey = `${input.sourceKind}:${input.sourceIdentitySha256}`;
+    const sourceKey = safeSyncSourceRef(input.sourceRef) ?? `${input.sourceKind}:${input.sourceIdentitySha256}`;
     for (const report of input.reports) {
       if (
         report.decision !== 'include' || report.findingsOverflow ||
@@ -238,29 +241,36 @@ export function buildProjectSyncRedactionWarnings(
       for (const rawSummary of report.summaries) {
         const summary = safeSummary(rawSummary);
         if (summary === null) return null;
-        if (summary.action !== 'redact') continue;
+        if (summary.action !== 'redact' && summary.action !== 'warn') continue;
         const occurrenceCount = summary.count - summary.overriddenCount;
         if (occurrenceCount === 0) continue;
         let aggregate = aggregates.get(summary.ruleId);
         if (aggregate === undefined) {
-          aggregate = { occurrenceCount: 0, sources: new Set() };
+          aggregate = { occurrenceCount: 0, sources: new Set(), refs: new Set() };
           aggregates.set(summary.ruleId, aggregate);
         }
         const nextCount = aggregate.occurrenceCount + occurrenceCount;
         if (!Number.isSafeInteger(nextCount) || nextCount <= 0) return null;
         aggregate.occurrenceCount = nextCount;
         aggregate.sources.add(sourceKey);
+        const ref = safeSyncSourceRef(input.sourceRef);
+        if (ref !== null) aggregate.refs.add(ref);
       }
     }
   }
   return Object.freeze([...aggregates.entries()]
     .sort(([left], [right]) => compareText(left, right))
-    .map(([ruleId, aggregate]) => Object.freeze({
-      code: 'sanitization-redaction-applied' as const,
-      occurrenceCount: aggregate.occurrenceCount,
-      ruleId,
-      sourceCount: aggregate.sources.size,
-    })));
+    .map(([ruleId, aggregate]): ProjectSyncRedactionWarning | ProjectSyncRiskWarning => {
+      const common = { occurrenceCount: aggregate.occurrenceCount, ruleId,
+        sourceCount: aggregate.sources.size };
+      if (RULE_ACTION_BY_ID.get(ruleId) !== 'warn') {
+        return Object.freeze({ code: 'sanitization-redaction-applied', ...common });
+      }
+      const sourceRefs = [...aggregate.refs].sort(compareText).slice(0, MAX_SYNC_SANITIZATION_DIAGNOSTIC_SOURCES);
+      return Object.freeze({ code: 'sanitization-risk-warning', ...common,
+        sourceRefs: Object.freeze(sourceRefs),
+        omittedSourceCount: Math.max(0, aggregate.sources.size - sourceRefs.length) });
+    }));
 }
 
 export function normalizeProjectSyncSanitizationDiagnostics(

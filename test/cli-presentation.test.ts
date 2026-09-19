@@ -661,7 +661,7 @@ describe('CLI presentation and exit taxonomy', () => {
       action: 'block' as const,
       count: 1,
       overriddenCount: 0,
-      ruleId: 'entropy.candidate',
+      ruleId: 'private-key.pem',
     };
     const sources = ['docs/z.md', 'docs/a.md'].map((sourceRef) => ({
       findingsOverflow: false,

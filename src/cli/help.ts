@@ -42,7 +42,12 @@ Connected source reads may omit --project. read/lookup/citations require --expec
   buildlore compile approve --project <project-id> --candidate <candidate-id> [--json]
   buildlore compile activate --project <project-id> --confirm-approval <sha256:...> [--input <approved-bundle.json>] [--json]
   buildlore compile activate --project <project-id> --rematerialize [--json]
-  buildlore compile hierarchy start --project <project-id> --purpose <relative.json> [--json]
+  buildlore compile wiki start --project <project-id> --purpose <relative.json> [--json]
+  buildlore compile wiki status --project <project-id> --run <run-id> [--json]
+  buildlore compile wiki inspect|submit|review|revise --project <project-id> --run <run-id> --input <relative.json> --expect-stage <sha256:...> [--json]
+  buildlore compile wiki finalize --project <project-id> --run <run-id> --expect-stage <sha256:...> [--json]
+  buildlore compile wiki approve --project <project-id> --run <run-id> --expect-ledger <sha256:...> --confirm-approval [--json]
+  buildlore compile hierarchy start --project <project-id> --purpose <relative.json> [--allow-legacy-authoring] [--json]
   buildlore compile hierarchy status --project <project-id> --run <run-id> [--role author|completeness-reviewer|source-reviewer] [--json]
   buildlore compile hierarchy inspect --project <project-id> --run <run-id> --input <relative.json> --expect-exchange <sha256:...> [--json]
   buildlore compile hierarchy submit --project <project-id> --run <run-id> --input <relative.json> --expect-exchange <sha256:...> [--json]
@@ -51,7 +56,7 @@ Connected source reads may omit --project. read/lookup/citations require --expec
   buildlore compile hierarchy review --project <project-id> --run <run-id> [--role author|completeness-reviewer|source-reviewer] [--json]
   buildlore compile hierarchy finalize --project <project-id> --run <run-id> --input <relative.json> --expect-review <sha256:...> [--json]
   buildlore compile hierarchy finalize --project <project-id> --run <run-id> --input <relative.json> --expect-stage <sha256:...> [--json]
-  buildlore compile hierarchy completeness shadow|inventory|inventory-review|reconcile|submit|review|source-review|correct --project <project-id> --run <run-id> --input <relative.json> --expect-stage <sha256:...> [--json]
+  buildlore compile hierarchy completeness shadow|inventory|inventory-review|reconcile|submit|review|source-review|correct|correct-inventory --project <project-id> --run <run-id> --input <relative.json> --expect-stage <sha256:...> [--json]
   buildlore compile hierarchy approve --project <project-id> --run <run-id> --expect-ledger <sha256:...> --confirm-approval [--json]
   buildlore check --project <project-id> [--json]
   buildlore index status --project <project-id> [--json]
@@ -85,6 +90,7 @@ Session compilation:
   compile approve  Promotes exactly one bound candidate without provider or Git publication
   compile activate Validates approval and stores authority plus deterministic tracked Markdown
                    (default input: .buildlore/approved-wiki.json)
+  compile wiki  Writes free-topic Wiki pages, independently reviews and corrects them; preserves open issues.
   compile hierarchy  Exchanges confined JSON handoffs with the current agent session.
   hierarchy approve  Records explicit human approval and stages the activation bundle.
                      Project knowledge stores generations separately; activation remains explicit.

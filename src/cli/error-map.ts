@@ -549,7 +549,9 @@ export function mapCliError(
       context,
       3,
       error.code,
-      'Source collection manifest or selection was rejected safely.',
+      error.code === 'SOURCE_KIND_UNSUPPORTED'
+        ? 'A declared source kind or adapter is unsupported by the active profile. Check sources.json and the project profile-binding.json before retrying.'
+        : 'Source collection manifest or selection was rejected safely.',
     );
   }
   if (error instanceof ProjectionError || error instanceof SourceDocumentError) {

@@ -1,13 +1,17 @@
+import { knowledgeWikiPageOrder, knowledgeWikiRoot } from './wiki-projection.js';
+import { createReviewedKnowledgeQuality, type ReviewedKnowledgeQuality } from '../hierarchy/reviewed-quality.js';
+import { knowledgeHierarchySummary, knowledgeHierarchySections } from './hierarchy-prose.js';
+export { knowledgeHierarchySummary, knowledgeHierarchySections } from './hierarchy-prose.js';
 import { createProjectSecurityService } from '../../sanitizer/index.js';
-import { compare, invalid, sha256 } from '../../knowledge/project-knowledge/guards.js';
-import type { KnowledgeDigest, KnowledgeEvidenceV1, KnowledgeGenerationV1, KnowledgePageV1,
+import { compare, invalid, sha256, ProjectKnowledgeError } from '../../knowledge/project-knowledge/guards.js';
+import type { KnowledgeDigest, KnowledgeEvidenceV1, KnowledgeGenerationV1,
   KnowledgePageRole } from '../../knowledge/project-knowledge/types.js';
 import {
   HIERARCHICAL_COMPILATION_POLICY, advanceCompileContinuation, approveChildSummaryForSynthesis,
   digestHierarchyValue as digest,
   buildSparseRelationGraph, createCompilationPurpose, createCompileCandidateReview,
   createCompileIntegrityReport, createCompileRelationReview, createCorpusSnapshot,
-  createCurrentSessionGenerationService, createEvidencePack, createIntegratedWikiCandidateReview,
+  createCurrentSessionGenerationService, createEvidencePack, createIntegratedWikiCandidateReview, finalizeCompileRun,
   createIntegratedWikiReviewSurface, createTextUnit, evaluateSemanticQuality,
   finalizePlanningDispositionInventory, reconcileWikiProposalLinks, startCompileContinuation,
   type ApprovedChildSummaryV1, type CompileCandidateReviewV1, type CompilePartitionV2,
@@ -41,40 +45,20 @@ export interface KnowledgeHierarchyMappingV1 {
 }
 
 export interface KnowledgeHierarchyBridgeV1 {
+  readonly reviewedQuality?: ReviewedKnowledgeQuality;
   readonly finalization: FinalizeCompileRunInputV1;
   readonly snapshot: CorpusSnapshotV1;
   readonly pageMappings: readonly KnowledgeHierarchyMappingV1[];
   readonly evidenceMappings: readonly Readonly<{ evidenceId: KnowledgeDigest; unitId: string; citationId: string }>[];
 }
 
-export function knowledgeHierarchySummary(page: KnowledgePageV1): string {
-  const claim = page.sections[0]?.claims[0];
-  if (!claim) invalid();
-  return `${claim.presentation === 'current' ? '' : `[${claim.presentation}] `}${claim.text}`;
-}
-
-/** Pure prose mapping is replayed at the authority read boundary as well as authoring. */
-export function knowledgeHierarchySections(page: KnowledgePageV1,
-  claims: readonly Readonly<{ citationIds: readonly string[] }>[],
-  children: readonly ApprovedChildSummaryV1[], links: readonly string[],
-): HierarchicalWikiProposalV1['sections'] {
-  let offset = 0;
-  const sections = page.sections.map((section, index) => ({ sectionId: `knowledge-${String(index)}`, title: section.title,
-    body: section.claims.map((claim) => {
-      const linked = claims[offset++];
-      if (!linked) invalid();
-      return `${claim.presentation === 'current' ? '' : `[${claim.presentation}] `}${claim.text} ` +
-        linked.citationIds.map((id) => `[^${id}]`).join(' ');
-    }).join('\n\n') }));
-  const first = sections[0];
-  if (!first || offset !== claims.length) invalid();
-  const childBody = children.map((child) => `${child.summary} ${child.citationIds.map((id) => `[^${id}]`).join(' ')}`).join(' ');
-  sections[0] = { ...first, body: [first.body, childBody, links.map((id) => `[[${id}]]`).join(' ')].filter(Boolean).join(' ') };
-  return sections;
-}
-
 /** Purpose identity binds the entire reviewed knowledge generation into the existing ledger. */
 export function knowledgeHierarchyPurpose(generation: KnowledgeGenerationV1): ReturnType<typeof createCompilationPurpose> {
+  if (generation.wikiProof !== undefined) return createCompilationPurpose({ projectId: generation.projectId,
+    audience: [generation.wikiProof.purpose.audience], goals: [generation.wikiProof.purpose.goal, `Use reviewed Wiki ${generation.generationDigest}`],
+    keyQuestions: [...new Set(generation.pages.map(page => page.title))], scopeHints: ['Selected source material'],
+    excludedTopics: ['Unsupported assertions withheld from published prose'], outputLanguage: generation.wikiProof.purpose.outputLanguage,
+    requestedPageRoles: ['overview', 'topic'] });
   return createCompilationPurpose({ projectId: generation.projectId, audience: ['Project development agents'],
     goals: [`Use reviewed project knowledge ${generation.generationDigest}`],
     keyQuestions: generation.pages.map((p) => p.title), scopeHints: ['Evidence-bound project knowledge'],
@@ -103,10 +87,13 @@ function evidenceUnit(generation: KnowledgeGenerationV1, evidence: KnowledgeEvid
 
 /** Deterministic source/locator projection used again when reading a tracked authority. */
 export function knowledgeHierarchySnapshot(generation: KnowledgeGenerationV1): CorpusSnapshotV1 {
+  const contract = generation.schemaVersion === 'buildlore.knowledge-generation.v3'
+    ? digest({ schemaVersion: 'buildlore.knowledge-hierarchy-bridge.v2', sourceUnit: 'exact-sanitized-evidence-excerpt',
+      pages: knowledgeWikiPageOrder(generation), root: knowledgeWikiRoot(generation), projection: 'supported-prose-with-recorded-open-issues' }) : BRIDGE_CONTRACT;
   return createCorpusSnapshot({ projectId: generation.projectId,
     purposeDigest: knowledgeHierarchyPurpose(generation).purposeDigest,
-    interpretationRulesDigest: BRIDGE_CONTRACT, compilerContractDigest: BRIDGE_CONTRACT,
-    profileDigest: BRIDGE_CONTRACT, policyDigest: HIERARCHICAL_COMPILATION_POLICY.policyDigest,
+    interpretationRulesDigest: contract, compilerContractDigest: contract,
+    profileDigest: contract, policyDigest: HIERARCHICAL_COMPILATION_POLICY.policyDigest,
     sanitizerPolicyDigest: generation.snapshot.sanitizerPolicyDigest,
     sourceManifestDigest: generation.snapshot.snapshotDigest,
     sources: generation.evidence.map((e) => ({ sourceId: evidenceSourceId(generation.projectId, e), sourceRef: e.sourceRef,
@@ -123,10 +110,30 @@ export async function bridgeKnowledgeToHierarchy(input: Readonly<{
   generation: KnowledgeGenerationV1;
   baselineGenerationDigest: KnowledgeDigest | null;
   baselineProposals: readonly HierarchicalWikiProposalV1[];
+  qualityMode?: 'reviewed' | 'lexical';
+  expectedLedgerDigest?: KnowledgeDigest;
 }>): Promise<KnowledgeHierarchyBridgeV1> {
+  // A pending pre-upgrade run must replay its recorded ledger exactly. This is
+  // compatibility selection, never an alternative way to accept a new draft.
+  if (input.expectedLedgerDigest !== undefined) {
+    const { expectedLedgerDigest, ...unbound } = input;
+    for (const qualityMode of (input.generation.schemaVersion === 'buildlore.knowledge-generation.v3' ? ['reviewed'] as const : ['lexical', 'reviewed'] as const)) {
+      try {
+        const bridge = await bridgeKnowledgeToHierarchy({ ...unbound, qualityMode });
+        if (finalizeCompileRun(bridge.finalization, input.generation.projectId, bridge.reviewedQuality).ledgerDigest === expectedLedgerDigest) return bridge;
+      } catch (error) {
+        if (!(error instanceof KnowledgeHierarchyQualityError)) throw error;
+      }
+    }
+    throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
+  }
   const { generation } = input;
   if (!isSanitizedKnowledgeGeneration(generation)) invalid();
   const projectId = generation.projectId;
+  const roles = knowledgeWikiPageOrder(generation), root = knowledgeWikiRoot(generation);
+  const generic = generation.schemaVersion === 'buildlore.knowledge-generation.v3';
+  if (generic && input.qualityMode === 'lexical') invalid();
+  if (generic && input.baselineProposals.length > 0 && generation.wikiProof?.revisions.at(-1)?.review?.baselineReview?.decision !== 'accepted') invalid();
   const purpose = knowledgeHierarchyPurpose(generation);
   const textUnits = generation.evidence.map((e) => evidenceUnit(generation, e));
   const snapshot = knowledgeHierarchySnapshot(generation);
@@ -137,28 +144,28 @@ export async function bridgeKnowledgeToHierarchy(input: Readonly<{
   const evidenceIdsFor = (factIds: readonly KnowledgeDigest[]): readonly KnowledgeDigest[] =>
     [...new Set(factIds.flatMap((id) => facts.get(id)?.evidenceIds ?? invalid()))].sort();
   const unitByEvidence = new Map(generation.evidence.map((e, index) => [e.evidenceId, textUnits[index]]));
-  const blueprints: readonly PageBlueprintV1[] = ROLES.map((role, order) => {
+  const blueprints: readonly PageBlueprintV1[] = roles.map((role, order) => {
     const page = generation.pages.find((p) => p.role === role);
     if (!page) return invalid();
     // The existing hierarchy declares a complete source coverage scope at leaves;
     // the actual pack below still contains only evidence used by this page's claims.
     const sourceIds = snapshot.sources.map((s) => s.sourceId).sort();
     const basis = { schemaVersion: 'buildlore.page-blueprint.v2' as const, projectId,
-      pageId: pageId(role), stableKey: `knowledge.${role}`, role: role === 'overview' ? 'overview' as const : 'topic' as const,
-      title: page.title, parentPageId: role === 'overview' ? null : pageId('overview'),
-      childPageIds: role === 'overview' ? [pageId('architecture'), pageId('decisions')].sort() : [],
-      relatedPageIds: [], keyQuestions: [page.title], requiredSections: page.sections.map((_, i) => `knowledge-${String(i)}`),
+      pageId: pageId(role), stableKey: `knowledge.${role}`, role: role === root ? 'overview' as const : 'topic' as const,
+      title: page.title, parentPageId: role === root ? null : pageId(root),
+      childPageIds: role === root ? roles.filter(role => role !== root).map(pageId).sort() : [],
+      relatedPageIds: [], keyQuestions: input.qualityMode === 'lexical' ? [page.title] : page.sections.map(s => s.title), requiredSections: page.sections.map((_, i) => `knowledge-${String(i)}`),
       evidenceScope: { snapshotDigest: snapshot.snapshotDigest, taskSetDigest: graph.taskSetDigest,
         relationSetDigest: graph.relationSetDigest,
         allowedUnitKinds: ['document', 'fenced-code', 'heading', 'list', 'paragraph', 'table'] as const,
         sourceIds, preferredUnitIds: [] }, minimumDistinctSources: 1, generationOrder: order };
     return Object.freeze({ ...basis, blueprintDigest: digest(basis) });
   });
-  const outlineBasis = { schemaVersion: 'buildlore.wiki-outline.v2' as const, projectId,
+  const outlineBasis = { schemaVersion: generic ? 'buildlore.wiki-outline.v3' as const : 'buildlore.wiki-outline.v2' as const, projectId,
     snapshotDigest: snapshot.snapshotDigest, graphDigest: graph.graphDigest,
     interpretationSetDigest: digest({ generationDigest: generation.generationDigest }),
     purposeDigest: purpose.purposeDigest, policyDigest: snapshot.policyDigest,
-    activationState: 'candidate' as const, rootPageId: pageId('overview'), blueprints, reviewNotes: [] };
+    activationState: 'candidate' as const, rootPageId: pageId(root), blueprints, reviewNotes: [] };
   const outline: WikiOutlineV1 = { ...outlineBasis, outlineDigest: digest(outlineBasis) };
   let continuation = startCompileContinuation(graph, 256, projectId);
   const partitions: CompilePartitionV2[] = [];
@@ -187,7 +194,7 @@ export async function bridgeKnowledgeToHierarchy(input: Readonly<{
   const evidenceMappings = new Map<KnowledgeDigest, Readonly<{ evidenceId: KnowledgeDigest; unitId: string; citationId: string }>>();
   const service = createCurrentSessionGenerationService({ knowledgeRoot: input.knowledgeRoot });
   for (const blueprint of blueprints) {
-    const role = ROLES[blueprint.generationOrder];
+    const role = roles[blueprint.generationOrder];
     const page = generation.pages.find((p) => p.role === role);
     if (!role || !page) invalid();
     const selectedIds = new Set(evidenceIdsFor(page.sections.flatMap((s) => s.claims.flatMap((c) => c.factIds)))
@@ -203,7 +210,7 @@ export async function bridgeKnowledgeToHierarchy(input: Readonly<{
       if (unit) evidenceMappings.set(e.evidenceId, { evidenceId: e.evidenceId, unitId: unit.unitId, citationId: unit.citation.citationId });
     }
     const session = await service.prepare({ purpose, blueprint, evidencePack: pack,
-      approvedChildSummaries: role === 'overview' ? childSummaries : [] }, projectId);
+      approvedChildSummaries: role === root ? childSummaries : [] }, projectId);
     const claims = page.sections.flatMap((s) => s.claims).map((claim) => {
       const ids = evidenceIdsFor(claim.factIds);
       const units = ids.map((id) => pack.units.find((u) => u.unitId === unitByEvidence.get(id)?.unitId) ?? invalid());
@@ -213,7 +220,7 @@ export async function bridgeKnowledgeToHierarchy(input: Readonly<{
     // Existing hierarchy requires reviewed child summaries in the parent. These
     // summaries are exact accepted child claims, never newly authored boilerplate.
     const requiredLinks = session.exchange.request.requiredLinkPageIds;
-    const sections = knowledgeHierarchySections(page, claims, role === 'overview' ? childSummaries : [], requiredLinks);
+    const sections = knowledgeHierarchySections(page, claims, role === root ? childSummaries : [], requiredLinks);
     const result = await session.submit({ schemaVersion: 'buildlore.current-session-proposal-submission.v2',
       projectId, pageId: blueprint.pageId, exchangeDigest: session.exchange.exchangeDigest,
       requestDigest: session.exchange.requestDigest, title: page.title, summary: knowledgeHierarchySummary(page),
@@ -224,20 +231,22 @@ export async function bridgeKnowledgeToHierarchy(input: Readonly<{
       claims: page.sections.flatMap((s) => s.claims).map((claim, index) => ({ claimId: claim.claimId,
         hierarchyClaimId: result.proposal.claims.find((c) => c.claimId === `claim-${digest(claims[index]).slice(7)}`)?.claimId ?? invalid(),
         factIds: claim.factIds })) });
-    if (role !== 'overview') {
+    if (role !== root) {
       const review = createCompileCandidateReview(result.proposal, 'accepted', projectId);
       childReviews.push(review);
       childSummaries.push(approveChildSummaryForSynthesis(result.proposal, review, projectId));
     }
   }
   const reconciliation = reconcileWikiProposalLinks(outline, proposals, projectId);
-  const quality = evaluateSemanticQuality({ outline, proposals, evidencePacks: packs, reconciliation }, projectId);
+  const reviewedQuality = input.qualityMode === 'lexical' ? undefined
+    : createReviewedKnowledgeQuality(generation, { outline, proposals, evidencePacks: packs });
+  const quality = evaluateSemanticQuality({ outline, proposals, evidencePacks: packs, reconciliation }, projectId, reviewedQuality);
   if (!quality.corpus.hardQualityPassed || quality.pages.some((p) => !p.hardQualityPassed)) {
     throw new KnowledgeHierarchyQualityError([...quality.corpus.reasonCodes, ...quality.pages.flatMap((p) => p.reasonCodes)]);
   }
   const integratedReviewSurface = createIntegratedWikiReviewSurface({ graph, outline, planningInventory,
     generations: handoffs, reconciliation, baselineGenerationDigest: input.baselineGenerationDigest,
-    baselineProposals: input.baselineProposals }, projectId);
+    baselineProposals: input.baselineProposals }, projectId, reviewedQuality);
   const integrityInput = { graph, outline, planningInventory, partitions, proposals, evidencePacks: packs,
     pageQualityReports: quality.pages, corpusQualityReport: quality.corpus, reconciliation,
     generationHandoffs: handoffs, baselineGenerationDigest: input.baselineGenerationDigest,
@@ -246,7 +255,7 @@ export async function bridgeKnowledgeToHierarchy(input: Readonly<{
       integratedReviewSurface, c.pageId, 'accepted', input.baselineProposals.length > 0 ? ['baseline-page-removal-reviewed'] : [], projectId)),
     childSynthesisReviews: childReviews,
     relationReviews: graph.relations.map((r) => createCompileRelationReview(r.relationId, 'accepted', projectId)) };
-  return Object.freeze({ snapshot, finalization: { ...integrityInput,
-    integrityReport: createCompileIntegrityReport(integrityInput, projectId) },
+  return Object.freeze({ ...(reviewedQuality === undefined ? {} : { reviewedQuality }), snapshot, finalization: { ...integrityInput,
+    integrityReport: createCompileIntegrityReport(integrityInput, projectId, reviewedQuality) },
     pageMappings, evidenceMappings: [...evidenceMappings.values()].sort((a, b) => compare(a.evidenceId, b.evidenceId)) });
 }

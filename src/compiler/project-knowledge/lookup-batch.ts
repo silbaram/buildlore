@@ -1,10 +1,12 @@
+import { knowledgeWikiReadMetadata } from './wiki-contracts.js';
 import { hash, invalid } from '../../knowledge/project-knowledge/guards.js';
 import type { KnowledgeDigest, KnowledgeGenerationV1 } from '../../knowledge/project-knowledge/types.js';
 import { knowledgeReaderLookup, type KnowledgeReaderLookupV1 } from './reader-surface.js';
 
 export interface LookupBatchOptions { readonly maxBytes?: number }
 export interface KnowledgeReaderLookupBatchV1 {
-  readonly schemaVersion: 'buildlore.knowledge-reader-lookup-batch.v1';
+  readonly schemaVersion: 'buildlore.knowledge-reader-lookup-batch.v1' | 'buildlore.knowledge-reader-lookup-batch.v2';
+  readonly knowledgeReview?: NonNullable<ReturnType<typeof knowledgeWikiReadMetadata>['knowledgeReview']>;
   readonly projectId: string;
   readonly generationDigest: KnowledgeDigest;
   readonly kind: 'evidence' | 'fact';
@@ -41,7 +43,8 @@ export function knowledgeReaderLookupBatch(generation: KnowledgeGenerationV1, ki
     return Object.freeze({ id, result });
   }));
   const budget = { maxBytes: request.maxBytes, usedBytes: 0 };
-  const result: KnowledgeReaderLookupBatchV1 = { schemaVersion: 'buildlore.knowledge-reader-lookup-batch.v1',
+  const result: KnowledgeReaderLookupBatchV1 = { schemaVersion: generation.wikiProof === undefined ? 'buildlore.knowledge-reader-lookup-batch.v1' : 'buildlore.knowledge-reader-lookup-batch.v2',
+    ...knowledgeWikiReadMetadata(generation),
     projectId: generation.projectId, generationDigest: generation.generationDigest, kind,
     requestedCount: request.requestedCount, uniqueCount: items.length, items, budget, egress: 'none' };
   for (;;) {

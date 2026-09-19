@@ -2,9 +2,12 @@ import { createHash } from 'node:crypto';
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import type { CollectionCandidate } from './collection-adapters.js';
 
+import { omitsRawCredentialValues } from '../sanitizer/service.js';
+import { hasOnlyWarningSummaries, isWarningSummary } from '../sanitizer/findings.js';
 import { consumePreparedSource } from '../sanitizer/approval.js';
 import type {
   ProjectSecurityService,
+  SanitizationReport,
   SecurityRuleSummary,
   SecuritySourceKind,
 } from '../sanitizer/types.js';
@@ -63,7 +66,11 @@ export function decodedJsonSecurityText(value: unknown): string {
     if (typeof item === 'string') parts.push(item);
     else if (Array.isArray(item)) { for (const child of item) pending.push(child); }
     else if (typeof item === 'object' && item !== null) {
-      for (const [key, child] of Object.entries(item)) { parts.push(key); pending.push(child); }
+      for (const [key, child] of Object.entries(item)) {
+        parts.push(key);
+        if (typeof child === 'string') parts.push(`${key}=${JSON.stringify(child)}`);
+        pending.push(child);
+      }
     }
   }
   return parts.join('\n');
@@ -80,9 +87,10 @@ export function bindRawSourceInputs<T extends object>(
   return candidate;
 }
 
-export function inspectRawSourceInputs(candidate: object, maskSecrets = false): readonly RawSourceInputV1[] {
+export function inspectRawSourceInputs(candidate: object, includeDecoded = false): readonly RawSourceInputV1[] {
   const inputs = RAW_SOURCE_INPUTS.get(candidate) ?? Object.freeze([]);
-  if (!maskSecrets) return inputs;
+  if (!includeDecoded) return inputs;
+
   return Object.freeze(inputs.flatMap((input) => input.maskingPreflightBody === undefined ? [input] :
     [input, Object.freeze({ body: input.maskingPreflightBody,
       allowedRedactionRuleIds: RAW_SOURCE_PATH_REDACTION_RULE_IDS })]));
@@ -93,10 +101,13 @@ export function rawSourceInputSanitizationIsSafe(
   approvedBody: string,
   summaries: readonly SecurityRuleSummary[],
   maskSecrets = false,
+  projectedBody?: string,
 ): boolean {
+  if (maskSecrets && projectedBody !== undefined && !omitsRawCredentialValues(input.body, projectedBody)) return false;
   const allowed = new Set(input.allowedRedactionRuleIds);
-  if (summaries.length === 0) return approvedBody === input.body;
+  if (hasOnlyWarningSummaries(summaries)) return approvedBody === input.body;
   return summaries.every((summary) =>
+    isWarningSummary(summary) ||
     summary.action === 'redact' && summary.count > 0 && summary.overriddenCount === 0 &&
     (allowed.has(summary.ruleId) || (maskSecrets &&
       (summary.ruleId.startsWith('credential.') || summary.ruleId === 'entropy.masked'))));
@@ -120,18 +131,22 @@ export async function boundRawSourceInputsAreSafe(
     sourceKind: SecuritySourceKind;
     sourceRevision: `sha256:${string}`;
     maskSecrets?: boolean;
+    sourceForInput?: (rawInput: RawSourceInputV1) => string;
+    onReport?: (rawInput: RawSourceInputV1, report: SanitizationReport) => void;
   }>,
 ): Promise<boolean> {
-  for (const rawInput of inspectRawSourceInputs(owner, input.maskSecrets)) {
+  for (const rawInput of inspectRawSourceInputs(owner, true)) {
     const bodyDigest = sha256(rawInput.body);
+    const source = input.sourceForInput?.(rawInput) ?? input.source;
     const result = await input.security.prepareSource({
       body: rawInput.body,
       bodyDigest,
       projectId: input.projectId,
-      source: input.source,
+      source,
       sourceKind: input.sourceKind,
       sourceRevisionOrContentSha256: input.sourceRevision,
     });
+    input.onReport?.(rawInput, result.report);
     if (!result.ok || result.report.decision !== 'include' || result.report.findingsOverflow ||
         result.report.inputDigest !== bodyDigest ||
         result.report.policyDigest !== input.policyDigest ||
@@ -140,7 +155,7 @@ export async function boundRawSourceInputsAreSafe(
     if (prepared === null || prepared.inputBodyDigest !== bodyDigest ||
         prepared.approvedBodyDigest !== result.report.outputDigest ||
         prepared.policyDigest !== input.policyDigest || prepared.projectId !== input.projectId ||
-        prepared.source !== input.source || prepared.sourceKind !== input.sourceKind ||
+        prepared.source !== source || prepared.sourceKind !== input.sourceKind ||
         prepared.sourceRevisionOrContentSha256 !== input.sourceRevision ||
         sha256(prepared.approvedBody) !== prepared.approvedBodyDigest ||
         !rawSourceInputSanitizationIsSafe(

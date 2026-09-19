@@ -419,7 +419,6 @@ export function createEvidencePack(
       prepared.policyDigest !== snapshot.sanitizerPolicyDigest ||
       prepared.source !== source.sourceRef ||
       !['code', 'json', 'markdown', 'planning', 'text'].includes(prepared.sourceKind) ||
-      prepared.untrustedData ||
       prepared.sourceRevisionOrContentSha256 !== source.sourceRevision ||
       prepared.approvedBodyDigest !== snapshotSource.sanitizedContentDigest ||
       hierarchySha256(prepared.approvedBody) !== snapshotSource.sanitizedContentDigest ||

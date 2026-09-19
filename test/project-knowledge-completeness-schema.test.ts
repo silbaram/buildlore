@@ -71,7 +71,7 @@ describe('published completeness contracts and public SDK', () => {
     const final = { schemaVersion: 'buildlore.knowledge-completeness-finalize-input.v1', projectId: f.projectId, runId: exchange.runId,
       proposalDigest: round.proposalDigest, mappingDigest: round.mappingDigest, completenessReviewDigest: round.completenessReviewDigest,
       semanticReviewDigest: round.semanticReviewDigest, reviewViewDigest: view.stageViewDigest };
-    await session.finalize(final, view.stageViewDigest);
+    const generation = await session.finalize(final, view.stageViewDigest);
     const state = (await captureKnowledgeCompletenessSession(session)).state, document = await schema();
     // Shape parity, reference traversal and numeric/list limits supplement the
     // runtime semantic/security tests; this is not a JSON Schema implementation.
@@ -115,7 +115,9 @@ describe('published completeness contracts and public SDK', () => {
     };
     for (const [name, value] of Object.entries({ exchange, inventory: inputs.author, inventoryReview: inputs.review,
       acceptedInventory: accepted, mapping, proseSubmission: submission, completenessReview: omission, reviewRound: round,
-      stage: view, finalizeInput: final, state })) await match(value, record(document.$defs)[name]);
+      stage: view, finalizeInput: final, state, proof: generation.completenessProof })) await match(value, record(document.$defs)[name]);
+    const knowledgeSchema = await schema('project-knowledge.schema.json');
+    await match(generation, record(knowledgeSchema.$defs).generation, 'project-knowledge.schema.json');
     await expect(match({ ...state, undisclosedField: true }, record(document.$defs).state)).rejects.toThrow();
   }, 60_000);
 

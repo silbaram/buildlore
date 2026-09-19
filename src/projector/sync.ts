@@ -139,7 +139,16 @@ export interface ProjectSyncRedactionWarning {
   readonly sourceCount: number;
 }
 
-export type ProjectSyncWarning = ProjectSyncCompatibilityWarning | ProjectSyncRedactionWarning;
+export interface ProjectSyncRiskWarning {
+  readonly code: 'sanitization-risk-warning';
+  readonly occurrenceCount: number;
+  readonly ruleId: string;
+  readonly sourceCount: number;
+  readonly sourceRefs: readonly string[];
+  readonly omittedSourceCount: number;
+}
+
+export type ProjectSyncWarning = ProjectSyncCompatibilityWarning | ProjectSyncRedactionWarning | ProjectSyncRiskWarning;
 
 export interface ProjectSyncSummary {
   readonly appliedCount: number;
@@ -277,7 +286,7 @@ function safeExecutionSourceRef(entry: ExecutionProjectionPlanEntry): string | n
 
 function safeRuleSummary(value: SecurityRuleSummary): SecurityRuleSummary | null {
   if (
-    !['block', 'quarantine', 'redact'].includes(value.action) ||
+    !['block', 'quarantine', 'redact', 'warn'].includes(value.action) ||
     !Number.isSafeInteger(value.count) || value.count < 0 ||
     !Number.isSafeInteger(value.overriddenCount) || value.overriddenCount < 0 ||
     value.overriddenCount > value.count || !RULE_ID_PATTERN.test(value.ruleId)

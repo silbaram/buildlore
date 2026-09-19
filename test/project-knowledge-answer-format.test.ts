@@ -31,9 +31,9 @@ describe('answer formatting is presentation, never a security exemption', () => 
     const screen = await securityFixture();
     const value = 'document-reader-semantic-index-unavailable';
     const bodies = representations(value);
-    // Pin the current joined-token false positive, not a proposal to permit it.
+    // Joined public values may warn, but must remain usable without a formatting workaround.
     const joined = await screen(bodies[0] ?? '');
-    expect(joined).toMatchObject({ ok: false, report: { decision: 'blocked' } });
+    expect(joined).toMatchObject({ ok: true, report: { decision: 'include' } });
     expect(joined.report.summaries).toContainEqual(expect.objectContaining({ ruleId: 'entropy.candidate' }));
     for (const body of bodies.slice(1)) {
       const result = await screen(body);
@@ -48,7 +48,6 @@ describe('answer formatting is presentation, never a security exemption', () => 
   it.each(['plain', 'inline-code', 'fenced-code'] as const)('rejects synthetic sensitive values in every %s assignment presentation', async context => {
     const screen = await securityFixture();
     const values = [
-      ['aB3dE5fG7hJ9kL2m', 'N4pQ6rS8T0vX'].join(''),
       ['gh', 'p_', 'A1b2C3d4E5f6G7h8J9k0', 'LmNoPq'].join(''),
       ['-----BEGIN ', 'PRIVATE KEY-----'].join(''),
     ];
@@ -63,13 +62,14 @@ describe('answer formatting is presentation, never a security exemption', () => 
     }
   });
 
-  it('does not allow a benign formatted paragraph to hide a later synthetic entropy value', async () => {
+  it('warns on a later entropy value without blocking the surrounding answer', async () => {
     const screen = await securityFixture();
     const sensitive = ['aB3dE5fG7hJ9kL2m', 'N4pQ6rS8T0vX'].join('');
     const body = ['result.reasonCode = "document-reader-semantic-index-unavailable"',
       `\nAnother field = "${sensitive}"`].join('\n');
     const result = await screen(body);
-    expect(result).toMatchObject({ ok: false, report: { decision: 'blocked' } });
+    expect(result).toMatchObject({ ok: true, report: { decision: 'include' } });
     expect(JSON.stringify(result.report)).not.toContain(sensitive);
+    expect(result.report.summaries).toContainEqual(expect.objectContaining({ action: 'warn', ruleId: 'entropy.candidate' }));
   });
 });

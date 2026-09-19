@@ -1,3 +1,4 @@
+import { isWarningSummary } from '../../sanitizer/findings.js';
 import { join, resolve } from 'node:path';
 
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
@@ -139,9 +140,9 @@ async function sanitizeCandidateText(
     result.report.projectId !== projectId ||
     result.report.rulesVersion !== SANITIZER_RULES_VERSION ||
     (rejectCredentialFindings && policy.policy.sourceSecretHandling !== 'mask' && result.report.summaries.some((summary) =>
-      summary.count > 0 && /^(?:credential\.|private-key\.|entropy\.)/u.test(summary.ruleId))) ||
+      summary.count > 0 && /^(?:credential\.|private-key\.)/u.test(summary.ruleId))) ||
     result.report.summaries.some((summary) =>
-      summary.action !== 'redact' && summary.count !== summary.overriddenCount)
+      !isWarningSummary(summary) && summary.action !== 'redact' && summary.count !== summary.overriddenCount)
   ) return denied(projectId);
   const prepared = consumePreparedSource(result.prepared);
   if (
@@ -305,7 +306,7 @@ async function buildPlannedSources(input: {
       input.projectId,
       input.rejectCredentialFindings,
     );
-    for (const rawInput of inspectRawSourceInputs(candidate, input.policy.policy.sourceSecretHandling === 'mask')) {
+    for (const rawInput of inspectRawSourceInputs(candidate, true)) {
       const rawBodyDigest = sessionSha256(rawInput.body);
       const rawResult = await input.security.prepareSource({
         body: rawInput.body,
@@ -318,7 +319,7 @@ async function buildPlannedSources(input: {
       const rawPrepared = rawResult.ok ? consumePreparedSource(rawResult.prepared) : null;
       if (!rawResult.ok || rawPrepared === null ||
           (input.rejectCredentialFindings === true && input.policy.policy.sourceSecretHandling !== 'mask' && rawResult.report.summaries.some((summary) =>
-            summary.count > 0 && /^(?:credential\.|private-key\.|entropy\.)/u.test(summary.ruleId))) ||
+            summary.count > 0 && /^(?:credential\.|private-key\.)/u.test(summary.ruleId))) ||
           rawPrepared.inputBodyDigest !== rawBodyDigest ||
           rawPrepared.approvedBodyDigest !== rawResult.report.outputDigest ||
           rawPrepared.policyDigest !== input.policy.digest ||
@@ -331,6 +332,7 @@ async function buildPlannedSources(input: {
             rawPrepared.approvedBody,
             rawResult.report.summaries,
             input.policy.policy.sourceSecretHandling === 'mask',
+            `${approvedTitle}\n${approvedBody}`,
           )) return denied(input.projectId);
     }
     input.onPhase?.('source-sanitized');

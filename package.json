@@ -87,7 +87,8 @@
     "./schemas/connection-status-v2.schema.json": "./schemas/connection-status-v2.schema.json",
     "./schemas/workspace-publish-plan.schema.json": "./schemas/workspace-publish-plan.schema.json",
     "./schemas/workspace-publish-result.schema.json": "./schemas/workspace-publish-result.schema.json",
-    "./schemas/workspace-guide.schema.json": "./schemas/workspace-guide.schema.json"
+    "./schemas/workspace-guide.schema.json": "./schemas/workspace-guide.schema.json",
+    "./schemas/project-wiki.schema.json": "./schemas/project-wiki.schema.json"
   },
   "files": [
     "dist",

@@ -601,15 +601,16 @@ Kind별 조건과 필드 상한의 정본은 `compile-proposal.schema.json`이�
 `wiki/` 아래의 생성 페이지, `.llmwiki/` 아래의 컴파일러 상태와 적용된 언어
 중립적 생명주기 프로필이 저장됩니다.
 
-#### 프로젝트 지식 모드 (명시적 선택, 1단계)
+#### 이전 질문 기반 프로젝트 지식 작성 (호환 경로)
 
 범용 Markdown/JSON에서 프로젝트 사실을 정리하고 개요·구조·결정 문서 세 개를
 만드는 모드입니다. P2A는 선택 가능한 소스 어댑터이며 지식 모델의 필수 조건이
-아닙니다. 현재 개발 중인 opt-in 기능으로, 저장·갱신 테스트 통과가 독립 AI의
+아닙니다. 이전 작성 방식과의 호환 경로이며, 저장·갱신 테스트 통과가 독립 AI의
 프로젝트 이해도 검증 통과를 뜻하지는 않습니다.
 
-작성 전에 대상 프로젝트의 질문과 필요한 근거를 정하고, 기존 `compile hierarchy start` 명령에
-다음 purpose 파일을 전달합니다.
+이전 질문 기반 purpose를 새로 시작하려면 `compile hierarchy start --allow-legacy-authoring`을
+명시합니다. 일반적인 새 Wiki 생성은 아래 “완전성 작성과 지식의 한계”의 v5 purpose를 사용합니다.
+다음 호환 예제도 작성 전에 대상 프로젝트의 질문과 필요한 근거를 정합니다.
 
 ```json
 {
@@ -1049,6 +1050,7 @@ v2 개선 코드의 새로운 독립 AI 품질 평가는 아직 통과하지 않
 # 정제된 프로젝트 corpus를 갱신한 뒤 로컬 run을 만들고 상태를 확인합니다.
 node dist/cli/bin.js sync --project example
 node dist/cli/bin.js compile hierarchy start \
+  --allow-legacy-authoring \
   --project example \
   --purpose handoffs/wiki-purpose.json \
   --json
@@ -1436,7 +1438,13 @@ SDK는 `readPacket(projectId)`와 `createPacketAnswerEvaluationContract`를 제�
 
 ### 완전성 작성과 지식의 한계
 
-명시적으로 선택하는 `completeness-v1`은 검토된 필수 목록을 정확한 Wiki 문장에 연결하고, 근거·현재성 검토와 누락 검토를 모두 요구합니다. 근거 있는 미확인 사항은 연결된 본문에 설명해야 합니다. 출처 인용이나 목록의 unknown 표시만으로는 충족되지 않습니다.
+명시적으로 선택한 strict CLI 작성은 `completeness-v2`을 기본으로 사용합니다. 원문에 연결된 `authoringQuestions`를 담은 v5 purpose로 v6 실행을 시작하고, 검토된 필수 목록을 정확한 Wiki 문장에 연결하여 근거·현재성 검토와 누락 검토를 모두 요구합니다. 근거 있는 미확인 사항은 연결된 본문에 설명해야 합니다. 출처 인용이나 목록의 unknown 표시만으로는 충족되지 않습니다. 이전 basic/legacy 방식의 새 시작에는 `--allow-legacy-authoring`을 명시해야 하며 완전성은 `unassessed`로 표시합니다. 이미 저장된 실행은 원래 방식으로 재개할 수 있습니다.
+
+작성 스킬은 작성자·누락 검토자·근거 검토자를 별도 AI 문맥으로 실행합니다. 누락 검토자는 작성자 초안을 보기 전에 현재 선택 원문에서 독립 목록을 만들며, 이전 Wiki에서 빠진 변경 없는 정보도 확인합니다. 독립 검토자를 실행할 수 없으면 미완료로 남기며 actor 문자열만 바꿔 대체하지 않습니다. 일상적인 내용 검토는 AI가 수행하고 승인·활성화는 별도의 명시적 절차로 유지합니다.
+
+역할 화면에는 원문 전문 대신 요약된 exchange와 자료 개수를 제공합니다. 고정된 `inspect` 요청과 cursor로 현재 원문·근거 및 이전 사실·근거를 나누어 조회합니다. `knowledge-completeness-material-request.v1`은 `collection`, `cursor`, `limit`, `maxBytes`를 받으며 응답 상한은 1 MiB입니다. 큰 항목은 cursor를 유지하고 필요한 크기를 알립니다. 화면에서 생략한 자료를 읽은 것으로 처리하거나 내용을 조용히 잘라내지 않습니다.
+
+새 `knowledge-generation.v2`는 고정된 질문, 독립 목록과 조정 결과, 정확한 본문 매핑, 두 검토 결과와 허용된 보완 시도를 크기가 제한된 completeness proof로 보존합니다. 최종화·이력 승인·활성화·조회에서 같은 검증기로 원문·본문·검토의 연결을 재구성합니다. 기존 v1 세대와 v4 실행의 원래 digest는 유지합니다. 상태는 `pending`, `failed`, `verified`, `legacy-local-review`, `unassessed`를 구분하며, 기록된 검토 계약을 설명할 뿐 의미적 완전성을 보장하지 않습니다.
 
 “선택된 근거로는 운영 환경의 성능을 확인할 수 없다”는 현재 근거가 지원하는 문장이므로 `current`로 표현합니다. 측정 결과는 모르더라도 근거의 한계는 확인된 사실입니다. `uncertainty`는 미확인 상태의 사실을 참조할 때 사용하며, 이 표시를 위해 오래되거나 논쟁 중인 사실을 만들어서는 안 됩니다. 단계별 조회에서 이 안내를 제공하고 기존 exchange의 결속은 유지합니다.
 
@@ -1544,3 +1552,16 @@ buildlore wiki lookup --kind evidence --ids <digest-1>,<digest-2> --expect-gener
 후속 조회에 `expectedGeneration`을 전달하고 generation·연결이 바뀌면 이전 읽기 결속을 폐기합니다. 최종 설명의 부족한 지원을 한 차례 점검합니다. 이는 호출자가 따르는 절차이며 BuildLore가 자동 추론 루프나 영구 읽기 이력을 운영하지 않습니다.
 
 로컬 비용 측정에는 선택적 동기 callback인 `ReadServiceHooks.observer`, reader 옵션 `observer`, `CliRuntime.readObserver`를 사용할 수 있습니다. `{ phase, durationMs, count }`만 전달하며 query·ID·경로·원문은 전달하지 않습니다. 중첩 단계 시간은 포함 관계이므로 독립 작업 시간처럼 합산하지 않습니다. 기본값은 측정 비활성이며 응답 schema나 외부 telemetry를 추가하지 않습니다.
+
+`completeness-v2`에서는 근거 없는 문장이나 누락된 목록을 실행당 최대 두 번 명시적으로 보완할 수 있습니다. 기존 독립 목록과 검토 이력을 보존하고 전체 목록을 독립적으로 재검토한 후, 새 본문 매핑과 두 문안 검토를 다시 받습니다. 일시적인 실행 상태를 프로젝트 사실로 쓴 문장은 이유를 기록하여 수정·제거합니다. 실제 원문 누락과 보완 횟수 소진은 계속 차단하며, 과거 실패 작업의 상태는 유지합니다. [목록 보완 절차](skills/buildlore-authoring/references/completeness.md#inventory-correction-in-completeness-v2)를 참고하세요.
+
+
+## 범용 Wiki 작성 (기본 흐름)
+
+지식 저장소에 로컬 설치한 [작성 스킬](skills/buildlore-authoring/SKILL.md)을 사용합니다. 새 `compile wiki`는 원문과 목적에 맞게 1~32개 페이지를 구성합니다. 개발 질문이나 사전 인벤토리 합의를 강제하지 않으며 업무·정책·연구·개발 자료를 같은 형식으로 다룹니다. 개발 템플릿은 선택 사항입니다.
+
+**동기화 → 초안 → 독립 검토 → 해당 부분 보완 → 최종화 → 명시적 승인·활성화 → MCP 조회** 순서입니다. 작성 AI는 페이지·절·문장·출처를 제출하고, 내부 사실 식별자와 연결은 코드가 만듭니다. 별도 검토 AI가 실제 원문과 문안을 확인하며 최대 두 차례 보완 기록을 보존합니다. 쓸 수 있는 문서는 미해결 사항을 표시한 `needs-attention` 상태로 남길 수 있습니다. 근거 없는 문장은 본문에서 보류하며, 전부 미지원이거나 쓸 수 없는 결과는 미완성 초안으로 남깁니다.
+
+기존 MCP 목록·검색·본문·근거·memory 도구로 읽습니다. 작은 memory 응답에도 `knowledgeReview`의 검토 상태·미해결 개수·상세 페이지가 포함되며, 본문 조회에서는 남은 지적을 확인할 수 있습니다. 자격증명·경로·프로젝트 격리·원문 변경 검사는 유지합니다. 기존 strict completeness 작업과 세 페이지 문서는 원래 계약과 digest로 계속 읽습니다.
+
+[명령과 입력 예시](skills/buildlore-authoring/references/generic-wiki.md), [범용 작성 스키마](schemas/project-wiki.schema.json)를 참고하세요.

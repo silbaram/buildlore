@@ -3,9 +3,18 @@
   "$id": "https://buildlore.local/schemas/hierarchical-markdown-materialization.schema.json",
   "title": "BuildLore deterministic hierarchical Markdown materialization contracts",
   "oneOf": [
-    { "$ref": "#/$defs/manifest" },
-    { "$ref": "#/$defs/knowledgeManifest" },
-    { "$ref": "#/$defs/status" }
+    {
+      "$ref": "#/$defs/manifest"
+    },
+    {
+      "$ref": "#/$defs/knowledgeManifest"
+    },
+    {
+      "$ref": "#/$defs/status"
+    },
+    {
+      "$ref": "#/$defs/genericKnowledgeManifest"
+    }
   ],
   "$defs": {
     "knowledgeManifest": {
@@ -468,6 +477,132 @@
           }
         }
       ]
+    },
+    "genericKnowledgeManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "authorityDigest",
+        "recordDigest",
+        "projectionDigest",
+        "corpusDigest",
+        "generationDigest",
+        "knowledgeGenerationDigest",
+        "sanitizerPolicyDigest",
+        "rendererDigest",
+        "materializationDigest",
+        "pageCount",
+        "files"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.hierarchical-markdown-materialization-manifest.v4"
+        },
+        "projectId": {
+          "$ref": "#/$defs/projectId"
+        },
+        "authorityDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "recordDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "projectionDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "corpusDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "knowledgeGenerationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "sanitizerPolicyDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "rendererDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "materializationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "pageCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/genericKnowledgePageFile"
+              },
+              {
+                "$ref": "#/$defs/knowledgeProjectionFile"
+              }
+            ]
+          },
+          "minItems": 3,
+          "maxItems": 34
+        }
+      }
+    },
+    "genericKnowledgePageFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byteLength",
+        "sha256",
+        "kind",
+        "role",
+        "path",
+        "pageId",
+        "proposalDigest",
+        "claimIds"
+      ],
+      "properties": {
+        "byteLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 262144
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "kind": {
+          "const": "page"
+        },
+        "role": {
+          "$ref": "project-wiki.schema.json#/$defs/pageKey"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*\\.md$",
+          "maxLength": 67
+        },
+        "pageId": {
+          "type": "string",
+          "pattern": "^page-[0-9a-f]{64}$"
+        },
+        "proposalDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "claimIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$"
+          },
+          "minItems": 1,
+          "maxItems": 8192,
+          "uniqueItems": true
+        }
+      }
     }
   },
   "x-buildlore-authority": "derived-projection-only",

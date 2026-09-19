@@ -1,3 +1,4 @@
+import { knowledgeWikiReadMetadata } from '../compiler/project-knowledge/wiki-contracts.js';
 import { connectionRecovery } from './connection-recovery.js';
 import { resolveWorkspaceLayout } from '../knowledge/knowledge-workspace.js';
 import { LookupBatchError, validateLookupBatch } from '../compiler/project-knowledge/lookup-batch.js';
@@ -144,6 +145,7 @@ export async function readConnectedWiki(context: ConnectionContext, request: Wik
 export async function connectionStatus(context: ConnectionContext): Promise<Readonly<Record<string, unknown>>> {
   const paths = connectionPaths(await assertConnectionCurrent(context));
   let approval = 'ready', generation: Digest | null = null, format: ReadContextMetadata['format'] | null = null;
+  let reviewMetadata: ReturnType<typeof knowledgeWikiReadMetadata> = {};
   let sourceRevisionComparison: 'match' | 'different' | 'unknown' = 'unknown';
   try {
     const session = await openKnowledgeReadSession(paths.knowledgeRoot, context.projectId, { hubRoot: paths.hubRoot });
@@ -156,6 +158,7 @@ export async function connectionStatus(context: ConnectionContext): Promise<Read
       format = session.generationDigest ? 'project-knowledge' : 'hierarchical';
       const extension = session.publication.authority.knowledgeGeneration;
       const selected = extension ? latestKnowledgeGeneration(extension) : null;
+      if (selected !== null) reviewMetadata = knowledgeWikiReadMetadata(selected);
       const sources = selected?.snapshot.sources ?? [];
       const revisions = sources.map(s => s.repositoryRevision ?? s.sourceRevision)
         .filter((v): v is string => typeof v === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(v));
@@ -163,7 +166,7 @@ export async function connectionStatus(context: ConnectionContext): Promise<Read
       if (head && revisions.length) sourceRevisionComparison = revisions.some(r => r !== head) ? 'different' : revisions.length === sources.length ? 'match' : 'unknown';
     }
   } catch { approval = 'invalid'; }
-  return { schemaVersion: paths.pin === 'not_applicable' ? 'buildlore.connection-status.v2' : 'buildlore.connection-status.v1', ...(paths.pin === 'not_applicable' ? { mode: 'knowledge' } : {}), connected: true, readable: approval === 'ready' && (paths.pin === 'matched' || paths.pin === 'not_applicable'),
+  return { schemaVersion: paths.pin === 'not_applicable' ? 'buildlore.connection-status.v2' : 'buildlore.connection-status.v1', ...(paths.pin === 'not_applicable' ? { mode: 'knowledge' } : {}), ...reviewMetadata, connected: true, readable: approval === 'ready' && (paths.pin === 'matched' || paths.pin === 'not_applicable'),
     projectId: context.projectId, connectionDigest: context.connectionDigest, hubState: 'ready', knowledgeRevision: paths.knowledgeRevision,
     pin: paths.pin, dirty: paths.dirty, approval, generation, format, readPolicy: 'connected-approved', remote: 'not_checked', sourceRevisionComparison,
     recoveryCommands: approval === 'ready' && (paths.pin === 'matched' || paths.pin === 'not_applicable') ? [] : paths.pin === 'not_applicable' ? [['workspace', 'guide', '--project', context.projectId]] : [['knowledge', 'status'], ['project', 'show', '--project', context.projectId]] };

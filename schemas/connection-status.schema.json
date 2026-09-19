@@ -147,6 +147,9 @@
           "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
         }
       }
+    },
+    "knowledgeReview": {
+      "$ref": "project-wiki.schema.json#/$defs/readMetadata"
     }
   }
 }

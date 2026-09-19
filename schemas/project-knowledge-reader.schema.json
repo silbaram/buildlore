@@ -24,6 +24,27 @@
     },
     {
       "$ref": "#/$defs/lookupBatch"
+    },
+    {
+      "$ref": "#/$defs/pageV2"
+    },
+    {
+      "$ref": "#/$defs/lookupV2"
+    },
+    {
+      "$ref": "#/$defs/packetV2"
+    },
+    {
+      "$ref": "#/$defs/memoryV2"
+    },
+    {
+      "$ref": "#/$defs/taskMemoryV2"
+    },
+    {
+      "$ref": "#/$defs/progressiveMemoryV2"
+    },
+    {
+      "$ref": "#/$defs/lookupBatchV2"
     }
   ],
   "$defs": {
@@ -1482,6 +1503,1508 @@
               "maximum": 65536
             }
           }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evidence"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "items": {
+                "items": {
+                  "properties": {
+                    "result": {
+                      "$ref": "#/$defs/evidence"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "items": {
+                "items": {
+                  "properties": {
+                    "result": {
+                      "$ref": "project-knowledge.schema.json#/$defs/factSupport"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "pageV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "page",
+        "markdown",
+        "egress",
+        "knowledgeReview"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-reader-page.v2"
+        },
+        "projectId": {
+          "$ref": "project-knowledge-workflow.schema.json#/$defs/purpose/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "page": {
+          "$ref": "project-wiki.schema.json#/$defs/pageKey"
+        },
+        "markdown": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144
+        },
+        "egress": {
+          "const": "none"
+        },
+        "knowledgeReview": {
+          "$ref": "project-wiki.schema.json#/$defs/readMetadata"
+        }
+      }
+    },
+    "lookupV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "kind",
+        "id",
+        "result",
+        "egress",
+        "knowledgeReview"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-reader-lookup.v2"
+        },
+        "projectId": {
+          "$ref": "project-knowledge-workflow.schema.json#/$defs/purpose/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "kind": {
+          "enum": [
+            "evidence",
+            "fact"
+          ]
+        },
+        "id": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/evidence"
+            },
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/factSupport"
+            }
+          ]
+        },
+        "egress": {
+          "const": "none"
+        },
+        "knowledgeReview": {
+          "$ref": "project-wiki.schema.json#/$defs/readMetadata"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evidence"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/evidence"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "result": {
+                "$ref": "project-knowledge.schema.json#/$defs/factSupport"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "packetV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "instructions",
+        "legend",
+        "pages",
+        "facts",
+        "evidence",
+        "sources",
+        "egress",
+        "knowledgeReview"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-reader-packet.v2"
+        },
+        "projectId": {
+          "$ref": "project-knowledge-workflow.schema.json#/$defs/purpose/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "facts",
+            "evidence",
+            "sources",
+            "locator"
+          ],
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sources": {
+              "const": "sourceRef"
+            },
+            "locator": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "title",
+              "sections"
+            ],
+            "properties": {
+              "role": {
+                "$ref": "project-wiki.schema.json#/$defs/pageKey"
+              },
+              "title": {
+                "type": "string"
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "title",
+                    "claims"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "claims": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "claimId",
+                          "text",
+                          "presentation",
+                          "facts"
+                        ],
+                        "properties": {
+                          "claimId": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "presentation": {
+                            "enum": [
+                              "current",
+                              "history",
+                              "uncertainty"
+                            ]
+                          },
+                          "facts": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^f[0-9]+$"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "facts": {
+          "type": "object",
+          "patternProperties": {
+            "^f[0-9]+$": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "project-knowledge.schema.json#/$defs/digest"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "project-knowledge.schema.json#/$defs/digest"
+                  }
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^e[0-9]+$"
+                  }
+                },
+                {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              ],
+              "items": false,
+              "minItems": 8,
+              "maxItems": 8
+            }
+          },
+          "additionalProperties": false
+        },
+        "evidence": {
+          "type": "object",
+          "patternProperties": {
+            "^e[0-9]+$": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "project-knowledge.schema.json#/$defs/digest"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^s[0-9]+$"
+                },
+                {
+                  "oneOf": [
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "const": "lines"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      ],
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": false
+                    },
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "const": "json-pointer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "items": false
+                    }
+                  ]
+                },
+                {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              ],
+              "items": false,
+              "minItems": 4,
+              "maxItems": 4
+            }
+          },
+          "additionalProperties": false
+        },
+        "sources": {
+          "type": "object",
+          "patternProperties": {
+            "^s[0-9]+$": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "egress": {
+          "const": "none"
+        },
+        "knowledgeReview": {
+          "$ref": "project-wiki.schema.json#/$defs/readMetadata"
+        }
+      }
+    },
+    "memoryV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "instructions",
+        "legend",
+        "pages",
+        "facts",
+        "evidence",
+        "sources",
+        "egress",
+        "purpose",
+        "snapshotDigest",
+        "selectionDigest",
+        "baselineGenerationDigest",
+        "providerUsed",
+        "processSpawned",
+        "memoryDigest",
+        "evidenceContext",
+        "lookup",
+        "knowledgeReview"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-wiki-memory.v1"
+        },
+        "projectId": {
+          "$ref": "#/$defs/packetV2/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/packetV2/properties/generationDigest"
+        },
+        "instructions": {
+          "$ref": "#/$defs/packetV2/properties/instructions"
+        },
+        "legend": {
+          "$ref": "#/$defs/packetV2/properties/legend"
+        },
+        "pages": {
+          "$ref": "#/$defs/packetV2/properties/pages"
+        },
+        "facts": {
+          "$ref": "#/$defs/packetV2/properties/facts"
+        },
+        "evidence": {
+          "$ref": "#/$defs/packetV2/properties/evidence"
+        },
+        "sources": {
+          "$ref": "#/$defs/packetV2/properties/sources"
+        },
+        "egress": {
+          "$ref": "#/$defs/packetV2/properties/egress"
+        },
+        "purpose": {
+          "enum": [
+            "general",
+            "development"
+          ]
+        },
+        "snapshotDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "selectionDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "baselineGenerationDigest": {
+          "oneOf": [
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerUsed": {
+          "const": "none"
+        },
+        "processSpawned": {
+          "const": false
+        },
+        "memoryDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "evidenceContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^e[0-9]+$": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "presentInCurrentSnapshot",
+                "sourceRevision",
+                "codeRevision",
+                "sourceRevisionUnavailableReason",
+                "codeRevisionUnavailableReason",
+                "sourceContentDigest",
+                "sanitizedContentDigest"
+              ],
+              "properties": {
+                "presentInCurrentSnapshot": {
+                  "type": "boolean"
+                },
+                "sourceRevision": {
+                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevision"
+                },
+                "codeRevision": {
+                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevision"
+                },
+                "sourceRevisionUnavailableReason": {
+                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevisionUnavailableReason"
+                },
+                "codeRevisionUnavailableReason": {
+                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevisionUnavailableReason"
+                },
+                "sourceContentDigest": {
+                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceContentDigest"
+                },
+                "sanitizedContentDigest": {
+                  "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sanitizedContentDigest"
+                }
+              }
+            }
+          }
+        },
+        "lookup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "projectId",
+            "expectedGeneration",
+            "kinds",
+            "idKind",
+            "costEncoding"
+          ],
+          "properties": {
+            "projectId": {
+              "$ref": "#/$defs/packetV2/properties/projectId"
+            },
+            "expectedGeneration": {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            "kinds": {
+              "const": [
+                "fact",
+                "evidence"
+              ]
+            },
+            "idKind": {
+              "const": "canonical-sha256"
+            },
+            "costEncoding": {
+              "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        },
+        "knowledgeReview": {
+          "$ref": "project-wiki.schema.json#/$defs/readMetadata"
+        }
+      }
+    },
+    "taskMemoryV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "instructions",
+        "legend",
+        "pages",
+        "facts",
+        "evidence",
+        "sources",
+        "egress",
+        "purpose",
+        "snapshotDigest",
+        "selectionDigest",
+        "baselineGenerationDigest",
+        "providerUsed",
+        "processSpawned",
+        "memoryDigest",
+        "evidenceContext",
+        "lookup",
+        "requestDigest",
+        "selectionStrategy",
+        "coverage",
+        "budget",
+        "recovery",
+        "knowledgeReview"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-task-memory.v2"
+        },
+        "projectId": {
+          "$ref": "#/$defs/packetV2/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/packetV2/properties/generationDigest"
+        },
+        "instructions": {
+          "$ref": "#/$defs/packetV2/properties/instructions"
+        },
+        "legend": {
+          "$ref": "#/$defs/packetV2/properties/legend"
+        },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "title",
+              "sections",
+              "pageIndex"
+            ],
+            "properties": {
+              "role": {
+                "$ref": "project-wiki.schema.json#/$defs/pageKey"
+              },
+              "title": {
+                "type": "string"
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "title",
+                    "claims",
+                    "sectionIndex"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "claims": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "claimId",
+                          "text",
+                          "presentation",
+                          "facts"
+                        ],
+                        "properties": {
+                          "claimId": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "presentation": {
+                            "enum": [
+                              "current",
+                              "history",
+                              "uncertainty"
+                            ]
+                          },
+                          "facts": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^f[0-9]+$"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "sectionIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "pageIndex": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "facts": {
+          "$ref": "#/$defs/packetV2/properties/facts"
+        },
+        "evidence": {
+          "$ref": "#/$defs/packetV2/properties/evidence"
+        },
+        "sources": {
+          "$ref": "#/$defs/packetV2/properties/sources"
+        },
+        "egress": {
+          "$ref": "#/$defs/packetV2/properties/egress"
+        },
+        "purpose": {
+          "enum": [
+            "general",
+            "development"
+          ]
+        },
+        "snapshotDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "selectionDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "baselineGenerationDigest": {
+          "oneOf": [
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerUsed": {
+          "const": "none"
+        },
+        "processSpawned": {
+          "const": false
+        },
+        "memoryDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "evidenceContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fields",
+            "aliases",
+            "values"
+          ],
+          "properties": {
+            "fields": {
+              "const": [
+                "presentInCurrentSnapshot",
+                "sourceRevision",
+                "codeRevision",
+                "sourceRevisionUnavailableReason",
+                "codeRevisionUnavailableReason",
+                "sourceContentDigest",
+                "sanitizedContentDigest"
+              ]
+            },
+            "aliases": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^e[0-9]+$": {
+                  "type": "string",
+                  "pattern": "^c[0-9]+$"
+                }
+              }
+            },
+            "values": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^c[0-9]+$": {
+                  "type": "array",
+                  "minItems": 7,
+                  "maxItems": 7,
+                  "prefixItems": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevision"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevision"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevisionUnavailableReason"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevisionUnavailableReason"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceContentDigest"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sanitizedContentDigest"
+                    }
+                  ],
+                  "items": false
+                }
+              }
+            }
+          }
+        },
+        "lookup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "projectId",
+            "expectedGeneration",
+            "kinds",
+            "idKind",
+            "costEncoding"
+          ],
+          "properties": {
+            "projectId": {
+              "$ref": "#/$defs/packetV2/properties/projectId"
+            },
+            "expectedGeneration": {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            "kinds": {
+              "const": [
+                "fact",
+                "evidence"
+              ]
+            },
+            "idKind": {
+              "const": "canonical-sha256"
+            },
+            "costEncoding": {
+              "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        },
+        "requestDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "selectionStrategy": {
+          "const": "lexical-section-v1"
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "isSelective",
+            "partial",
+            "totalSections",
+            "relevantSections",
+            "includedSections",
+            "unmatchedSections",
+            "omittedRelevantSections",
+            "outcome"
+          ],
+          "properties": {
+            "isSelective": {
+              "const": true
+            },
+            "partial": {
+              "type": "boolean"
+            },
+            "totalSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "relevantSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "includedSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unmatchedSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "omittedRelevantSections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outcome": {
+              "enum": [
+                "no_match",
+                "budget_limited",
+                "selected"
+              ]
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxBytes",
+            "serializedBytes",
+            "encoding"
+          ],
+          "properties": {
+            "maxBytes": {
+              "type": "integer",
+              "minimum": 2048,
+              "maximum": 65536
+            },
+            "serializedBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "encoding": {
+              "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "instructions",
+            "nextSection"
+          ],
+          "properties": {
+            "instructions": {
+              "type": "string"
+            },
+            "nextSection": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "pageIndex",
+                    "sectionIndex",
+                    "minimumRequiredBytes"
+                  ],
+                  "properties": {
+                    "pageIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "sectionIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "minimumRequiredBytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "knowledgeReview": {
+          "$ref": "project-wiki.schema.json#/$defs/readMetadata"
+        }
+      }
+    },
+    "progressiveMemoryV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "instructions",
+        "legend",
+        "facts",
+        "evidence",
+        "sources",
+        "egress",
+        "purpose",
+        "snapshotDigest",
+        "selectionDigest",
+        "baselineGenerationDigest",
+        "providerUsed",
+        "processSpawned",
+        "memoryDigest",
+        "evidenceContext",
+        "lookup",
+        "requestDigest",
+        "selectionStrategy",
+        "coverage",
+        "budget",
+        "recovery",
+        "units",
+        "knowledgeReview"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-progressive-memory.v2"
+        },
+        "projectId": {
+          "$ref": "#/$defs/packetV2/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "#/$defs/packetV2/properties/generationDigest"
+        },
+        "instructions": {
+          "$ref": "#/$defs/packetV2/properties/instructions"
+        },
+        "legend": {
+          "$ref": "#/$defs/packetV2/properties/legend"
+        },
+        "facts": {
+          "$ref": "#/$defs/packetV2/properties/facts"
+        },
+        "evidence": {
+          "$ref": "#/$defs/packetV2/properties/evidence"
+        },
+        "sources": {
+          "$ref": "#/$defs/packetV2/properties/sources"
+        },
+        "egress": {
+          "$ref": "#/$defs/packetV2/properties/egress"
+        },
+        "purpose": {
+          "enum": [
+            "general",
+            "development"
+          ]
+        },
+        "snapshotDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "selectionDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "baselineGenerationDigest": {
+          "oneOf": [
+            {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerUsed": {
+          "const": "none"
+        },
+        "processSpawned": {
+          "const": false
+        },
+        "memoryDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "evidenceContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fields",
+            "aliases",
+            "values"
+          ],
+          "properties": {
+            "fields": {
+              "const": [
+                "presentInCurrentSnapshot",
+                "sourceRevision",
+                "codeRevision",
+                "sourceRevisionUnavailableReason",
+                "codeRevisionUnavailableReason",
+                "sourceContentDigest",
+                "sanitizedContentDigest"
+              ]
+            },
+            "aliases": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^e[0-9]+$": {
+                  "type": "string",
+                  "pattern": "^c[0-9]+$"
+                }
+              }
+            },
+            "values": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^c[0-9]+$": {
+                  "type": "array",
+                  "minItems": 7,
+                  "maxItems": 7,
+                  "prefixItems": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevision"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevision"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceRevisionUnavailableReason"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/codeRevisionUnavailableReason"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sourceContentDigest"
+                    },
+                    {
+                      "$ref": "project-knowledge.schema.json#/$defs/evidence/properties/sanitizedContentDigest"
+                    }
+                  ],
+                  "items": false
+                }
+              }
+            }
+          }
+        },
+        "lookup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "projectId",
+            "expectedGeneration",
+            "kinds",
+            "idKind",
+            "costEncoding"
+          ],
+          "properties": {
+            "projectId": {
+              "$ref": "#/$defs/packetV2/properties/projectId"
+            },
+            "expectedGeneration": {
+              "$ref": "project-knowledge.schema.json#/$defs/digest"
+            },
+            "kinds": {
+              "const": [
+                "fact",
+                "evidence"
+              ]
+            },
+            "idKind": {
+              "const": "canonical-sha256"
+            },
+            "costEncoding": {
+              "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        },
+        "requestDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "selectionStrategy": {
+          "enum": [
+            "lexical-claim-v1",
+            "lexical-claim-v2"
+          ]
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "isSelective",
+            "partial",
+            "totalClaims",
+            "relevantClaims",
+            "includedClaims",
+            "unmatchedClaims",
+            "startPosition",
+            "nextPosition",
+            "oversizedClaims",
+            "outcome"
+          ],
+          "properties": {
+            "isSelective": {
+              "const": true
+            },
+            "partial": {
+              "type": "boolean"
+            },
+            "totalClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "relevantClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "includedClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unmatchedClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "startPosition": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nextPosition": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "oversizedClaims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outcome": {
+              "enum": [
+                "no_match",
+                "budget_limited",
+                "selected"
+              ]
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxBytes",
+            "serializedBytes",
+            "encoding"
+          ],
+          "properties": {
+            "maxBytes": {
+              "type": "integer",
+              "minimum": 2048,
+              "maximum": 65536
+            },
+            "serializedBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "encoding": {
+              "const": "compact-json-utf8-with-final-newline"
+            }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "instructions",
+            "nextCursor",
+            "oversized",
+            "replay"
+          ],
+          "properties": {
+            "instructions": {
+              "type": "string"
+            },
+            "nextCursor": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^pwm[12]:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "oversized": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "pageIndex",
+                    "sectionIndex",
+                    "claimIndex",
+                    "cursor",
+                    "requiredBytes",
+                    "exceedsMaximum"
+                  ],
+                  "properties": {
+                    "pageIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "sectionIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "claimIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "cursor": {
+                      "type": "string",
+                      "pattern": "^pwm[12]:[nr]:[0-9]{1,16}:sha256:[a-f0-9]{64}$"
+                    },
+                    "requiredBytes": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "exceedsMaximum": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "replay": {
+              "type": "boolean"
+            }
+          }
+        },
+        "units": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pageIndex",
+              "sectionIndex",
+              "claimIndex",
+              "role",
+              "pageTitle",
+              "sectionTitle",
+              "sectionClaimCount",
+              "partialSection",
+              "claim"
+            ],
+            "properties": {
+              "pageIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sectionIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "claimIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "role": {
+                "$ref": "project-wiki.schema.json#/$defs/pageKey"
+              },
+              "pageTitle": {
+                "type": "string"
+              },
+              "sectionTitle": {
+                "type": "string"
+              },
+              "sectionClaimCount": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "partialSection": {
+                "type": "boolean"
+              },
+              "claim": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "claimId",
+                  "text",
+                  "presentation",
+                  "facts"
+                ],
+                "properties": {
+                  "claimId": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "presentation": {
+                    "enum": [
+                      "current",
+                      "history",
+                      "uncertainty"
+                    ]
+                  },
+                  "facts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^f[0-9]+$"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "knowledgeReview": {
+          "$ref": "project-wiki.schema.json#/$defs/readMetadata"
+        }
+      }
+    },
+    "lookupBatchV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "generationDigest",
+        "kind",
+        "egress",
+        "requestedCount",
+        "uniqueCount",
+        "items",
+        "budget",
+        "knowledgeReview"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.knowledge-reader-lookup-batch.v2"
+        },
+        "projectId": {
+          "$ref": "project-knowledge-workflow.schema.json#/$defs/purpose/properties/projectId"
+        },
+        "generationDigest": {
+          "$ref": "project-knowledge.schema.json#/$defs/digest"
+        },
+        "kind": {
+          "enum": [
+            "evidence",
+            "fact"
+          ]
+        },
+        "egress": {
+          "const": "none"
+        },
+        "requestedCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "uniqueCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "result"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "project-knowledge.schema.json#/$defs/digest"
+              },
+              "result": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/evidence"
+                  },
+                  {
+                    "$ref": "project-knowledge.schema.json#/$defs/factSupport"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxBytes",
+            "usedBytes"
+          ],
+          "properties": {
+            "maxBytes": {
+              "type": "integer",
+              "minimum": 2048,
+              "maximum": 65536
+            },
+            "usedBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            }
+          }
+        },
+        "knowledgeReview": {
+          "$ref": "project-wiki.schema.json#/$defs/readMetadata"
         }
       },
       "allOf": [

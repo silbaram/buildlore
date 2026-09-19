@@ -1,4 +1,5 @@
 import { latestKnowledgeGeneration } from './project-knowledge-authority.js';
+import { knowledgeWikiRoot } from '../compiler/project-knowledge/wiki-projection.js';
 import { invalid } from '../knowledge/project-knowledge/guards.js';
 import type { KnowledgeRecordV1 } from '../knowledge/project-knowledge/types.js';
 import type { KnowledgeAuthorityExtension } from './project-knowledge-authority.js';
@@ -33,8 +34,9 @@ export function createKnowledgeRankingSignals(extension: KnowledgeAuthorityExten
     for (const section of projectedPage.sections) {
       const index = page.sections.findIndex((_, i) => section.sectionId === `knowledge-${String(i)}`);
       const sourceSection = page.sections[index] ?? invalid();
-      const inherited = page.role === 'overview' && index === 0
-        ? generation.pages.filter((child) => child.role !== 'overview').map((child) => child.sections[0]?.claims[0] ?? invalid()) : [];
+      const root = knowledgeWikiRoot(generation);
+      const inherited = page.role === root && index === 0
+        ? generation.pages.filter((child) => child.role !== root).map((child) => child.sections[0]?.claims[0] ?? invalid()) : [];
       const facts = [...new Set([...sourceSection.claims, ...inherited].flatMap((claim) => claim.factIds))]
         .map((id) => records.get(id) ?? invalid());
       const sourceIds = [...new Set(section.citationLocators.map((locator) => locator.sourceId))].sort();

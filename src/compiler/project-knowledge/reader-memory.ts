@@ -19,8 +19,8 @@ type EvidenceContext = Readonly<Pick<KnowledgeEvidenceV1, 'sourceRevision' | 'co
   { presentInCurrentSnapshot: boolean }>;
 
 export interface KnowledgeDevelopmentMemoryV1 extends Omit<KnowledgeReaderPacketV1, 'schemaVersion'> {
-  readonly schemaVersion: 'buildlore.knowledge-development-memory.v1';
-  readonly purpose: 'development';
+  readonly schemaVersion: 'buildlore.knowledge-development-memory.v1' | 'buildlore.knowledge-wiki-memory.v1';
+  readonly purpose: 'development' | 'general';
   readonly snapshotDigest: KnowledgeDigest;
   readonly selectionDigest: KnowledgeDigest;
   readonly baselineGenerationDigest: KnowledgeDigest | null;
@@ -52,10 +52,10 @@ export function knowledgeDevelopmentMemory(generation: KnowledgeGenerationV1): K
       codeRevisionUnavailableReason: evidence.codeRevisionUnavailableReason,
       sourceContentDigest: evidence.sourceContentDigest, sanitizedContentDigest: evidence.sanitizedContentDigest });
   }
-  const basis = { ...packet, schemaVersion: 'buildlore.knowledge-development-memory.v1' as const,
-    purpose: 'development' as const, snapshotDigest: generation.snapshot.snapshotDigest,
+  const basis = { ...packet, schemaVersion: generation.wikiProof === undefined ? 'buildlore.knowledge-development-memory.v1' as const : 'buildlore.knowledge-wiki-memory.v1' as const,
+    purpose: generation.wikiProof === undefined ? 'development' as const : generation.wikiProof.purpose.template, snapshotDigest: generation.snapshot.snapshotDigest,
     selectionDigest: generation.snapshot.selectionDigest, baselineGenerationDigest: generation.baselineGenerationDigest,
-    instructions: INSTRUCTIONS, evidenceContext: Object.freeze(evidenceContext),
+    instructions: generation.wikiProof === undefined ? INSTRUCTIONS : packet.instructions, evidenceContext: Object.freeze(evidenceContext),
     lookup: Object.freeze({ projectId: generation.projectId, expectedGeneration: generation.generationDigest,
       kinds: Object.freeze(['fact', 'evidence'] as const), idKind: 'canonical-sha256' as const,
       costEncoding: 'compact-json-utf8-with-final-newline' as const }),

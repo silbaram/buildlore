@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
+import { hasOnlyWarningSummaries } from '../sanitizer/findings.js';
 import { resolveProjectWorkspace } from '../knowledge/paths.js';
 import { validateProjectId } from '../knowledge/validation.js';
 import { showProject } from '../knowledge/workspace.js';
@@ -465,7 +466,7 @@ async function assertSafePage(
     throw new ProjectCorpusError('CORPUS_SECURITY_DENIED', projectId);
   }
   if (!result.ok || result.report.decision !== 'include' ||
-      result.report.outputDigest !== digest || result.report.summaries.length > 0) {
+      result.report.outputDigest !== digest || !hasOnlyWarningSummaries(result.report.summaries)) {
     throw new ProjectCorpusError('CORPUS_SECURITY_DENIED', projectId);
   }
 }

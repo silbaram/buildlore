@@ -16,7 +16,7 @@ export type { TaskEvidenceContext } from './memory-projection.js';
 type NextSection = Readonly<{ pageIndex: number; sectionIndex: number; minimumRequiredBytes: number }>;
 
 export interface KnowledgeTaskMemoryV1 extends Omit<Full, 'schemaVersion' | 'pages' | 'evidenceContext'> {
-  readonly schemaVersion: 'buildlore.knowledge-task-memory.v1';
+  readonly schemaVersion: 'buildlore.knowledge-task-memory.v1' | 'buildlore.knowledge-task-memory.v2';
   readonly evidenceContext: TaskEvidenceContext;
   readonly requestDigest: KnowledgeDigest;
   readonly selectionStrategy: 'lexical-section-v1';
@@ -88,9 +88,9 @@ export function knowledgeTaskMemory(generation: KnowledgeGenerationV1, request: 
     });
     const { facts, evidence, sources, evidenceContext } = selectMemoryReferences(full, factAliases);
     const { memoryDigest: oldDigest, ...base } = full;
-    const basis = { ...base, schemaVersion: 'buildlore.knowledge-task-memory.v1' as const,
+    const basis = { ...base, schemaVersion: generation.wikiProof === undefined ? 'buildlore.knowledge-task-memory.v1' as const : 'buildlore.knowledge-task-memory.v2' as const,
       requestDigest: digest({ task: task.toLowerCase(), maxBytes: limit }), selectionStrategy: 'lexical-section-v1' as const,
-      instructions: INSTRUCTIONS, pages: Object.freeze(pages), facts, evidence, sources,
+      instructions: generation.wikiProof === undefined ? INSTRUCTIONS : full.instructions, pages: Object.freeze(pages), facts, evidence, sources,
       evidenceContext,
       coverage: Object.freeze({ isSelective: true as const, partial: selected.length < totalSections,
         totalSections, relevantSections: candidates.length, includedSections: selected.length,

@@ -707,7 +707,7 @@ export function parseWikiOutline(
     'reviewNotes', 'schemaVersion', 'snapshotDigest',
   ], expectedProjectId);
   if (
-    outline.schemaVersion !== WIKI_OUTLINE_SCHEMA_VERSION ||
+    (outline.schemaVersion !== WIKI_OUTLINE_SCHEMA_VERSION && outline.schemaVersion !== 'buildlore.wiki-outline.v3') ||
     outline.projectId !== expectedProjectId ||
     outline.snapshotDigest !== snapshot.snapshotDigest ||
     outline.graphDigest !== graph.graphDigest ||
@@ -716,7 +716,7 @@ export function parseWikiOutline(
     outline.policyDigest !== snapshot.policyDigest ||
     outline.activationState !== 'candidate' ||
     !Array.isArray(outline.blueprints) ||
-    outline.blueprints.length < 2 ||
+    outline.blueprints.length < (outline.schemaVersion === 'buildlore.wiki-outline.v3' ? 1 : 2) ||
     outline.blueprints.length > MAX_OUTLINE_BLUEPRINTS
   ) invalid(expectedProjectId);
   const blueprints = outline.blueprints.map((item) =>
@@ -776,7 +776,7 @@ export function parseWikiOutline(
   }
   if (reachable.size !== blueprints.length) invalid(expectedProjectId);
   const parsedWithoutDigest = Object.freeze({
-    schemaVersion: WIKI_OUTLINE_SCHEMA_VERSION,
+    schemaVersion: outline.schemaVersion === 'buildlore.wiki-outline.v3' ? 'buildlore.wiki-outline.v3' as const : WIKI_OUTLINE_SCHEMA_VERSION,
     projectId: expectedProjectId,
     snapshotDigest: snapshot.snapshotDigest,
     graphDigest: graph.graphDigest,

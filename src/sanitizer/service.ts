@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 
+import { hasUntrustedInstructions } from './findings.js';
 import { issuePreparedSource } from './approval.js';
 import { SecurityOperationError } from './errors.js';
 import {
@@ -130,6 +131,8 @@ export function sourceIdentitySha256(source: string): string {
 
 function addFinding(state: ScanState, finding: Finding): void {
   state.totals.set(finding.ruleId, (state.totals.get(finding.ruleId) ?? 0) + 1);
+  // Warning counts are bounded by the rule table, not by retained text spans.
+  if (finding.action === 'warn') return;
   if (state.findings.length < MAX_SECURITY_FINDINGS) state.findings.push(finding);
   else state.findingsOverflow = true;
 }
@@ -522,22 +525,63 @@ function collectBasicCredentialFindings(state: ScanState, body: string): void {
   }
 }
 
+function decodedTokenObject(value: string): Readonly<Record<string, unknown>> | null {
+  if (value.length === 0 || value.length > MAX_SANITIZER_INPUT_BYTES || !/^[A-Za-z0-9_-]+$/u.test(value)) return null;
+  try {
+    const bytes = Buffer.from(value, 'base64url');
+    if (bytes.toString('base64url') !== value) return null;
+    const parsed: unknown = JSON.parse(bytes.toString('utf8'));
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Readonly<Record<string, unknown>> : null;
+  } catch { return null; }
+}
+
+function collectJwtFindings(state: ScanState, body: string): void {
+  const pattern = /(?<![A-Za-z0-9_.-])[A-Za-z0-9_-]{2,}(?:\.[A-Za-z0-9_-]*){2,4}(?![A-Za-z0-9_.-])/gu;
+  for (const match of body.matchAll(pattern)) {
+    const value = match[0];
+    const parts = value.split('.');
+    const header = decodedTokenObject(parts[0] ?? '');
+    // Detect structure, not validity of a signature or a provider credential.
+    const compact = header !== null && typeof header.alg === 'string' && header.alg.length > 0 && (
+      (parts.length === 3 && decodedTokenObject(parts[1] ?? '') !== null &&
+        (header.alg === 'none' || (parts[2]?.length ?? 0) > 0)) ||
+      (parts.length === 5 && typeof header.enc === 'string' && header.enc.length > 0 &&
+        parts.slice(2).every((part) => part.length > 0))
+    );
+    if (compact) {
+      addFinding(state, { action: 'redact', ruleId: 'credential.jwt',
+        start: match.index, end: match.index + value.length, replacement: CREDENTIAL_PLACEHOLDER });
+    } else if (header !== null || parts.every((part) => part.length >= 8)) {
+      addFinding(state, { action: 'warn', ruleId: 'suspicion.jwt' });
+    }
+  }
+}
+
+function collectCredentialAssignments(state: ScanState, body: string): void {
+  const pattern = /\b(?:API[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|REFRESH[_-]?TOKEN|CLIENT[_-]?SECRET|COOKIE|PASSWORD|PASSWD|SECRET)(?:["']?[ \t]*[:=][ \t]*|["'][ \t]*\n[ \t]*(?=["']))(?:"((?:\\[^\r\n]|[^"\\\r\n])+)"|'((?:\\[^\r\n]|[^'\\\r\n])+)'|([^\s"'`,;{}()[\]]{4,512}))/giu;
+  for (const match of body.matchAll(pattern)) {
+    const value = match[1] ?? match[2] ?? match[3];
+    if (value === undefined || value === CREDENTIAL_PLACEHOLDER ||
+        value.startsWith('${') || value === '<REDACTED:SECRET>') continue;
+    // Unquoted expressions identify code, not a literal configuration value.
+    if (match[3] !== undefined && (/^(?:process\.env\.|[A-Za-z_$][\w$]*\.)/u.test(value) ||
+        /^(?:undefined|null|true|false)$/u.test(value) ||
+        body[match.index + match[0].length] === '(')) continue;
+    const start = match.index + match[0].lastIndexOf(value);
+    addFinding(state, { action: 'redact', ruleId: 'credential.environment', start,
+      end: start + value.length, replacement: CREDENTIAL_PLACEHOLDER });
+  }
+}
+
 function collectCredentialFindings(state: ScanState, body: string): void {
   addMatches(state, body, /\bBearer[ \t]+([A-Za-z0-9._~+/=-]{8,512})/giu,
     'credential.bearer', CREDENTIAL_PLACEHOLDER, 1);
   collectBasicCredentialFindings(state, body);
   addMatches(state, body, /\bCookie[ \t]*:[ \t]*([^\r\n]{1,2048})/giu,
     'credential.cookie', CREDENTIAL_PLACEHOLDER, 1);
-  addMatches(
-    state,
-    body,
-    /\b(?:API[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|COOKIE|PASSWORD|SECRET)[ \t]*=[ \t]*([^\s"']{4,512})/giu,
-    'credential.environment',
-    CREDENTIAL_PLACEHOLDER,
-    1,
-  );
-  addMatches(state, body, /\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu,
-    'credential.jwt', CREDENTIAL_PLACEHOLDER);
+  collectCredentialAssignments(state, body);
+  collectJwtFindings(state, body);
   addMatches(state, body, /\bAKIA[0-9A-Z]{16}\b/gu,
     'credential.provider.aws', CREDENTIAL_PLACEHOLDER);
   addMatches(state, body, /\bgh[pousr]_[A-Za-z0-9]{20,255}\b/gu,
@@ -575,6 +619,24 @@ function collectPrivateKeyFindings(state: ScanState, body: string): void {
     addFinding(state, { action: 'block', ruleId: 'private-key.pem' });
     match = pattern.exec(body);
   }
+}
+
+/** Internal check: a projection must not retain credentials found in its raw input. */
+export function omitsRawCredentialValues(original: string, derivative: string): boolean {
+  const state = initialState();
+  collectCredentialFindings(state, original);
+  if (state.findingsOverflow) return false;
+  return state.findings.every((finding) => {
+    if (finding.action !== 'redact' || finding.start === undefined || finding.end === undefined) return true;
+    const value = original.slice(finding.start, finding.end);
+    const variants = [value];
+    try {
+      const decoded: unknown = JSON.parse(`"${value}"`);
+      if (typeof decoded === 'string') variants.push(decoded);
+    } catch { /* Non-JSON literals retain their original representation. */ }
+    return variants.every((candidate) => !derivative.includes(candidate) &&
+      !derivative.includes(JSON.stringify(candidate).slice(1, -1)));
+  });
 }
 
 /** Internal preflight, not an approval: inspect originals before adapter normalization. */
@@ -653,7 +715,7 @@ function collectPromptFindings(state: ScanState, body: string): void {
     while (match !== null) {
       const patternReference = ruleId === 'prompt-injection.secret-exfiltration' &&
         isRegexChoiceReference(normalized, match);
-      if (!patternReference) addFinding(state, { action: 'quarantine', ruleId });
+      if (!patternReference) addFinding(state, { action: 'warn', ruleId });
       // A recognized reference must not swallow another verb/real instruction on
       // the same line, including one inside a different alternative or quotation.
       if (patternReference) pattern.lastIndex = match.index + (match[1]?.length ?? 1);
@@ -794,30 +856,18 @@ function safeEntropyToken(value: string): boolean {
     safeCredentialFreeHttpUri(value);
 }
 
-function collectEntropyCandidate(state: ScanState, value: string, start: number, mask = false): void {
-  if (value.length < 20) return;
-  const classCount = [/[a-z]/u, /[A-Z]/u, /[0-9]/u, /[_+./=-]/u]
-    .filter((pattern) => pattern.test(value)).length;
-  if (classCount >= 3 && shannonEntropy(value) >= 4 && !safeEntropyToken(value)) {
-    addFinding(state, mask
-      ? { action: 'redact', ruleId: 'entropy.masked', start, end: start + value.length,
-          replacement: '<REDACTED:SECRET>' }
-      : { action: 'block', ruleId: 'entropy.candidate' });
-  }
-}
-
-function collectEntropyFindings(state: ScanState, body: string, mask = false): void {
+function collectEntropyFindings(state: ScanState, body: string): void {
   TOKEN_PATTERN.lastIndex = 0;
-  let match = TOKEN_PATTERN.exec(body);
-  while (match !== null) {
-    const value = match[0];
-    const assignmentSeparator = value.indexOf('=');
-    const assignmentName = assignmentSeparator < 0 ? '' : value.slice(0, assignmentSeparator);
-    if (safeEnvironmentVariableName(assignmentName)) {
-      collectEntropyCandidate(state, value.slice(assignmentSeparator + 1),
-        match.index + assignmentSeparator + 1, mask);
-    } else collectEntropyCandidate(state, value, match.index, mask);
-    match = TOKEN_PATTERN.exec(body);
+  for (const match of body.matchAll(TOKEN_PATTERN)) {
+    const token = match[0];
+    const separator = token.indexOf('=');
+    const value = separator >= 0 && safeEnvironmentVariableName(token.slice(0, separator))
+      ? token.slice(separator + 1) : token;
+    const classCount = [/[a-z]/u, /[A-Z]/u, /[0-9]/u, /[_+./=-]/u]
+      .filter((pattern) => pattern.test(value)).length;
+    if (value.length >= 20 && classCount >= 3 && shannonEntropy(value) >= 4 && !safeEntropyToken(value)) {
+      addFinding(state, { action: 'warn', ruleId: 'entropy.candidate' });
+    }
   }
 }
 
@@ -881,6 +931,7 @@ function scan(
   knowledgeRoot: string,
   oversized = false,
   maskSourceSecrets = false,
+  rejectSourceCredentials = false,
 ): Readonly<{ approvedBody?: string; report: SanitizationReport }> {
   const identity = sourceIdentitySha256(request.source);
   const classification = classificationFor(loaded.policy, request.sourceKind, identity);
@@ -894,35 +945,27 @@ function scan(
     }
     collectPathFindings(state, request.body, loaded.workspace, homePath, knowledgeRoot);
     collectCredentialFindings(state, request.body);
+    if (rejectSourceCredentials && [...state.totals.keys()].some((ruleId) => ruleId.startsWith('credential.'))) {
+      addFinding(state, { action: 'block', ruleId: 'input.credential-rejected' });
+    }
     collectPrivateKeyFindings(state, request.body);
     collectPromptFindings(state, request.body);
   }
-  let redacted = oversized || state.findingsOverflow
+  const redacted = oversized || state.findingsOverflow
     ? null
     : applyRedactions(state, request.body);
   if (redacted !== null) {
     collectResidualCredentialFinding(state, redacted);
+    collectEntropyFindings(state, redacted);
     if (maskSourceSecrets) {
-      // Coordinates belong to the credential/path-redacted derivative, not the
-      // original. Never apply them together with original-coordinate findings.
-      const entropy = initialState();
-      collectEntropyFindings(entropy, redacted, true);
-      redacted = entropy.findingsOverflow ? null : applyRedactions(entropy, redacted);
-      for (const finding of entropy.findings) addFinding(state, finding);
-      if (entropy.findingsOverflow) state.findingsOverflow = true;
-      if (redacted !== null) {
-        // A full strict second pass must be stable, with no residual finding or
-        // override. Do not repeatedly redact until a dangerous input passes.
-        const checked = scan({ ...request, body: redacted, bodyDigest: sha256(redacted) },
-          loaded, homePath, knowledgeRoot);
-        if (checked.approvedBody !== redacted || checked.report.summaries.length > 0) {
-          addFinding(state, { action: 'block', ruleId: 'input.redaction-incomplete' });
-        }
-      }
-      if (state.findings.some((finding) => finding.action !== 'redact')) {
+      // Validate the derivative once. Warnings do not require further redaction.
+      const checked = scan({ ...request, body: redacted, bodyDigest: sha256(redacted) },
+        loaded, homePath, knowledgeRoot);
+      if (checked.approvedBody !== redacted ||
+          checked.report.summaries.some((summary) => summary.action !== 'warn')) {
         addFinding(state, { action: 'block', ruleId: 'input.redaction-incomplete' });
       }
-    } else collectEntropyFindings(state, redacted);
+    }
   }
   if (state.findingsOverflow) {
     state.totals.set('input.finding-overflow', 1);
@@ -1028,7 +1071,8 @@ export function createProjectSecurityService(
           })();
       const maskSourceSecrets = options.sourceIngestion === true &&
         loaded.policy.sourceSecretHandling === 'mask';
-      const outcome = scan(normalizedRequest, loaded, homePath, knowledgeRoot, oversized, maskSourceSecrets);
+      const outcome = scan(normalizedRequest, loaded, homePath, knowledgeRoot, oversized, maskSourceSecrets,
+        options.sourceIngestion === true && !maskSourceSecrets);
       if (outcome.approvedBody === undefined) return { ok: false, report: outcome.report };
       return {
         ok: true,
@@ -1043,8 +1087,7 @@ export function createProjectSecurityService(
           source: request.source,
           sourceKind: request.sourceKind,
           sourceRevisionOrContentSha256: request.sourceRevisionOrContentSha256,
-          untrustedData: outcome.report.summaries.some((summary) =>
-            summary.action === 'quarantine' && summary.count > 0),
+          untrustedData: hasUntrustedInstructions(outcome.report.summaries),
         }),
         report: outcome.report,
       };
