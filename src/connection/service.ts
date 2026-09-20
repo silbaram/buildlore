@@ -271,7 +271,8 @@ export async function setupHub(path: string, repository: string, options: Connec
   });
   return { outcome: unchanged ? 'unchanged' : existing ? 'existing' : 'created', projectId: null, connectionDigest: null, readable: false };
 }
-export async function connectProject(cwd: string, input: Readonly<{ hub?: string; workspace?: string; projectId: string; sourceRepository?: string }>, options: ConnectionOptions = {}, hooks: ConnectionHooks = {}): Promise<ConnectionContext> {
+export interface ConnectionInput { readonly hub?: string; readonly workspace?: string; readonly projectId: string; readonly sourceRepository?: string }
+async function prepareConnection(cwd: string, input: ConnectionInput, options: ConnectionOptions) {
   const root = await worktreeRoot(cwd), config = absolute(options.configDir ?? configDirectory());
   if ((input.hub === undefined) === (input.workspace === undefined)) fail();
   const target = input.workspace ?? input.hub ?? fail();
@@ -282,20 +283,37 @@ export async function connectProject(cwd: string, input: Readonly<{ hub?: string
   const shared: SharedConnection = { schemaVersion: input.workspace === undefined ? 'buildlore.connection.v1' : 'buildlore.connection.v2',
     ...(input.workspace === undefined ? {} : { mode: 'knowledge' as const }), knowledgeRepository: inspection.hub.knowledgeRepository,
     knowledgeRepositoryDigest: inspection.hub.knowledgeRepositoryDigest, projectId: id };
+  return { root, config, id, inspection, repository, identity, shared };
+}
+async function inspectRegistration(p: Awaited<ReturnType<typeof prepareConnection>>) {
+  const { root, config, id, inspection, repository, identity, shared } = p;
+  const r = await registry(config);
+  const hub = r.data.hubs.find(h => h.knowledgeRepositoryDigest === shared.knowledgeRepositoryDigest || h.hubRoot === inspection.hub.hubRoot);
+  if (hub && identityDigest(hub) !== identityDigest(inspection.hub)) fail('CONNECTION_CONFLICT');
+  const previous = await readConfig(sharedPath(root), MAX_CONNECTION);
+  if (previous && identityDigest(parseConnection(previous.value)) !== identityDigest(shared)) fail('CONNECTION_CONFLICT');
+  const connectionDigest = previous?.digest ?? valueDigest(shared);
+  const binding: ReadBinding = { sourceRoot: root, sourceIdentity: identity, sourceRepositoryDigest: hash(repository), projectId: id,
+    knowledgeRepositoryDigest: shared.knowledgeRepositoryDigest, connectionDigest };
+  const old = r.data.bindings.find(b => b.sourceRoot === root);
+  if (old && identityDigest(old) !== identityDigest(binding)) fail('CONNECTION_CONFLICT');
+  return { r, hub, previous, binding, unchanged: Boolean(old && previous) };
+}
+/** Internal preflight metadata, not a read capability or a client apply plan. */
+export interface ConnectionPreview { readonly sourceRoot: string; readonly projectId: string; readonly connectionDigest: string; readonly unchanged: boolean }
+export async function previewConnection(cwd: string, input: ConnectionInput, options: ConnectionOptions = {}): Promise<ConnectionPreview> {
+  const p = await prepareConnection(cwd, input, options);
+  const current = await inspectRegistration(p);
+  return { sourceRoot: p.root, projectId: p.id, connectionDigest: current.binding.connectionDigest, unchanged: current.unchanged };
+}
+export async function connectProject(cwd: string, input: ConnectionInput, options: ConnectionOptions = {}, hooks: ConnectionHooks = {}): Promise<ConnectionContext> {
+  const p = await prepareConnection(cwd, input, options);
+  const { root, config, inspection, shared } = p;
   let outcome: 'created' | 'unchanged' = 'created';
   await withRegistryLock(config, root, async () => {
-    const r = await registry(config);
-    const hub = r.data.hubs.find(h => h.knowledgeRepositoryDigest === shared.knowledgeRepositoryDigest || h.hubRoot === inspection.hub.hubRoot);
-    if (hub && identityDigest(hub) !== identityDigest(inspection.hub)) fail('CONNECTION_CONFLICT');
+    const { r, hub, previous, binding, unchanged } = await inspectRegistration(p);
+    if (unchanged) { outcome = 'unchanged'; return; }
     await ensureDirectory(join(root, '.buildlore'));
-    const previous = await readConfig(sharedPath(root), MAX_CONNECTION);
-    if (previous && identityDigest(parseConnection(previous.value)) !== identityDigest(shared)) fail('CONNECTION_CONFLICT');
-    const connectionDigest = previous?.digest ?? valueDigest(shared);
-    const binding: ReadBinding = { sourceRoot: root, sourceIdentity: identity, sourceRepositoryDigest: hash(repository), projectId: id,
-      knowledgeRepositoryDigest: shared.knowledgeRepositoryDigest, connectionDigest };
-    const old = r.data.bindings.find(b => b.sourceRoot === root);
-    if (old && identityDigest(old) !== identityDigest(binding)) fail('CONNECTION_CONFLICT');
-    if (old && previous) { outcome = 'unchanged'; return; }
     if (!previous) await replaceConfig(sharedPath(root), shared, null, MAX_CONNECTION);
     await hooks.afterSharedWrite?.();
     await saveRegistry(config, { ...r.data, hubs: hub ? r.data.hubs : [...r.data.hubs, inspection.hub],

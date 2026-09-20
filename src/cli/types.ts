@@ -2,7 +2,7 @@ import type { ReadContextMetadata } from '../application/wiki-read-service.js';
 export const CLI_ENVELOPE_SCHEMA_VERSION = 'buildlore.cli-envelope.v1' as const;
 
 export type CliCommandId =
-  | 'workspace.init' | 'workspace.guide'
+  | 'workspace.init' | 'workspace.guide' | 'workspace.connect' | 'workspace.check'
   | 'setup' | 'connect' | 'disconnect' | 'connection.status' | 'connection.relocate-hub' | 'doctor'
   | 'check'
   | 'compile'

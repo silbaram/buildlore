@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.dev/schemas/workspace-setup.schema.json",
+  "title": "BuildLore workspace setup and MCP inspection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "client",
+    "operation",
+    "overall",
+    "stages",
+    "nextActions",
+    "clientSession"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "buildlore.workspace-setup.v1"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "client": {
+      "const": "codex"
+    },
+    "operation": {
+      "enum": [
+        "connect",
+        "check",
+        "guide"
+      ]
+    },
+    "overall": {
+      "enum": [
+        "preview",
+        "configured",
+        "ready",
+        "action_required",
+        "blocked"
+      ]
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "state",
+          "code"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "complete",
+              "unchanged",
+              "blocked",
+              "not_checked"
+            ]
+          },
+          "code": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "nextActions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "clientSession": {
+      "const": "unverified"
+    }
+  }
+}

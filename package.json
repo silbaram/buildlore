@@ -88,23 +88,28 @@
     "./schemas/workspace-publish-plan.schema.json": "./schemas/workspace-publish-plan.schema.json",
     "./schemas/workspace-publish-result.schema.json": "./schemas/workspace-publish-result.schema.json",
     "./schemas/workspace-guide.schema.json": "./schemas/workspace-guide.schema.json",
-    "./schemas/project-wiki.schema.json": "./schemas/project-wiki.schema.json"
+    "./schemas/project-wiki.schema.json": "./schemas/project-wiki.schema.json",
+    "./schemas/workspace-setup.schema.json": "./schemas/workspace-setup.schema.json"
   },
   "files": [
     "dist",
     "schemas",
     "profiles",
-    "skills"
+    "skills",
+    "RELEASE.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/build.mjs",
     "eval:retrieval": "npm run build --silent && node dist/retrieval/evaluation/cli.js",
     "test": "vitest run",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "p2a:init": "node scripts/bootstrap-p2a.mjs",
     "verify:installed-read": "node scripts/verify-installed-read.mjs",
-    "verify:installed-workspace": "node scripts/verify-installed-workspace.mjs"
+    "verify:installed-workspace": "node scripts/verify-installed-workspace.mjs",
+    "prepack": "node scripts/build.mjs",
+    "pack:local": "node scripts/pack-local.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -131,5 +136,13 @@
     "@huggingface/transformers": {
       "optional": true
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/silbaram/buildlore.git"
+  },
+  "bugs": {
+    "url": "https://github.com/silbaram/buildlore/issues"
+  },
+  "homepage": "https://github.com/silbaram/buildlore#readme"
 }

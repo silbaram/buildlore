@@ -36,7 +36,7 @@ The package is not published to the npm registry yet. Install a supplied release
 git clone <knowledge-repository-URL> my-knowledge
 cd my-knowledge
 npm install --save-exact /path/to/buildlore-0.1.1-rc.1.tgz
-node node_modules/buildlore/dist/cli/bin.js workspace init --json
+npx --no buildlore workspace init --json
 ```
 
 Without a Git origin, supply an explicit portable `--knowledge-repo <repository-id>`. Initialization does not convert existing hubs or source checkouts.
@@ -54,7 +54,7 @@ my-knowledge/
 
 ### Find the next setup step
 
-From the knowledge checkout, run `node node_modules/buildlore/dist/cli/bin.js workspace guide --project my-project`. It inspects without writing and shows the next step, execution location and required inputs. Rerun after each step. Add `--json` for the `buildlore.workspace-guide.v1` contract. A project is never selected automatically, even when only one exists.
+From the knowledge checkout, run `npx --no buildlore workspace guide --project my-project`. It inspects without writing and shows the next step, execution location and required inputs. Rerun after each step. Add `--json` for the `buildlore.workspace-guide.v1` contract. A project is never selected automatically, even when only one exists.
 
 `ready` covers inspected local Wiki and connection state. AI client registration, AI quality and embeddings remain unchecked. `blocked` indicates damage or a path problem; restore trusted Git data instead of recreating approval records. Diagnose source connections with `doctor` or `connection status` from that source checkout.
 
@@ -74,8 +74,8 @@ From the knowledge checkout, run `node node_modules/buildlore/dist/cli/bin.js wo
 2. Register and author from the **knowledge repository**:
 
 ```sh
-node node_modules/buildlore/dist/cli/bin.js project add --id my-project --source-repo https://example.org/team/my-project.git --source-root /work/my-project --json
-node node_modules/buildlore/dist/cli/bin.js source add --project my-project --id docs --kind markdown --path docs --recursive --json
+npx --no buildlore project add --id my-project --source-repo https://example.org/team/my-project.git --source-root /work/my-project --json
+npx --no buildlore source add --project my-project --id docs --kind markdown --path docs --recursive --json
 
 ```
 
@@ -84,21 +84,25 @@ node node_modules/buildlore/dist/cli/bin.js source add --project my-project --id
 New projects deny external compilation by default. Review classification and allowed capabilities in `projects/my-project/security-policy.json` using the security policy section below before authoring. Inspect selections and policy failures with `sync --dry-run`; never disable secret detection to bypass a failure.
 
 ```sh
-node node_modules/buildlore/dist/cli/bin.js sync --project my-project --dry-run --json
-node node_modules/buildlore/dist/cli/bin.js sync --project my-project --json
+npx --no buildlore sync --project my-project --dry-run --json
+npx --no buildlore sync --project my-project --json
 ```
 
 Use the packaged `skills/buildlore-authoring/SKILL.md` for authoring and `skills/buildlore-activation/SKILL.md` for approval/activation. Ask your AI to read `node_modules/buildlore/skills/…/SKILL.md`, or copy the skill into your client's **knowledge-workspace-local skill directory**. Global skill installation is optional. MCP reads require an explicitly approved and activated generation; writing a draft does not authorize approval.
 
-3. Connect from each **source repository**, using the package installed in the knowledge repository:
+3. Connect and register Codex MCP from the **knowledge repository**. Commit the initial workspace/npm metadata and reviewed Wiki through the existing workflow first; connections require a knowledge Git commit.
 
 ```sh
-cd /work/my-project
-node /work/my-knowledge/node_modules/buildlore/dist/cli/bin.js connect --workspace /work/my-knowledge --project my-project --json
-node /work/my-knowledge/node_modules/buildlore/dist/cli/bin.js client configure --client codex --project-dir /work/my-project --json
-# Review the preview, then apply using its returned planDigest.
-node /work/my-knowledge/node_modules/buildlore/dist/cli/bin.js client configure --client codex --project-dir /work/my-project --apply --expect-plan <planDigest> --json
+npx --no buildlore workspace connect --project my-project --client codex
+npx --no buildlore workspace connect --project my-project --client codex --apply
+npx --no buildlore workspace check --project my-project --client codex
 ```
+
+The first command previews without writes; `--apply` connects the registered source checkout and configures its owned Codex MCP entry. Repeating it is safe. A partial failure lists completed stages and recovery instructions. Existing user settings and other servers are preserved. No package installation is needed in the source checkout.
+
+`workspace check` uses the installed read-only MCP server to initialize, list tools and approved pages, search and read a result with the same generation. It calls no model. `ready` means this protocol check passed; **the current Codex session remains unverified**. Open a new trusted Codex session in the source project, inspect `/mcp`, then ask it to search/read the project's Wiki.
+
+For configuration-only guidance, use `workspace guide --project my-project --client codex`. It never claims protocol readiness. Setup/check and this optional guide use `buildlore.workspace-setup.v1` inside the CLI envelope; the guide without `--client` retains its existing contract. A dirty or unapproved Wiki, missing configuration, changed generation or timeout produces a specific failed stage. `--json` returns the same diagnostics without source paths, document bodies or raw child output.
 
 The complete authoring workflow is verified on Linux. Native Windows path, connection and sync checks have been exercised, but authoring state storage fails with `HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED` because its existing file permission checks require POSIX modes. The complete Windows authoring workflow has not passed support validation. Use `node .../bin.js` on Windows with actual drive paths and quote paths containing spaces. MCP reads only the selected project's approved knowledge. No separate BuildLore installation is needed in each source project.
 
@@ -117,12 +121,11 @@ A local `.tgz` installation records a file path in npm metadata. A Git clone fol
 ```sh
 cd /new/my-knowledge
 npm install --save-exact /new/downloads/buildlore-0.1.1-rc.1.tgz
-node node_modules/buildlore/dist/cli/bin.js workspace guide --project my-project
-node node_modules/buildlore/dist/cli/bin.js workspace init --json
-node node_modules/buildlore/dist/cli/bin.js project bind --project my-project --source-root /new/my-project --json
-cd /new/my-project
-node /new/my-knowledge/node_modules/buildlore/dist/cli/bin.js connect --workspace /new/my-knowledge --project my-project --json
-node /new/my-knowledge/node_modules/buildlore/dist/cli/bin.js doctor --json
+npx --no buildlore workspace guide --project my-project
+npx --no buildlore workspace init --json
+npx --no buildlore project bind --project my-project --source-root /new/my-project --json
+npx --no buildlore workspace connect --project my-project --client codex --apply
+npx --no buildlore workspace check --project my-project --client codex
 ```
 
 Restore the source checkout and its `.buildlore/sources.json` too. The clone's Git origin must identify the knowledge repository recorded in the workspace. Rerunning `workspace init` prepares local folder permissions and binding storage that Git does not preserve; it retains existing Wiki and approval records. Repeat bind/connect for each project, and preview client configuration with the new paths before applying it. Review and commit changed npm metadata separately.
@@ -130,12 +133,14 @@ Restore the source checkout and its `.buildlore/sources.json` too. The clone's G
 ### Maintainers: local distribution, then npm preparation
 
 1. With Node 24+ and **npm 11.19.0**, pass build/test/lint/typecheck and `npm run verify:installed-workspace`. Linux verification requires `bwrap`; its absence is reported as failure.
-2. Use `npm pack --json --pack-destination <distribution-directory>` to inspect the tarball file list, size and integrity. Deliver `sha256sum <file.tgz>` with the identical archive. It contains runtime code, public schemas and authoring/activation skills; product source, tests, user knowledge and local state are excluded.
+2. Use `npm run pack:local -- --output <distribution-directory>` to clean-build and inspect the tarball file list, public exports, size and integrity. It rejects obsolete build files; plain `npm pack` also runs the clean-build hook. Deliver `sha256sum <file.tgz>` with the identical archive. It contains runtime code, public schemas and authoring/activation skills; product source, tests, user knowledge and local state are excluded.
 3. Keep `private: true` for now. Immediately before a future registry release, verify name availability, version, license, package contents and account permissions; change public-release settings only with separate publication approval. This workflow does not publish to npm.
 
 Installed verification covers CLI registration, source selection, authoring, review, explicit test approval, activation and publication for two projects, then clone/reinstall and MCP search/read/isolation. It removes the original tarball and uses a separately delivered copy. Deterministic inputs test protocols, not actual AI quality or a real client conversation. Windows OS verification remains follow-up work.
 
 Local archive behavior follows the official [npm pack](https://docs.npmjs.com/cli/v11/commands/npm-pack/) and [npm install](https://docs.npmjs.com/cli/v11/commands/npm-install/) commands.
+
+See [release checks and compatibility policy](RELEASE.md) and [release notes](CHANGELOG.md).
 
 ## Product development and legacy hub usage
 
@@ -214,7 +219,7 @@ Source revision comparison uses recorded Git HEAD metadata, not working-file equ
 Remote freshness is `not_checked`. Resolve pin errors through the existing hub `knowledge status`
 and pin plan/commit workflow. Reads create no model, index or temporary files and need no network.
 Read-only history validation uses repeated traversal to keep live memory bounded, so a cold read
-of a long history may be slower. MCP client integration and automatic updates belong to later work.
+of a long history may be slower. MCP client integration is available through the workspace setup flow above; automatic updates are not implemented.
 
 For development validation, run `npm run verify:installed-read` with npm 11.19.0, `strace`,
 `bwrap` and permission to create user namespaces. Missing tools fail the check. Installation uses

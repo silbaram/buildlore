@@ -29,6 +29,7 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
       await exec(process.execPath, [npm, 'install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', path], { cwd: workspace, maxBuffer: 4 * 1024 * 1024 });
     };
     await install(tarball);
+    await exec(process.execPath, [npm, 'audit', '--omit=dev', '--audit-level=moderate'], { cwd: workspace });
     const binary = (): string => join(workspace, 'node_modules/buildlore/dist/cli/bin.js');
     const env = (): NodeJS.ProcessEnv => ({ ...process.env, BUILDLORE_CONFIG_DIR: config });
     const sandbox = (writable: boolean): string[] => ['--ro-bind', '/', '/', ...(writable ? ['--bind', root, root] : []),
@@ -47,12 +48,20 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
       const envelope = record(JSON.parse(stdout || stderr) as unknown);
       if (args[0] === 'client') {
         assert.equal(envelope.schemaVersion, 'buildlore.client-plan.v1');
-        assert.equal(envelope.applied, false);
+        assert.equal(envelope.applied, args.includes('--apply'));
         return { exitCode, data: envelope, stderr, envelope };
       }
       assert.equal(envelope.ok, expected === 0);
       return { exitCode, data: record(envelope.data ?? {}), stderr, envelope };
     }
+    const checkBin = async (): Promise<void> => {
+      const metadata = record(JSON.parse(await readFile(join(workspace, 'node_modules/buildlore/package.json'), 'utf8')) as unknown);
+      const version = await exec('bwrap', [...sandbox(true), '--chdir', workspace, process.execPath, npm,
+        'exec', '--offline', '--no', '--', 'buildlore', '--version'], { cwd: workspace,
+        env: { ...env(), npm_config_cache: join(root, 'npm-cache') } });
+      assert.equal(version.stdout.trim(), `buildlore ${String(metadata.version)}`);
+    };
+    await checkBin();
     assert.equal((await invoke(['workspace', 'guide'])).data.mode, 'uninitialized');
     assert.equal((await invoke(['workspace', 'init', '--knowledge-repo', '../knowledge.git'])).data.outcome, 'created');
     const projects = ['parcel', 'other'] as const;
@@ -111,7 +120,14 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
       assert.equal(publication.data.state, 'committed'); assert.equal(publication.data.parentPin, 'not_applicable');
     }
     async function connectAll(): Promise<void> {
-      for (const projectId of projects) await invoke(['connect', '--workspace', workspace, '--project', projectId, '--source-repo', `https://example.test/${projectId}.git`], source(projectId));
+      for (const projectId of projects) {
+        const setup = ['workspace', 'connect', '--project', projectId, '--client', 'codex'];
+        assert.equal((await invoke(setup)).data.overall, 'preview');
+        assert.equal((await invoke([...setup, '--apply'])).data.overall, 'configured');
+        assert.equal((await invoke([...setup, '--apply'])).data.overall, 'configured');
+        const checked = (await invoke(['workspace', 'check', '--project', projectId, '--client', 'codex'])).data;
+        assert.equal(checked.overall, 'ready'); assert.equal(checked.clientSession, 'unverified');
+      }
     }
     await connectAll();
     await invoke(['client', 'configure', '--client', 'codex', '--project-dir', source('parcel')]);
@@ -120,7 +136,9 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
       const clientEnv = Object.fromEntries(Object.entries(env()).filter((e): e is [string, string] => e[1] !== undefined));
       const client = new Peer('bwrap', [...sandbox(false), '--chdir', cwd, process.execPath, binary(), 'mcp', '--project-dir', cwd, '--read-only'], clientEnv);
       try {
-        await client.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'workspace-verifier', version: '1' } });
+        const initialized = await client.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'workspace-verifier', version: '1' } });
+        const metadata = record(JSON.parse(await readFile(join(workspace, 'node_modules/buildlore/package.json'), 'utf8')) as unknown);
+        assert.equal(record(record(initialized.result).serverInfo).version, metadata.version);
         client.notify('notifications/initialized');
         const call = async (name: string, args: object): Promise<Record<string, unknown>> => record((await client.request('tools/call', { name, arguments: args })).result);
         if (corrupt) { const rejected = await call('list', {}); assert.equal(rejected.isError, true); assert(JSON.stringify(rejected.structuredContent).includes('KNOWLEDGE_INVALID')); return {}; }
@@ -145,6 +163,12 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
     }
     const baseline = new Map<string, Record<string, unknown>>();
     for (const project of projects) baseline.set(project, await mcp(project));
+    // Local client config is not Git data. Release it under its original owner before simulating another PC.
+    for (const projectId of projects) {
+      const args = ['client', 'remove', '--client', 'codex', '--project-dir', source(projectId)];
+      const plan = await invoke(args);
+      await invoke([...args, '--apply', '--expect-plan', String(plan.data.planDigest)]);
+    }
     const original = workspace;
     workspace = join(root, 'restored');
     await git(root, 'clone', original, workspace);
@@ -153,6 +177,7 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
     const delivered = join(root, 'delivered'); await mkdir(delivered);
     const replacement = join(delivered, basename(tarball)); await cp(tarball, replacement); await rm(tarball);
     await install(replacement); // Fails if package/lock still depends on the now unavailable original tarball.
+    await checkBin();
     config = join(root, 'restored-config');
     const cloned = await invoke(['workspace', 'guide', '--project', 'parcel']);
     assert(JSON.stringify(cloned.data).includes('SOURCE_BINDING_REQUIRED'));
@@ -176,6 +201,7 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
     process.stdout.write(JSON.stringify({ installedWorkspace: 'passed', platform: process.platform, sourceHidden: true,
       mcpReadOnlyMount: true, networkDisabledDuringWorkflow: true, projects: 2, firstInitialization: 'created',
       publication: 'two CLI Git commits', freshClone: 'reinstalled from separately delivered tarball; original removed',
+      shortNpmBin: 'passed', ownedClientSetup: 'passed', workspaceCheck: 'passed', versionConsistency: 'passed', consumerAudit: 'passed',
       generationAndContentRestored: true, searchReadIsolationAndStaleGeneration: 'passed', invalidApproval: 'rejected',
       authoring: 'deterministic proposal/review inputs; explicit test approval; no paid AI' }) + '\n');
   } finally { await rm(root, { recursive: true, force: true, maxRetries: 3 }); }

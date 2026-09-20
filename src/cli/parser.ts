@@ -54,7 +54,9 @@ const LOCAL_MODEL_PROFILE_ID = 'multilingual-e5-small';
 export const CONNECTED_READ_COMMANDS: readonly CliCommandId[] = ['wiki.list', 'wiki.read', 'wiki.memory', 'wiki.lookup', 'wiki.citations', 'search'];
 
 const COMMAND_SPECS: readonly CommandSpec[] = [
-  command(['workspace', 'guide'], 'workspace.guide', 'workspace.guide', ['--project'], [], [], {}, '--project'),
+  command(['workspace', 'guide'], 'workspace.guide', 'workspace.guide', ['--project', '--client'], [], [], {}, '--project'),
+  command(['workspace', 'connect'], 'workspace.connect', 'workspace.connect', ['--project', '--client'], ['--project', '--client'], ['--apply'], {}, '--project'),
+  command(['workspace', 'check'], 'workspace.check', 'workspace.check', ['--project', '--client'], ['--project', '--client'], [], {}, '--project'),
   command(['workspace', 'init'], 'workspace.init', 'workspace.init', ['--knowledge-repo']),
   command(['setup'], 'setup', 'setup', ['--hub', '--knowledge-repo'], ['--hub', '--knowledge-repo']),
   command(['connect'], 'connect', 'connect', ['--hub', '--workspace', '--project', '--source-repo'], ['--project'], [], {}, '--project'),

@@ -1,6 +1,8 @@
 import { createProjectWikiWorkflow } from './project-wiki-workflow.js';
 import { safeSyncSourceRef } from '../projector/sync-sanitization-diagnostics.js';
 import { workspaceGuide } from '../application/workspace-guide.js';
+import { workspaceConnect, workspaceClientGuide } from '../application/workspace-setup.js';
+import { workspaceCheck } from '../application/workspace-check.js';
 import { createWorkspacePublicationService, normalizeWorkspacePublication } from '../knowledge/workspace-publication.js';
 import { initializeKnowledgeWorkspace, resolveWorkspaceLayout, inspectKnowledgeWorkspace, type WorkspaceLayout } from '../knowledge/knowledge-workspace.js';
 import type { ReadObserver } from '../retrieval/read-observer.js';
@@ -148,6 +150,8 @@ export interface CliIo {
 }
 
 export interface CliRuntime {
+  /** @internal Installed CLI override for isolated package verification. */
+  readonly workspaceBinPath?: string;
   /** @internal Resolved per invocation; callers cannot select a mode through this field. */
   readonly workspaceLayout?: WorkspaceLayout;
   readonly readObserver?: ReadObserver;
@@ -551,7 +555,7 @@ async function executeCommand(
     throw new CliUsageError('CLI_COMMAND_UNSUPPORTED');
   }
   switch (command.operation) {
-    case 'workspace.guide': throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    case 'workspace.guide': case 'workspace.connect': case 'workspace.check': throw new CliUsageError('CLI_ARGUMENT_INVALID');
     case 'workspace.init': return initializeKnowledgeWorkspace(runtime.cwd, stringOption(command, '--knowledge-repo'));
     case 'setup': return setupHub(requiredStringOption(command, '--hub'), requiredStringOption(command, '--knowledge-repo'), runtime);
     case 'connect': {
@@ -1457,6 +1461,24 @@ export async function runCli(
     if (invocation.kind === 'help') {
       io.stdout(HELP_TEXT);
       return 0;
+    }
+    if (invocation.command === 'workspace.connect' || invocation.command === 'workspace.check' ||
+        invocation.command === 'workspace.guide' && stringOption(invocation, '--client') !== undefined) {
+      if (stringOption(invocation, '--client') !== 'codex' || !invocation.projectId) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      const options = { directory: runtime.cwd, projectId: invocation.projectId, client: 'codex' as const,
+        apply: invocation.options['--apply'] === true,
+        ...(runtime.configDir === undefined ? {} : { configDir: runtime.configDir }),
+        ...(runtime.workspaceBinPath === undefined ? {} : { binPath: runtime.workspaceBinPath }) };
+      const data = invocation.command === 'workspace.connect' ? await workspaceConnect(options)
+        : invocation.command === 'workspace.check' ? await workspaceCheck(options) : await workspaceClientGuide(options);
+      const result: CliResult = data.overall === 'blocked'
+        ? { ...successResult(invocation, data), ok: false, exitCode: 3,
+          partial: data.operation === 'connect' && data.stages.some(s => s.id === 'connection' && s.state === 'complete'),
+          errors: [{ code: data.stages.find(s => s.state === 'blocked')?.code ?? 'WORKSPACE_SETUP_FAILED',
+            message: 'Follow the next action, then repeat the command.' }] }
+        : successResult(invocation, data);
+      const rendered = renderCliResult(result, invocation.outputMode);
+      writeRenderedCliResult(io, rendered); return rendered.exitCode;
     }
     if (invocation.command === 'workspace.guide') {
       const data = await workspaceGuide(runtime.cwd, invocation.projectId ?? undefined, runtime.configDir);

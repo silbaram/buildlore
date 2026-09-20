@@ -3,7 +3,7 @@ import { hasReadControl } from '../application/read-validation.js';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import * as z from 'zod';
-import { assertConnectionCurrent, connectionPaths, resolveConnection } from '../connection/service.js';
+import { assertConnectionCurrent, connectionPaths, resolveConnection, type ConnectionPreview } from '../connection/service.js';
 import { configDirectory } from '../connection/io.js';
 import { hash } from '../connection/contracts.js';
 import { gitRead } from '../connection/git-read.js';
@@ -33,14 +33,29 @@ function line(value: string | null): string { if (!value) reject('CLIENT_CONFIG_
 async function configIsIgnored(root: string): Promise<boolean> {
   return await gitRead(root, ['check-ignore', '--no-index', '--quiet', '--', '.codex/config.toml'], true) !== null;
 }
-export async function configureClient(options: ClientOptions): Promise<ClientPlan> {
+interface ClientBinding { readonly sourceRoot: string; readonly projectId: string; readonly connectionDigest: string; assertCurrent(): Promise<unknown> }
+function validateOptions(options: ClientOptions): string {
   if (!isAbsolute(options.projectDir) || !isAbsolute(options.nodePath) || !isAbsolute(options.binPath) ||
       [options.projectDir, options.nodePath, options.binPath].some(s => hasReadControl(s) || containsCredentialMaterial(s))) reject('CLIENT_CONFIG_INVALID');
   const config = options.configDir ?? configDirectory();
   if (hasReadControl(config) || containsCredentialMaterial(config)) reject('CLIENT_CONFIG_INVALID');
+  return config;
+}
+export async function configureClient(options: ClientOptions): Promise<ClientPlan> {
+  const config = validateOptions(options);
   const context = await resolveConnection(options.projectDir, { configDir: config });
   if (!context) reject('CONNECTION_MISSING');
-  const root = connectionPaths(context).sourceRoot;
+  return configureWithBinding(options, config, { ...context, sourceRoot: connectionPaths(context).sourceRoot,
+    assertCurrent: () => assertConnectionCurrent(context) });
+}
+/** A prospective connection may inspect settings, but can never authorize a write. */
+export async function previewClientForConnection(options: ClientOptions, connection: ConnectionPreview): Promise<ClientPlan> {
+  const config = validateOptions(options);
+  if (options.projectDir !== connection.sourceRoot) reject('CLIENT_CONFIG_INVALID');
+  return configureWithBinding({ ...options, apply: false }, config, { ...connection, assertCurrent: () => Promise.resolve() });
+}
+async function configureWithBinding(options: ClientOptions, config: string, context: ClientBinding): Promise<ClientPlan> {
+  const root = context.sourceRoot;
   if (containsCredentialMaterial(root)) reject('CLIENT_CONFIG_INVALID');
   const rootDigest = hash(root), name = `buildlore-${hash(root + context.connectionDigest).slice(7, 23)}`;
   const directory = join(config, 'clients');
@@ -49,7 +64,7 @@ export async function configureClient(options: ClientOptions): Promise<ClientPla
   const launch = { command: options.nodePath, args: [options.binPath, 'mcp', '--project-dir', root, '--read-only'], env: { BUILDLORE_CONFIG_DIR: resolve(config) } };
   const snippet = options.operation === 'remove' ? null : launchSnippet(options.client, name, launch);
   const build = async (): Promise<{ plan: ClientPlan; receipt: Receipt; receiptFile: FileSnapshot; targetFile: FileSnapshot; text: string; exclude: { path: string; file: FileSnapshot; text: string } | null }> => {
-    await assertConnectionCurrent(context);
+    await context.assertCurrent();
     const targetFile = await readPrivateFile(target), receiptFile = await readPrivateFile(receiptPath);
     let receipt: Receipt = { schemaVersion: 'buildlore.client-binding.v1', client: options.client, name, rootDigest, owned: null, createdConfig: targetFile.identity === null };
     if (receiptFile.identity !== null) {
@@ -114,7 +129,7 @@ export async function configureClient(options: ClientOptions): Promise<ClientPla
     await options.afterStage?.('journal');
     if (p.exclude) await replacePrivateFile(p.exclude.path, p.exclude.file, p.exclude.text);
     await options.afterStage?.('exclude');
-    await assertConnectionCurrent(context);
+    await context.assertCurrent();
     if (p.exclude && !await configIsIgnored(root)) throw new ClientConfigError('CLIENT_CONFIG_NOT_IGNORED', snippet);
     await replacePrivateFile(target, p.targetFile, p.text, p.receipt.createdConfig && p.text === '');
     await options.afterStage?.('config');

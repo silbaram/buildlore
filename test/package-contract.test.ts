@@ -287,20 +287,21 @@ describe('package contract', () => {
       'semantic-index.schema.json',
       'retrieval-result-v2.schema.json',
       'retrieval-result-v3.schema.json',
+      'workspace-setup.schema.json',
     ]) {
       expect(packageJson.exports[`./schemas/${schema}`]).toBe(`./schemas/${schema}`);
     }
     expect(packageJson.exports['./profiles/buildlore.profile.v1.json']).toBe(
       './profiles/buildlore.profile.v1.json',
     );
-    expect(packageJson.files).toEqual(['dist', 'schemas', 'profiles', 'skills']);
+    expect(packageJson.files).toEqual(['dist', 'schemas', 'profiles', 'skills', 'RELEASE.md', 'CHANGELOG.md']);
     expect(packageJson.dependencies).toEqual(approvedRuntimeDependencies);
     expect(packageJson.engines).toEqual({ node: '>=24', npm: '>=11 <12' });
     expect(packageJson.devDependencies).toEqual(approvedDevDependencies);
     expect(packageJson.peerDependencies).toEqual({ '@huggingface/transformers': '4.2.0' });
     expect(packageJson.peerDependenciesMeta).toEqual({ '@huggingface/transformers': { optional: true } });
     expect(packageJson.scripts).toEqual({
-      build: 'tsc -p tsconfig.build.json',
+      build: 'node scripts/build.mjs',
       'eval:retrieval': 'npm run build --silent && node dist/retrieval/evaluation/cli.js',
       lint: 'eslint . --max-warnings 0',
       'p2a:init': 'node scripts/bootstrap-p2a.mjs',
@@ -308,6 +309,8 @@ describe('package contract', () => {
       typecheck: 'tsc -p tsconfig.json --noEmit',
       'verify:installed-read': 'node scripts/verify-installed-read.mjs',
       'verify:installed-workspace': 'node scripts/verify-installed-workspace.mjs',
+      prepack: 'node scripts/build.mjs',
+      'pack:local': 'node scripts/pack-local.mjs',
     });
   });
 

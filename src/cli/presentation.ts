@@ -1,4 +1,5 @@
 import type { WorkspaceGuide } from '../application/workspace-guide.js';
+import type { WorkspaceSetupResult } from '../application/workspace-setup.js';
 import type { CliIo } from './run-cli.js';
 import {
   CLI_ENVELOPE_SCHEMA_VERSION,
@@ -64,6 +65,14 @@ function sessionPlanForDisplay(data: unknown): unknown {
 }
 
 function renderHuman(result: CliResult): string {
+  if (result.data && typeof result.data === 'object' && 'schemaVersion' in result.data &&
+      result.data.schemaVersion === 'buildlore.workspace-setup.v1') {
+    const setup = result.data as WorkspaceSetupResult;
+    return [`workspace ${setup.operation}: ${setup.overall} (${setup.projectId}, ${setup.client})`,
+      ...setup.stages.map(s => `${s.id}: ${s.state} (${s.code})`),
+      ...setup.nextActions.map(action => `Next: ${action}`),
+      'Current Codex session: unverified. Configuration changes require a new session.', ''].join('\n');
+  }
   if (result.command === 'workspace.guide' && result.data && typeof result.data === 'object' &&
       'schemaVersion' in result.data && result.data.schemaVersion === 'buildlore.workspace-guide.v1') {
     const guide = result.data as WorkspaceGuide;
