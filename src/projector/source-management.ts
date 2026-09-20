@@ -11,6 +11,7 @@ import {
 } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
+import { hasOnlyWarningSummaries } from '../sanitizer/findings.js';
 import { serializeCanonicalJson, writeJsonAtomic } from '../knowledge/atomic-file.js';
 import { isNodeError } from '../knowledge/errors.js';
 import {
@@ -140,6 +141,7 @@ export interface SourceManagementPort {
 }
 
 export interface CreateSourceManagementOptions {
+  readonly knowledgeRoot?: string;
   readonly collectionAdapter?: SourceCollectionAdapter;
   readonly hubRoot: string;
   readonly jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
@@ -538,7 +540,7 @@ async function prepareDiffInput(
       sourceRevisionOrContentSha256: candidate.sourceRevision,
     });
     if (!result.ok || result.report.policyDigest !== policyDigest ||
-        (exact && result.report.summaries.length > 0)) return null;
+        (exact && !hasOnlyWarningSummaries(result.report.summaries))) return null;
     const approved = consumePreparedSource(result.prepared);
     if (
       approved === null || approved.inputBodyDigest !== bodyDigest ||
@@ -563,7 +565,7 @@ async function prepareDiffInput(
     const metadata = serializeCanonicalJson(candidate.descriptor.metadata);
     if (await approvedBody(metadata, true) === null) return null;
   }
-  for (const rawInput of inspectRawSourceInputs(candidate, maskSecrets)) {
+  for (const rawInput of inspectRawSourceInputs(candidate, true)) {
     const bodyDigest = sha256(rawInput.body);
     const result = await security.prepareSource({
       body: rawInput.body,
@@ -576,7 +578,7 @@ async function prepareDiffInput(
     if (!result.ok || result.report.policyDigest !== policyDigest) return null;
     const approved = consumePreparedSource(result.prepared);
     if (approved === null || approved.inputBodyDigest !== bodyDigest ||
-        !rawSourceInputSanitizationIsSafe(rawInput, approved.approvedBody, result.report.summaries, maskSecrets)) {
+        !rawSourceInputSanitizationIsSafe(rawInput, approved.approvedBody, result.report.summaries, maskSecrets, `${title}\n${body}`)) {
       return null;
     }
   }
@@ -695,7 +697,7 @@ async function storedDeclarationSources(
 export function createSourceManagement(
   options: CreateSourceManagementOptions,
 ): SourceManagementPort {
-  const knowledgeRoot = join(options.hubRoot, 'knowledge');
+  const knowledgeRoot = options.knowledgeRoot ?? join(options.hubRoot, 'knowledge');
   const collectionAdapter = options.collectionAdapter ?? createSourceCollectionAdapter({
     ...(options.jsonKnowledgeAdapters === undefined
       ? {}

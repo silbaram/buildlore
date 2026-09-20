@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { isNodeError, KnowledgeError } from './errors.js';
 
@@ -21,7 +21,7 @@ interface DirectoryIdentity {
 
 function isContained(root: string, candidate: string): boolean {
   const difference = relative(root, candidate);
-  return difference === '' || (!difference.startsWith('..') && !isAbsolute(difference));
+  return difference !== '..' && !difference.startsWith(`..${sep}`) && !isAbsolute(difference);
 }
 
 async function captureDirectoryIdentity(
@@ -123,6 +123,22 @@ export async function writeJsonAtomic(
   value: unknown,
   hooks: AtomicWriteHooks = {},
 ): Promise<void> {
+  return writeAtomic(path, () => serializeCanonicalJson(value), hooks);
+}
+
+export async function writeTextAtomic(
+  path: string,
+  text: string,
+  hooks: AtomicWriteHooks = {},
+): Promise<void> {
+  return writeAtomic(path, () => text, hooks);
+}
+
+async function writeAtomic(
+  path: string,
+  render: () => string,
+  hooks: AtomicWriteHooks,
+): Promise<void> {
   const directory = dirname(path);
   const directoryIdentity = hooks.confinementRoot === undefined
     ? undefined
@@ -146,7 +162,7 @@ export async function writeJsonAtomic(
         throw new KnowledgeError('REGISTRY_WRITE_FAILED', 'Atomic temporary file is unsafe.');
       }
     }
-    await handle.writeFile(serializeCanonicalJson(value), 'utf8');
+    await handle.writeFile(render(), 'utf8');
     await hooks.beforeSync?.();
     if (directoryIdentity !== undefined) await assertDirectoryIdentity(directoryIdentity);
     await handle.sync();

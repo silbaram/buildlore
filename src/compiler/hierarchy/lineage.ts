@@ -1,3 +1,4 @@
+import type { ReviewedKnowledgeQuality } from './reviewed-quality.js';
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
 import { digestHierarchyValue, parseCorpusSnapshot } from './contracts.js';
 import { citationIdsForProposalSummary } from './evidence.js';
@@ -240,6 +241,7 @@ function assertCanonicalIntegratedReview(
 function verifyReceiptBoundRun(
   input: CompileRunIntegrityInputV1,
   projectId: string,
+  reviewed?: ReviewedKnowledgeQuality,
 ): VerifiedReceiptBoundRunV1 {
   const graph = parseSparseRelationGraph(input.graph, projectId);
   const planningInventory = parsePlanningDispositionInventory(
@@ -263,6 +265,7 @@ function verifyReceiptBoundRun(
     input.integratedReviewSurface,
     surfaceInput,
     projectId,
+    reviewed,
   );
   if (
     !surface.runCoverage.complete ||
@@ -322,7 +325,7 @@ function verifyReceiptBoundRun(
     evidencePacks: input.evidencePacks,
     reconciliation: input.reconciliation,
     intentionalOrphanPageIds: input.corpusQualityReport.intentionalOrphanPageIds,
-  }, projectId);
+  }, projectId, reviewed);
   const sortedReports = Object.freeze([...input.pageQualityReports].sort((left, right) =>
     left.pageId < right.pageId ? -1 : left.pageId > right.pageId ? 1 : 0));
   if (
@@ -440,9 +443,10 @@ function verifyReceiptBoundRun(
 export function createCompileIntegrityReport(
   input: CompileRunIntegrityInputV1,
   expectedProjectId: string,
+  reviewed?: ReviewedKnowledgeQuality,
 ): CompileIntegrityReportV1 {
   exactKeys(input, COMPILE_RUN_INTEGRITY_INPUT_KEYS, expectedProjectId);
-  const verified = verifyReceiptBoundRun(input, expectedProjectId);
+  const verified = verifyReceiptBoundRun(input, expectedProjectId, reviewed);
   const { graph, planningInventory, partitions, quality, sortedReports } = verified;
   if (
     input.outline.projectId !== expectedProjectId ||
@@ -501,11 +505,12 @@ export function createCompileIntegrityReport(
 export function finalizeCompileRun(
   input: FinalizeCompileRunInputV1,
   expectedProjectId: string,
+  reviewed?: ReviewedKnowledgeQuality,
 ): CompileRunLedgerV1 {
   exactKeys(input, FINALIZE_COMPILE_RUN_INPUT_KEYS, expectedProjectId);
   const { integrityReport: _integrityReport, ...integrityInput } = input;
   void _integrityReport;
-  const verified = verifyReceiptBoundRun(integrityInput, expectedProjectId);
+  const verified = verifyReceiptBoundRun(integrityInput, expectedProjectId, reviewed);
   const {
     graph,
     planningInventory,
@@ -522,6 +527,7 @@ export function finalizeCompileRun(
   const expectedIntegrityReport = createCompileIntegrityReport(
     integrityInput,
     expectedProjectId,
+    reviewed,
   );
   if (
     graph.projectId !== expectedProjectId ||
@@ -1261,10 +1267,11 @@ export interface ApproveCompileRunInputV1 {
 export function verifyCompileRunApproval(
   input: Omit<ApproveCompileRunInputV1, 'store'>,
   expectedProjectId: string,
+  reviewed?: ReviewedKnowledgeQuality,
 ): AuthoritativeWikiStateV1 {
   const { ledger, ownershipGraph, currentState } = input;
   const liveSnapshot = parseCorpusSnapshot(input.liveSnapshot, expectedProjectId);
-  const replayedLedger = finalizeCompileRun(input.finalization, expectedProjectId);
+  const replayedLedger = finalizeCompileRun(input.finalization, expectedProjectId, reviewed);
   if (!sameCanonical(replayedLedger, ledger)) invalid(expectedProjectId);
   assertCanonicalLedger(ledger, expectedProjectId);
   assertCanonicalOwnershipGraph(ownershipGraph, expectedProjectId);

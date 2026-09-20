@@ -1,10 +1,10 @@
-export const SANITIZER_RULES_VERSION = 'buildlore.sanitizer-rules.v8' as const;
+export const SANITIZER_RULES_VERSION = 'buildlore.sanitizer-rules.v9' as const;
 export const SANITIZATION_REPORT_SCHEMA_VERSION = 'buildlore.sanitization-report.v1' as const;
 export const SECURITY_POLICY_SCHEMA_VERSION = 'buildlore.security-policy.v1' as const;
 
 export type DataClassification = 'internal' | 'public' | 'restricted';
 export type SecurityDecision = 'blocked' | 'include' | 'quarantine';
-export type SecurityFindingAction = 'block' | 'quarantine' | 'redact';
+export type SecurityFindingAction = 'block' | 'quarantine' | 'redact' | 'warn';
 export type SecurityOverrideReason =
   | 'documented-placeholder'
   | 'false-positive-fixture'

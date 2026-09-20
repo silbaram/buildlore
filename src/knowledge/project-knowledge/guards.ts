@@ -6,10 +6,11 @@ import type { KnowledgeDigest } from './types.js';
 export class ProjectKnowledgeError extends Error {
   readonly code: 'KNOWLEDGE_INVALID' | 'KNOWLEDGE_REVIEW_REQUIRED' | 'KNOWLEDGE_DRIFT'
     | 'KNOWLEDGE_SECURITY_BLOCKED' | 'KNOWLEDGE_SECURITY_INPUT_TOO_LARGE' | 'KNOWLEDGE_CONTEXT_BUDGET_EXCEEDED'
-    | 'KNOWLEDGE_COMPLETENESS_BUDGET_EXCEEDED';
+    | 'KNOWLEDGE_COMPLETENESS_BUDGET_EXCEEDED' | 'KNOWLEDGE_COMPLETENESS_REQUIRED';
 
   constructor(code: ProjectKnowledgeError['code'] = 'KNOWLEDGE_INVALID') {
-    super(code === 'KNOWLEDGE_REVIEW_REQUIRED' ? 'Knowledge requires an independent support review.'
+    super(code === 'KNOWLEDGE_COMPLETENESS_REQUIRED' ? 'New Wiki authoring requires a v5 completeness purpose with source-bound authoringQuestions (v4 remains available for compatibility). Use --allow-legacy-authoring only for explicit compatibility work; its completeness remains unassessed.'
+      : code === 'KNOWLEDGE_REVIEW_REQUIRED' ? 'Knowledge requires an independent support review.'
       : code === 'KNOWLEDGE_DRIFT' ? 'Knowledge inputs no longer match the reviewed snapshot.'
         : code === 'KNOWLEDGE_SECURITY_BLOCKED' ? 'Knowledge security screening rejected the input.'
           : code === 'KNOWLEDGE_SECURITY_INPUT_TOO_LARGE' ? 'A knowledge security scan input exceeds the size limit.'

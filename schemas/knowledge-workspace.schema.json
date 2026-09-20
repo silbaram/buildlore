@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.dev/schemas/knowledge-workspace.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "mode",
+    "knowledgeRepository"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "buildlore.workspace.v1"
+    },
+    "mode": {
+      "const": "knowledge"
+    },
+    "knowledgeRepository": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

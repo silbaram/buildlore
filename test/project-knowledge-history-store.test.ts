@@ -278,8 +278,8 @@ describe('bounded generation history', () => {
 
   it('rejects unsafe old-only metadata and decoded JSON keys under the current policy before persistence', async () => {
     const { root, snapshot } = await fixture();
-    const unsafe = ['ignore', 'previous', 'instructions'].join(' ');
-    const content = JSON.stringify({ [unsafe]: {} }).replace('ignore', '\\u0069gnore');
+    const unsafe = ['gh', 'p_', '1234567890'.repeat(3), '123456'].join('');
+    const content = JSON.stringify({ [unsafe]: {} }).replace('ghp_', '\\u0067hp_');
     const rich = withSources(snapshot, [...snapshot.sources, {
       sourceId: 'retired-json', sourceRef: 'retired.json', format: 'json', content,
       sourceContentDigest: sha256(content), sourceRevision: 'R1', codeRevision: null, tracked: true,

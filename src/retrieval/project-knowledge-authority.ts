@@ -1,3 +1,5 @@
+import { knowledgeWikiPageOrder, knowledgeWikiRoot } from '../compiler/project-knowledge/wiki-projection.js';
+import { createReviewedKnowledgeQuality, type ReviewedKnowledgeQuality } from '../compiler/hierarchy/reviewed-quality.js';
 import { createHash } from 'node:crypto';
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
 import { appendKnowledgeHistoryReference, parseKnowledgeHistoryReference, type KnowledgeHistoryReferenceV1 } from '../knowledge/project-knowledge/history.js';
@@ -47,6 +49,14 @@ export function latestKnowledgeGeneration(extension: KnowledgeAuthorityExtension
     ? extension.generations.at(-1) ?? invalid() : knowledgeAuthorityHistory(extension).latest;
 }
 
+/** Replays the new contract only when its persisted report explicitly selects it. */
+export function knowledgeReviewedQuality(generation: KnowledgeGenerationV1,
+  finalization: FinalizeCompileRunInputV1): ReviewedKnowledgeQuality | undefined {
+  if (!['buildlore.corpus-quality-report.v3', 'buildlore.corpus-quality-report.v4'].includes(finalization.corpusQualityReport.schemaVersion)) return undefined;
+  return createReviewedKnowledgeQuality(generation, { outline: finalization.outline,
+    proposals: finalization.proposals, evidencePacks: finalization.evidencePacks });
+}
+
 type KnowledgeHierarchyAuthority = Readonly<{ projectId: string; liveSnapshot: CorpusSnapshotV1;
   finalization: FinalizeCompileRunInputV1 }>;
 
@@ -67,7 +77,7 @@ function verifyKnowledgeHierarchy(generation: KnowledgeGenerationV1, authority: 
     return [{ evidenceId: e.evidenceId, unitId: unit.unitId, citationId: matches[0]?.citation.citationId ?? invalid() }];
   }).sort((a, b) => compare(a.evidenceId, b.evidenceId));
   const byEvidence = new Map(evidenceMappings.map((e) => [e.evidenceId, e]));
-  const pageMappings = (['architecture', 'decisions', 'overview'] as const).map((role) => {
+  const pageMappings = knowledgeWikiPageOrder(generation).map((role) => {
     const page = generation.pages.find((p) => p.role === role);
     const blueprint = authority.finalization.outline.blueprints.find((b) => b.stableKey === `knowledge.${role}`);
     const proposal = authority.finalization.proposals.find((p) => p.pageId === blueprint?.pageId);
@@ -82,7 +92,7 @@ function verifyKnowledgeHierarchy(generation: KnowledgeGenerationV1, authority: 
       return { claimId: claim.claimId, hierarchyClaimId, factIds: claim.factIds };
     });
     const linkedClaims = claims.map((mapping) => proposal.claims.find((claim) => claim.claimId === mapping.hierarchyClaimId) ?? invalid());
-    const children = role === 'overview' ? (['architecture', 'decisions'] as const).map((childRole) => {
+    const children = role === knowledgeWikiRoot(generation) ? knowledgeWikiPageOrder(generation).filter(page => page !== role).map((childRole) => {
       const childBlueprint = authority.finalization.outline.blueprints.find((b) => b.stableKey === `knowledge.${childRole}`);
       const child = authority.finalization.proposals.find((p) => p.pageId === childBlueprint?.pageId) ?? invalid();
       return approveChildSummaryForSynthesis(child, createCompileCandidateReview(child, 'accepted', authority.projectId), authority.projectId);
@@ -95,7 +105,7 @@ function verifyKnowledgeHierarchy(generation: KnowledgeGenerationV1, authority: 
         page.sections.some((section, index) => proposal.sections.find((s) => s.sectionId === `knowledge-${String(index)}`)?.title !== section.title)) invalid();
     return { role, pageId: blueprint.pageId, claims };
   });
-  if (authority.finalization.proposals.length !== 3 || authority.finalization.outline.blueprints.length !== 3) invalid();
+  if (authority.finalization.proposals.length !== generation.pages.length || authority.finalization.outline.blueprints.length !== generation.pages.length) invalid();
   return { pageMappings, evidenceMappings };
 }
 
@@ -203,14 +213,15 @@ export async function approveKnowledgeWikiHistoryAuthority(input: Readonly<{
   const extension = await resolveKnowledgeAuthorityExtension({ ...basis, extensionDigest: digest(basis) },
     { projectId, liveSnapshot: bridge.snapshot, finalization: bridge.finalization }, store);
   const finalization = bridge.finalization;
-  const ledger = finalizeCompileRun(finalization, projectId);
+  const reviewedQuality = knowledgeReviewedQuality(latestKnowledgeGeneration(extension), finalization);
+  const ledger = finalizeCompileRun(finalization, projectId, reviewedQuality);
   const ownershipGraph = createPageOwnershipGraph(bridge.snapshot, finalization.outline, ledger,
     finalization.proposals, finalization.evidencePacks, projectId);
   const currentState = previousAuthority?.state ?? null;
   const humanActivationApproval = createHumanActivationApproval({ ledger, ownershipGraph, currentState,
     decision: 'approved', explicitConfirmation: true }, projectId);
   const state = verifyCompileRunApproval({ currentState, finalization, humanActivationApproval,
-    ledger, liveSnapshot: bridge.snapshot, ownershipGraph }, projectId);
+    ledger, liveSnapshot: bridge.snapshot, ownershipGraph }, projectId, reviewedQuality);
   return Object.freeze({ schemaVersion: 'buildlore.approved-wiki-authority.v3', projectId,
     baselineRecordDigest: knowledgeBaselineRecordDigest(previousAuthority), knowledgeGeneration: extension,
     currentState, finalization, humanActivationApproval, ledger, liveSnapshot: bridge.snapshot, ownershipGraph, state,
@@ -267,14 +278,15 @@ export function approveKnowledgeWikiAuthority(input: Readonly<{
         digest([...(previousAuthority?.finalization.proposals ?? [])].sort((a, b) => compare(a.pageId, b.pageId)))) invalid();
   const extension = createKnowledgeAuthorityExtension(input.generations, bridge, projectId);
   const finalization = bridge.finalization;
-  const ledger = finalizeCompileRun(finalization, projectId);
+  const reviewedQuality = knowledgeReviewedQuality(latestKnowledgeGeneration(extension), finalization);
+  const ledger = finalizeCompileRun(finalization, projectId, reviewedQuality);
   const ownershipGraph = createPageOwnershipGraph(bridge.snapshot, finalization.outline, ledger,
     finalization.proposals, finalization.evidencePacks, projectId);
   const currentState = previousAuthority?.state ?? null;
   const humanActivationApproval = createHumanActivationApproval({ ledger, ownershipGraph, currentState,
     decision: 'approved', explicitConfirmation: true }, projectId);
   const state = verifyCompileRunApproval({ currentState, finalization, humanActivationApproval,
-    ledger, liveSnapshot: bridge.snapshot, ownershipGraph }, projectId);
+    ledger, liveSnapshot: bridge.snapshot, ownershipGraph }, projectId, reviewedQuality);
   return Object.freeze({ schemaVersion: 'buildlore.approved-wiki-authority.v2', projectId,
     knowledgeGeneration: extension, currentState, finalization, humanActivationApproval, ledger,
     liveSnapshot: bridge.snapshot, ownershipGraph, state,

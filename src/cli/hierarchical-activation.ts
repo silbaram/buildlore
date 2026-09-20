@@ -177,8 +177,7 @@ async function replayProposalSecurity(
         prepared.inputBodyDigest !== sha256(body) ||
         prepared.policyDigest !== snapshot.sanitizerPolicyDigest ||
         prepared.projectId !== projectId || prepared.sourceKind !== 'wiki' ||
-        prepared.sourceRevisionOrContentSha256 !== proposal.proposalDigest ||
-        prepared.untrustedData) {
+        prepared.sourceRevisionOrContentSha256 !== proposal.proposalDigest) {
       invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
     }
   }
@@ -197,6 +196,7 @@ function createLiveSnapshotVerifier(options: Readonly<{
           if (!generation) invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
           const { session } = await preparePlannedKnowledgeSession({ ...options, projectId,
             rendererVersion: generation.rendererVersion,
+            ...(generation.wikiProof === undefined ? {} : { authoringMode: 'wiki-v1' as const, outputLanguage: generation.wikiProof.purpose.outputLanguage }),
             ...(authority.knowledgeGeneration.schemaVersion === 'buildlore.knowledge-authority-extension.v1'
               ? { previousGenerations: authority.knowledgeGeneration.generations.slice(0, -1) }
               : authority.knowledgeGeneration.baselineHistory === null ? {} : { previousHistory:
@@ -206,7 +206,7 @@ function createLiveSnapshotVerifier(options: Readonly<{
           }
           // Re-import under the current policy; no new semantic judgment or authority is manufactured.
           await session.submit(generation.proposal, session.exchange.exchangeDigest);
-          const replay = await session.finalize(generation.review, generation.proposal.proposalDigest);
+          const replay = await session.finalize(generation.review, generation.proposal.proposalDigest, generation.completenessProof, generation.wikiProof);
           if (replay.generationDigest !== generation.generationDigest) invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
           await replayProposalSecurity(authority, projectId,
             createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot }));
@@ -295,7 +295,7 @@ function createLiveSnapshotVerifier(options: Readonly<{
               result.report.policyDigest !== snapshot.sanitizerPolicyDigest) {
             invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
           }
-          for (const rawInput of inspectRawSourceInputs(candidate, policy.policy.sourceSecretHandling === 'mask')) {
+          for (const rawInput of inspectRawSourceInputs(candidate, true)) {
             const rawDigest = sha256(rawInput.body);
             const rawResult = await security.prepareSource({
               body: rawInput.body,
@@ -318,6 +318,7 @@ function createLiveSnapshotVerifier(options: Readonly<{
                   rawPrepared.approvedBody,
                   rawResult.report.summaries,
                   policy.policy.sourceSecretHandling === 'mask',
+                  prepared.approvedBody,
                 )) invalid('HIERARCHICAL_WIKI_ACTIVATION_SOURCE_DRIFT');
           }
           const canonical = createSourceDocument({

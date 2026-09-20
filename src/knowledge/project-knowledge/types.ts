@@ -3,8 +3,9 @@ export type KnowledgeDigest = `sha256:${string}`;
 export type KnowledgeClassification = 'observed' | 'declared' | 'inferred';
 export type KnowledgeLifecycle = 'current' | 'historical' | 'superseded' | 'stale';
 export type KnowledgeReviewStatus = 'proposed' | 'accepted' | 'disputed';
-export type KnowledgePageRole = 'overview' | 'architecture' | 'decisions';
-export type KnowledgeRendererVersion = 'knowledge-markdown-v1' | 'knowledge-markdown-v2';
+/** A page key. Legacy proposal codecs still restrict this to their three roles. */
+export type KnowledgePageRole = string;
+export type KnowledgeRendererVersion = 'knowledge-markdown-v1' | 'knowledge-markdown-v2' | 'knowledge-markdown-v3';
 
 export interface KnowledgeSourceV1 {
   readonly sourceId: string;
@@ -100,13 +101,16 @@ export interface KnowledgePageV1 {
   readonly role: KnowledgePageRole;
   readonly title: string;
   readonly sections: readonly Readonly<{
+    readonly sectionId?: string;
     readonly title: string;
     readonly claims: readonly KnowledgePageClaimV1[];
   }>[];
 }
 
 export interface KnowledgeProposalV1 {
-  readonly schemaVersion: 'buildlore.knowledge-proposal.v1';
+  readonly schemaVersion: 'buildlore.knowledge-proposal.v1' | 'buildlore.knowledge-proposal.v2';
+  /** Required by the free-page v2 contract; absent in legacy v1. */
+  readonly rootPageId?: string;
   readonly projectId: string;
   readonly snapshotDigest: KnowledgeDigest;
   readonly baselineGenerationDigest: KnowledgeDigest | null;
@@ -143,7 +147,11 @@ export interface KnowledgeSemanticReviewV1 {
 }
 
 export interface KnowledgeGenerationV1 {
-  readonly schemaVersion: 'buildlore.knowledge-generation.v1';
+  readonly schemaVersion: 'buildlore.knowledge-generation.v1' | 'buildlore.knowledge-generation.v2' | 'buildlore.knowledge-generation.v3';
+  /** Mandatory in v2; forbidden in legacy v1. Runtime replay enforces the version boundary. */
+  readonly completenessProof?: KnowledgeCompletenessProof;
+  /** The generic v3 contract records reviewed revisions and unresolved issues. */
+  readonly wikiProof?: KnowledgeWikiProof;
   readonly projectId: string;
   readonly snapshot: KnowledgeSnapshotV1;
   readonly baselineGenerationDigest: KnowledgeDigest | null;
@@ -156,3 +164,5 @@ export interface KnowledgeGenerationV1 {
   readonly rendererVersion: KnowledgeRendererVersion;
   readonly generationDigest: KnowledgeDigest;
 }
+import type { KnowledgeCompletenessProof } from '../../compiler/project-knowledge/completeness-proof.js';
+import type { KnowledgeWikiProof } from '../../compiler/project-knowledge/wiki-contracts.js';

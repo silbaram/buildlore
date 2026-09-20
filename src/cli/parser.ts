@@ -54,8 +54,12 @@ const LOCAL_MODEL_PROFILE_ID = 'multilingual-e5-small';
 export const CONNECTED_READ_COMMANDS: readonly CliCommandId[] = ['wiki.list', 'wiki.read', 'wiki.memory', 'wiki.lookup', 'wiki.citations', 'search'];
 
 const COMMAND_SPECS: readonly CommandSpec[] = [
+  command(['workspace', 'guide'], 'workspace.guide', 'workspace.guide', ['--project', '--client'], [], [], {}, '--project'),
+  command(['workspace', 'connect'], 'workspace.connect', 'workspace.connect', ['--project', '--client'], ['--project', '--client'], ['--apply'], {}, '--project'),
+  command(['workspace', 'check'], 'workspace.check', 'workspace.check', ['--project', '--client'], ['--project', '--client'], [], {}, '--project'),
+  command(['workspace', 'init'], 'workspace.init', 'workspace.init', ['--knowledge-repo']),
   command(['setup'], 'setup', 'setup', ['--hub', '--knowledge-repo'], ['--hub', '--knowledge-repo']),
-  command(['connect'], 'connect', 'connect', ['--hub', '--project', '--source-repo'], ['--hub', '--project'], [], {}, '--project'),
+  command(['connect'], 'connect', 'connect', ['--hub', '--workspace', '--project', '--source-repo'], ['--project'], [], {}, '--project'),
   command(['disconnect'], 'disconnect', 'disconnect', [], [], ['--remove-shared']),
   command(['connection', 'status'], 'connection.status', 'connection.status', ['--project'], [], [], {}, '--project'),
   command(['connection', 'relocate-hub'], 'connection.relocate-hub', 'connection.relocate-hub', ['--from', '--to', '--knowledge-repo', '--expect-plan'], ['--from', '--to', '--knowledge-repo'], ['--apply']),
@@ -242,13 +246,24 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     {},
     '--project',
   ),
+  command(['compile', 'wiki', 'start'], 'compile.wiki.start', 'compile.wiki.start',
+    ['--project', '--purpose'], ['--project', '--purpose'], [], {}, '--project'),
+  command(['compile', 'wiki', 'status'], 'compile.wiki.status', 'compile.wiki.status',
+    ['--project', '--run'], ['--project', '--run'], [], {}, '--project'),
+  ...(['inspect', 'submit', 'review', 'revise'] as const).map(action =>
+    command(['compile', 'wiki', action], `compile.wiki.${action}`, `compile.wiki.${action}`,
+      ['--project', '--run', '--input', '--expect-stage'], ['--project', '--run', '--input', '--expect-stage'], [], {}, '--project')),
+  command(['compile', 'wiki', 'finalize'], 'compile.wiki.finalize', 'compile.wiki.finalize',
+    ['--project', '--run', '--expect-stage'], ['--project', '--run', '--expect-stage'], [], {}, '--project'),
+  command(['compile', 'wiki', 'approve'], 'compile.wiki.approve', 'compile.wiki.approve',
+    ['--project', '--run', '--expect-ledger'], ['--project', '--run', '--expect-ledger'], ['--confirm-approval'], {}, '--project'),
   command(
     ['compile', 'hierarchy', 'start'],
     'compile.hierarchy.start',
     'compile.hierarchy.start',
     ['--project', '--purpose'],
     ['--project', '--purpose'],
-    [],
+    ['--allow-legacy-authoring'],
     {},
     '--project',
   ),
@@ -332,7 +347,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     {},
     '--project',
   ),
-  ...(['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct'] as const).map(action =>
+  ...(['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct', 'correct-inventory'] as const).map(action =>
     command(['compile', 'hierarchy', 'completeness', action], `compile.hierarchy.completeness.${action}`,
       `compile.hierarchy.completeness.${action}`, ['--project', '--run', '--input', '--expect-stage'],
       ['--project', '--run', '--input', '--expect-stage'], [], {}, '--project')),
@@ -759,6 +774,13 @@ function validateSessionCompileOptions(
   commandId: CliCommandId,
   values: Readonly<Record<string, CliOptionValue>>,
 ): void {
+  if (commandId.startsWith('compile.wiki.')) {
+    if (commandId !== 'compile.wiki.start' && (typeof values['--run'] !== 'string' || !HIERARCHY_RUN_ID_PATTERN.test(values['--run']))) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    for (const option of ['--purpose', '--input']) if (values[option] !== undefined && !isConfinedRelativeFilePath(values[option])) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    for (const option of ['--expect-stage', '--expect-ledger']) if (values[option] !== undefined && (typeof values[option] !== 'string' || !PLAN_DIGEST_PATTERN.test(values[option]))) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    if (commandId === 'compile.wiki.approve' && values['--confirm-approval'] !== true) throw new CliUsageError('CLI_OPTION_MISSING');
+    return;
+  }
   if (commandId.startsWith('compile.hierarchy.')) {
     validateHierarchyCompileOptions(commandId, values);
     return;

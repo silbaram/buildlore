@@ -56,7 +56,11 @@ describe('project knowledge schema parity', () => {
       const required = shape.required as readonly string[];
       expect(required.every((key) => Object.hasOwn(value, key))).toBe(true);
       expect(Object.keys(value).every((key) => Object.hasOwn(properties, key))).toBe(true);
-      if (value.schemaVersion !== undefined) expect(record(properties.schemaVersion).const).toBe(value.schemaVersion);
+      if (value.schemaVersion !== undefined) {
+        const version = record(properties.schemaVersion);
+        if (Array.isArray(version.enum)) expect(version.enum).toContain(value.schemaVersion);
+        else expect(version.const).toBe(value.schemaVersion);
+      }
     }
     expect(record(record(defs.snapshot).properties).repositoryRevision).toBeUndefined();
     expect(record(record(defs.source).properties).repositoryRevision).toBeDefined();

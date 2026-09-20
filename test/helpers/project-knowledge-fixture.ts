@@ -52,7 +52,8 @@ export function fixtureReview(proposal: KnowledgeProposalV1): KnowledgeSemanticR
     judgments: knowledgeReviewTargets(proposal).map((targetId) => {
       const claim = proposal.pages.flatMap((p) => p.sections.flatMap((s) => s.claims)).find((c) => c.claimId === targetId);
       const page = proposal.pages.find((p) => targetId === `title:${p.role}` || targetId.startsWith(`section:${p.role}:`));
-      const factId = claim?.factIds[0] ?? page?.sections[0]?.claims[0]?.factIds[0] ?? targetId;
+      const section = page?.sections.find((_, index) => targetId === `section:${page.role}:${String(index)}`);
+      const factId = claim?.factIds[0] ?? (section ?? page?.sections[0])?.claims[0]?.factIds[0] ?? targetId;
       const supersession = proposal.supersessions.find((s) => targetId === `supersession:${s.previousFactId}:${s.replacementFactId}`);
       return { targetId, verdict: 'supported' as const,
         evidenceIds: supersession?.evidenceIds ?? proposal.facts.find((f) => f.id === factId)?.evidenceIds ?? proposal.facts[0]?.evidenceIds ?? [],

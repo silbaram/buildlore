@@ -1,3 +1,4 @@
+import { connectionRecovery } from '../application/connection-recovery.js';
 import { ConnectionError } from '../connection/contracts.js';
 import { LookupBatchError } from '../compiler/project-knowledge/lookup-batch.js';
 import { ProgressiveMemoryError } from '../compiler/project-knowledge/progressive-memory.js';
@@ -183,7 +184,8 @@ export function mapCliError(
     const exitCode = ['CONNECTION_MISSING', 'CONNECTION_INCOMPLETE', 'APPROVAL_MISSING', 'FORMAT_UNSUPPORTED', 'GENERATION_REQUIRED'].includes(code) ? 2 :
       ['CONNECTION_BUSY', 'CONNECTION_WRITE_FAILED'].includes(code) ? 4 :
       ['HUB_UNAVAILABLE', 'KNOWLEDGE_PIN_MISMATCH', 'KNOWLEDGE_UNINITIALIZED'].includes(code) ? 6 : 3;
-    return baseFailure(context, exitCode, code, 'Connection read or setup failed safely. Run buildlore connection status for recovery.');
+    const recovery = connectionRecovery(code);
+    return baseFailure(context, exitCode, code, recovery.message, recovery.command);
   }
   if (error instanceof CliUsageError) {
     return baseFailure(
@@ -547,7 +549,9 @@ export function mapCliError(
       context,
       3,
       error.code,
-      'Source collection manifest or selection was rejected safely.',
+      error.code === 'SOURCE_KIND_UNSUPPORTED'
+        ? 'A declared source kind or adapter is unsupported by the active profile. Check sources.json and the project profile-binding.json before retrying.'
+        : 'Source collection manifest or selection was rejected safely.',
     );
   }
   if (error instanceof ProjectionError || error instanceof SourceDocumentError) {

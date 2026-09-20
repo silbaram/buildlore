@@ -1,3 +1,6 @@
+import { initializeKnowledgeWorkspace } from '../../src/knowledge/knowledge-workspace.js';
+import { addProject } from '../../src/knowledge/workspace.js';
+import { bindLocalProject } from '../../src/knowledge/local-project-registry.js';
 import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -32,11 +35,11 @@ export interface KnowledgeWorkflowFixture {
 }
 
 export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' | 'optional-p2a',
-  options: Readonly<{ sourceDetails?: boolean; projectId?: string }> = {}): Promise<KnowledgeWorkflowFixture> {
+  options: Readonly<{ sourceDetails?: boolean; projectId?: string; directWorkspace?: boolean; legacyAuthoring?: boolean }> = {}): Promise<KnowledgeWorkflowFixture> {
   const root = await mkdtemp(join(tmpdir(), 'buildlore-knowledge-e2e-'));
   const sourceRoot = join(root, 'source');
   const hubRoot = join(root, 'hub');
-  const knowledgeRoot = join(hubRoot, 'knowledge');
+  const knowledgeRoot = options.directWorkspace ? hubRoot : join(hubRoot, 'knowledge');
   const projectId = options.projectId ?? (sample === 'generic-md-json' ? 'parcel' : 'lantern');
   const fixtureRoot = join(process.cwd(), 'test/fixtures/project-knowledge/v1', sample);
   const git = async (cwd: string, args: readonly string[]): Promise<void> => {
@@ -71,8 +74,18 @@ export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' |
     await git(seed, ['add', 'README.md']);
     await git(seed, ['commit', '-m', 'seed']);
     await git(seed, ['push', 'origin', 'main']);
-    await initializeSingleProjectQuickstart(hubRoot, { branch: 'main', knowledgeRepository: '../knowledge.git',
-      projectId, sourceRepository: `https://example.test/${projectId}.git`, sourceRoot });
+    if (options.directWorkspace) {
+      await git(root, ['clone', origin, hubRoot]);
+      await git(hubRoot, ['config', 'user.name', 'BuildLore Fixture']);
+      await git(hubRoot, ['config', 'user.email', 'fixture@example.invalid']);
+      await initializeKnowledgeWorkspace(hubRoot, '../knowledge.git');
+      await addProject(knowledgeRoot, { projectId, sourceRepository: `https://example.test/${projectId}.git`, displayName: projectId });
+      await bindLocalProject(hubRoot, { projectId, sourceRepository: `https://example.test/${projectId}.git`, sourceRoot });
+      await mkdir(join(sourceRoot, '.buildlore'), { recursive: true });
+    } else {
+      await initializeSingleProjectQuickstart(hubRoot, { branch: 'main', knowledgeRepository: '../knowledge.git',
+        projectId, sourceRepository: `https://example.test/${projectId}.git`, sourceRoot });
+    }
     const p2a = p2aRunJsonKnowledgeAdapter();
     const details: unknown = options.sourceDetails === true
       ? JSON.parse(await readFile(join(fixtureRoot, '../../source-details-example.json'), 'utf8')) : [];
@@ -105,14 +118,18 @@ export async function createKnowledgeWorkflowFixture(sample: 'generic-md-json' |
       async cli(args) {
         let stdout = '';
         let stderr = '';
-        const exitCode = await runCli([...args, '--json'], { stdout: (v) => { stdout += v; }, stderr: (v) => { stderr += v; } }, { cwd: hubRoot });
+        // Historical reader fixtures intentionally retain their legacy writing protocol.
+        // Standard-authoring tests opt out and exercise the actual default admission gate.
+        const compatibility = options.legacyAuthoring !== false && !args.includes('--allow-legacy-authoring') && args.slice(0, 3).join(' ') === 'compile hierarchy start'
+          ? ['--allow-legacy-authoring'] : [];
+        const exitCode = await runCli([...args, ...compatibility, '--json'], { stdout: (v) => { stdout += v; }, stderr: (v) => { stderr += v; } }, { cwd: hubRoot });
         const parsed = stdout === '' ? {} : record(JSON.parse(stdout) as unknown);
         return { exitCode, data: record(parsed.data ?? parsed), stderr };
       },
-      cleanup: () => rm(root, { recursive: true, force: true }),
+      cleanup: () => rm(root, { recursive: true, force: true, maxRetries: 3 }),
     };
   } catch (error) {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
     throw error;
   }
 }

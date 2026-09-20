@@ -349,7 +349,7 @@ export interface PageBlueprintV1 {
 }
 
 export interface WikiOutlineV1 {
-  readonly schemaVersion: typeof WIKI_OUTLINE_SCHEMA_VERSION;
+  readonly schemaVersion: typeof WIKI_OUTLINE_SCHEMA_VERSION | 'buildlore.wiki-outline.v3';
   readonly projectId: string;
   readonly snapshotDigest: HierarchySha256Digest;
   readonly graphDigest: HierarchySha256Digest;
@@ -553,7 +553,11 @@ export interface SemanticQualityPolicyV1 {
 }
 
 export interface PageQualityReportV1 {
-  readonly schemaVersion: typeof PAGE_QUALITY_REPORT_SCHEMA_VERSION;
+  readonly schemaVersion: typeof PAGE_QUALITY_REPORT_SCHEMA_VERSION | 'buildlore.page-quality-report.v3' | 'buildlore.page-quality-report.v4';
+  readonly advisoryReasonCodes?: readonly string[];
+  readonly semanticReviewDigest?: HierarchySha256Digest;
+  readonly knowledgeGenerationDigest?: HierarchySha256Digest;
+  readonly lexicalClaimEvidenceSupportBasisPoints?: number;
   readonly projectId: string;
   readonly pageId: string;
   readonly blueprintDigest: HierarchySha256Digest;
@@ -591,7 +595,9 @@ export interface PageQualityReportV1 {
 }
 
 export interface CorpusQualityReportV1 {
-  readonly schemaVersion: typeof CORPUS_QUALITY_REPORT_SCHEMA_VERSION;
+  readonly schemaVersion: typeof CORPUS_QUALITY_REPORT_SCHEMA_VERSION | 'buildlore.corpus-quality-report.v3' | 'buildlore.corpus-quality-report.v4';
+  readonly semanticReviewDigest?: HierarchySha256Digest;
+  readonly knowledgeGenerationDigest?: HierarchySha256Digest;
   readonly projectId: string;
   readonly outlineDigest: HierarchySha256Digest;
   readonly reconciliationDigest: HierarchySha256Digest;
@@ -691,7 +697,7 @@ export interface CurrentSessionGenerationReceiptContractV1 {
   readonly snapshotDigest: HierarchySha256Digest;
   readonly proposalDigest: HierarchySha256Digest;
   readonly sanitizerPolicyDigest: HierarchySha256Digest;
-  readonly sanitizerRulesVersion: 'buildlore.sanitizer-rules.v8';
+  readonly sanitizerRulesVersion: 'buildlore.sanitizer-rules.v9';
   readonly sanitizerInputDigest: HierarchySha256Digest;
   readonly generationActor: 'current-agent-session';
   readonly proposalOutputSanitized: true;

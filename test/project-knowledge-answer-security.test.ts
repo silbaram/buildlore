@@ -24,11 +24,10 @@ async function fixture(where: 'large-history' | 'large-history-secret' | 'unused
   await writeSecurityPolicy(root, 'parcel', { capabilities: [] });
   const clean = await knowledgeFixtureSnapshot();
   // Synthetic credential assembled in memory; never real user data.
-  const attack = where.includes('secret') ? `ghp_${'1234567890'.repeat(3)}123456`
-    : ['ignore', 'previous', 'instructions'].join(' ');
+  const attack = `ghp_${'1234567890'.repeat(3)}123456`;
   const large = where.startsWith('large-history');
   const padding = 'Documented local processing only. '.repeat(5500);
-  const escaped = attack.replaceAll('i', '\\u0069');
+  const escaped = attack.replaceAll('g', '\\u0067');
   const json = where === 'json-key' ? `{"${escaped}":{}}` : `{"nested":{"message":"${escaped}"}}`;
   const snapshot = createKnowledgeSnapshot({ projectId: clean.projectId, selectionDigest: clean.selectionDigest,
     sanitizerPolicyDigest: clean.sanitizerPolicyDigest, sanitizerRulesVersion: clean.sanitizerRulesVersion,

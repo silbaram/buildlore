@@ -26,13 +26,14 @@ const RULE_DESCRIPTORS = [
   { action: 'redact', overridable: false, priority: 54, ruleId: 'credential.provider.openai' },
   { action: 'redact', overridable: false, priority: 55, ruleId: 'credential.provider.anthropic' },
   { action: 'redact', overridable: false, priority: 56, ruleId: 'credential.provider.google' },
+  { action: 'warn', overridable: true, priority: 57, ruleId: 'suspicion.jwt' },
   { action: 'block', overridable: false, priority: 60, ruleId: 'private-key.pem' },
-  { action: 'block', overridable: true, priority: 70, ruleId: 'entropy.candidate' },
+  { action: 'warn', overridable: true, priority: 70, ruleId: 'entropy.candidate' },
   { action: 'redact', overridable: false, priority: 71, ruleId: 'entropy.masked' },
-  { action: 'quarantine', overridable: true, priority: 80, ruleId: 'prompt-injection.override-instructions' },
-  { action: 'quarantine', overridable: true, priority: 81, ruleId: 'prompt-injection.secret-exfiltration' },
-  { action: 'quarantine', overridable: true, priority: 82, ruleId: 'prompt-injection.role-instruction' },
-  { action: 'quarantine', overridable: true, priority: 83, ruleId: 'prompt-injection.tool-action' },
+  { action: 'warn', overridable: true, priority: 80, ruleId: 'prompt-injection.override-instructions' },
+  { action: 'warn', overridable: true, priority: 81, ruleId: 'prompt-injection.secret-exfiltration' },
+  { action: 'warn', overridable: true, priority: 82, ruleId: 'prompt-injection.role-instruction' },
+  { action: 'warn', overridable: true, priority: 83, ruleId: 'prompt-injection.tool-action' },
   { action: 'block', overridable: false, priority: 90, ruleId: 'input.finding-overflow' },
   { action: 'block', overridable: false, priority: 91, ruleId: 'input.nul' },
   { action: 'block', overridable: false, priority: 92, ruleId: 'input.oversized' },
@@ -40,6 +41,7 @@ const RULE_DESCRIPTORS = [
   { action: 'block', overridable: false, priority: 94, ruleId: 'input.invalid-binding' },
   { action: 'block', overridable: false, priority: 95, ruleId: 'input.invalid-character' },
   { action: 'block', overridable: false, priority: 96, ruleId: 'input.redaction-incomplete' },
+  { action: 'block', overridable: false, priority: 97, ruleId: 'input.credential-rejected' },
 ] satisfies readonly SecurityRuleDescriptor[];
 
 export const SECURITY_RULES: readonly SecurityRuleDescriptor[] = Object.freeze(

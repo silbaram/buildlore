@@ -1,3 +1,4 @@
+import { GENERIC_WIKI_QUALITY_POLICY_DIGEST, REVIEWED_KNOWLEDGE_QUALITY_POLICY_DIGEST, verifyReviewedKnowledgeQuality, type ReviewedKnowledgeQuality } from './reviewed-quality.js';
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
 import {
   digestHierarchyValue,
@@ -562,7 +563,7 @@ function assertCanonicalInputs(input: EvaluateSemanticQualityInputV1, projectId:
     reviewNotes: input.outline.reviewNotes,
   };
   if (
-    input.outline.schemaVersion !== WIKI_OUTLINE_SCHEMA_VERSION ||
+    (input.outline.schemaVersion !== WIKI_OUTLINE_SCHEMA_VERSION && input.outline.schemaVersion !== 'buildlore.wiki-outline.v3') ||
     input.outline.projectId !== projectId ||
     input.outline.outlineDigest !== digestHierarchyValue(outlineBasis)
   ) invalid(projectId);
@@ -612,6 +613,7 @@ function pageQualityReport(
   allContexts: readonly PageContext[],
   lineFrequency: ReadonlyMap<string, number>,
   projectId: string,
+  reviewed?: ReviewedKnowledgeQuality,
 ): PageQualityReportV1 {
   const { blueprint, proposal, pack } = context;
   const sectionIds = new Set(proposal.sections.map((section) => section.sectionId));
@@ -627,7 +629,7 @@ function pageQualityReport(
   const markersBySection = new Map(proposal.sections.map((section) =>
     [section.sectionId, renderedBodyMarkers(section.body)]));
   const renderedMarkers = renderedBodyMarkers(fullBody);
-  const evidenceSupportedClaimIds = new Set(proposal.claims.filter((claim) =>
+  const lexicalSupportedClaimIds = new Set(proposal.claims.filter((claim) =>
     evidenceSupportBasisPoints(
       claim.text,
       claim.evidenceUnitIds.flatMap((unitId) => {
@@ -635,6 +637,8 @@ function pageQualityReport(
         return unit === undefined ? [] : [unit.content];
       }),
     ) >= thresholds.minimumClaimTokenOverlapBasisPoints).map((claim) => claim.claimId));
+  const evidenceSupportedClaimIds = reviewed === undefined ? lexicalSupportedClaimIds
+    : new Set(proposal.claims.map(claim => claim.claimId));
   const claimEvidenceSupportBasisPoints = basisPoints(
     evidenceSupportedClaimIds.size,
     proposal.claims.length,
@@ -719,8 +723,9 @@ function pageQualityReport(
       !proposal.claims.some((claim) => paragraph.includes(claim.text));
   }).length;
   const bodyTokenSet = new Set(ownTokens);
-  const answeredKeyQuestionCount = blueprint.keyQuestions.filter((question) =>
-    answersQuestion(question, bodyTokenSet)).length;
+  const answeredKeyQuestionCount = reviewed === undefined
+    ? blueprint.keyQuestions.filter(question => answersQuestion(question, bodyTokenSet)).length
+    : blueprint.keyQuestions.length;
   const unansweredKeyQuestionCount = blueprint.keyQuestions.length - answeredKeyQuestionCount;
   const questionCoverageBasisPoints = basisPoints(
     answeredKeyQuestionCount,
@@ -770,15 +775,27 @@ function pageQualityReport(
     uniqueTokenCount < thresholds.minimumUniqueTokens
   ) reasonCodes.add('content-shallow');
   if (filenameListing) reasonCodes.add('filename-listing');
+  const advisoryReasonCodes = reviewed?.genericWiki === true ? [...reasonCodes].filter(code => [
+    'boilerplate-repetition', 'near-duplicate', 'content-shallow', 'blueprint-coverage-insufficient',
+    'filename-listing', 'title-grounding-insufficient', 'summary-grounding-insufficient', 'key-question-unanswered',
+    // Exact reviewed-prose reconstruction already rejects added content. Splitting
+    // a reviewed multiline claim into Markdown paragraphs is only a heuristic.
+    'unsupported-section-content',
+  ].includes(code)).sort() : [];
+  advisoryReasonCodes.forEach(code => reasonCodes.delete(code));
   const hardQualityPassed = reasonCodes.size === 0;
   const candidate = Object.freeze({
-    schemaVersion: PAGE_QUALITY_REPORT_SCHEMA_VERSION,
+    ...(reviewed?.genericWiki === true ? { advisoryReasonCodes } : {}),
+    schemaVersion: reviewed?.genericWiki === true ? 'buildlore.page-quality-report.v4' as const : reviewed === undefined ? PAGE_QUALITY_REPORT_SCHEMA_VERSION : 'buildlore.page-quality-report.v3' as const,
+    ...(reviewed === undefined ? {} : { semanticReviewDigest: reviewed.reviewDigest,
+      knowledgeGenerationDigest: reviewed.generationDigest,
+      lexicalClaimEvidenceSupportBasisPoints: basisPoints(lexicalSupportedClaimIds.size, proposal.claims.length) }),
     projectId,
     pageId: proposal.pageId,
     blueprintDigest: blueprint.blueprintDigest,
     proposalDigest: proposal.proposalDigest,
     evidencePackDigest: pack.packDigest,
-    policyDigest: SEMANTIC_QUALITY_POLICY.policyDigest,
+    policyDigest: reviewed?.genericWiki === true ? GENERIC_WIKI_QUALITY_POLICY_DIGEST : reviewed === undefined ? SEMANTIC_QUALITY_POLICY.policyDigest : REVIEWED_KNOWLEDGE_QUALITY_POLICY_DIGEST,
     sectionCoverageBasisPoints,
     claimGroundingBasisPoints,
     claimEvidenceSupportBasisPoints,
@@ -876,8 +893,10 @@ export interface EvaluateSemanticQualityInputV1 {
 export function evaluateSemanticQuality(
   input: EvaluateSemanticQualityInputV1,
   expectedProjectId: string,
+  reviewed?: ReviewedKnowledgeQuality,
 ): SemanticQualityEvaluationV1 {
   assertCanonicalInputs(input, expectedProjectId);
+  if (reviewed !== undefined) verifyReviewedKnowledgeQuality(reviewed, input);
   if (input.outline.projectId !== expectedProjectId) invalid(expectedProjectId);
   const blueprintById = new Map(input.outline.blueprints.map((item) => [item.pageId, item]));
   const proposalById = new Map(input.proposals.map((item) => [item.pageId, item]));
@@ -911,7 +930,7 @@ export function evaluateSemanticQuality(
     }
   }
   const pages = Object.freeze(contexts.map((context) =>
-    pageQualityReport(context, contexts, lineFrequency, expectedProjectId))
+    pageQualityReport(context, contexts, lineFrequency, expectedProjectId, reviewed))
     .sort((left, right) => left.pageId < right.pageId ? -1 : 1));
   const reconciliationDigest = input.reconciliation?.reconciliationDigest ??
     hierarchySha256('missing-link-reconciliation');
@@ -963,11 +982,13 @@ export function evaluateSemanticQuality(
   }
   const hardQualityPassed = reasonCodes.size === 0;
   const candidate = Object.freeze({
-    schemaVersion: CORPUS_QUALITY_REPORT_SCHEMA_VERSION,
+    schemaVersion: reviewed?.genericWiki === true ? 'buildlore.corpus-quality-report.v4' as const : reviewed === undefined ? CORPUS_QUALITY_REPORT_SCHEMA_VERSION : 'buildlore.corpus-quality-report.v3' as const,
+    ...(reviewed === undefined ? {} : { semanticReviewDigest: reviewed.reviewDigest,
+      knowledgeGenerationDigest: reviewed.generationDigest }),
     projectId: expectedProjectId,
     outlineDigest: input.outline.outlineDigest,
     reconciliationDigest,
-    policyDigest: SEMANTIC_QUALITY_POLICY.policyDigest,
+    policyDigest: reviewed?.genericWiki === true ? GENERIC_WIKI_QUALITY_POLICY_DIGEST : reviewed === undefined ? SEMANTIC_QUALITY_POLICY.policyDigest : REVIEWED_KNOWLEDGE_QUALITY_POLICY_DIGEST,
     candidateCount: proposalById.size,
     expectedCandidateCount: blueprintById.size,
     pageReportDigests: Object.freeze(pages.map((page) => page.reportDigest)),
@@ -1171,6 +1192,7 @@ function explicitlyReviewsBaselinePageRemoval(
 function createIntegratedWikiReviewSurfaceUnsafe(
   input: CreateIntegratedWikiReviewSurfaceInputV1,
   projectId: string,
+  reviewed?: ReviewedKnowledgeQuality,
 ): IntegratedWikiReviewSurfaceV1 {
   const graph = parseSparseRelationGraph(input.graph, projectId);
   const planningInventory = parsePlanningDispositionInventory(
@@ -1186,7 +1208,7 @@ function createIntegratedWikiReviewSurfaceUnsafe(
   input.outline.blueprints.forEach((blueprint) =>
     assertIntegratedBlueprintContract(blueprint, projectId));
   if (
-    input.outline.schemaVersion !== WIKI_OUTLINE_SCHEMA_VERSION ||
+    (input.outline.schemaVersion !== WIKI_OUTLINE_SCHEMA_VERSION && input.outline.schemaVersion !== 'buildlore.wiki-outline.v3') ||
     input.outline.projectId !== projectId ||
     input.outline.activationState !== 'candidate' ||
     !DIGEST_PATTERN.test(input.outline.snapshotDigest) ||
@@ -1199,7 +1221,7 @@ function createIntegratedWikiReviewSurfaceUnsafe(
     input.outline.snapshotDigest !== graph.snapshotDigest ||
     input.outline.graphDigest !== graph.graphDigest ||
     input.outline.policyDigest !== graph.policyDigest ||
-    input.outline.blueprints.length < 2 ||
+    input.outline.blueprints.length < (input.outline.schemaVersion === 'buildlore.wiki-outline.v3' ? 1 : 2) ||
     input.outline.blueprints.length > 97 ||
     input.outline.blueprints.some((blueprint, index) =>
       blueprint.generationOrder !== index) ||
@@ -1401,7 +1423,7 @@ function createIntegratedWikiReviewSurfaceUnsafe(
     ...(input.intentionalOrphanPageIds === undefined
       ? {}
       : { intentionalOrphanPageIds: input.intentionalOrphanPageIds }),
-  }, projectId);
+  }, projectId, reviewed);
   const pageQualityById = new Map(quality.pages.map((report) => [report.pageId, report]));
 
   const citationAnchorById = new Map<string, EvidenceCitationAnchorV1>();
@@ -1521,7 +1543,7 @@ function createIntegratedWikiReviewSurfaceUnsafe(
     compilationPolicyDigest: input.outline.policyDigest,
     planningInventoryDigest: planningInventory.inventoryDigest,
     reconciliationDigest: input.reconciliation?.reconciliationDigest ?? null,
-    semanticQualityPolicyDigest: SEMANTIC_QUALITY_POLICY.policyDigest,
+    semanticQualityPolicyDigest: quality.corpus.policyDigest,
     baselineGenerationDigest: input.baselineGenerationDigest,
     runCoverage,
     candidates,
@@ -1544,9 +1566,10 @@ function createIntegratedWikiReviewSurfaceUnsafe(
 export function createIntegratedWikiReviewSurface(
   input: CreateIntegratedWikiReviewSurfaceInputV1,
   expectedProjectId: string,
+  reviewed?: ReviewedKnowledgeQuality,
 ): IntegratedWikiReviewSurfaceV1 {
   try {
-    const surface = createIntegratedWikiReviewSurfaceUnsafe(input, expectedProjectId);
+    const surface = createIntegratedWikiReviewSurfaceUnsafe(input, expectedProjectId, reviewed);
     ISSUED_INTEGRATED_REVIEW_SURFACES.add(surface);
     return surface;
   } catch {
@@ -1558,9 +1581,10 @@ export function verifyIntegratedWikiReviewSurface(
   value: unknown,
   input: CreateIntegratedWikiReviewSurfaceInputV1,
   expectedProjectId: string,
+  reviewed?: ReviewedKnowledgeQuality,
 ): IntegratedWikiReviewSurfaceV1 {
   try {
-    const rebuilt = createIntegratedWikiReviewSurfaceUnsafe(input, expectedProjectId);
+    const rebuilt = createIntegratedWikiReviewSurfaceUnsafe(input, expectedProjectId, reviewed);
     if (serializeCanonicalJson(value) !== serializeCanonicalJson(rebuilt)) {
       invalid(expectedProjectId);
     }

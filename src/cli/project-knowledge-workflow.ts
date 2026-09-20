@@ -61,6 +61,7 @@ export interface KnowledgeWorkflowStatus {
   readonly runId: string;
   readonly phase: Phase;
   readonly active: boolean;
+  readonly completenessAssessment: 'unassessed';
   readonly generationModel: 'project-knowledge-v1';
   readonly exchange?: KnowledgeExchangeV1;
   readonly proposal?: KnowledgeProposalV1;
@@ -165,7 +166,7 @@ export function createProjectKnowledgeWorkflow(options: Readonly<{
         : { previousGenerations: previous?.knowledgeGeneration?.generations ?? [] }) });
   const baseStatus = (run: KnowledgeRun, active = false): KnowledgeWorkflowStatus => ({
     schemaVersion: 'buildlore.project-knowledge-workflow-status.v1', projectId: run.projectId,
-    runId: run.runId, phase: run.phase, active, generationModel: 'project-knowledge-v1', egress: 'none', processSpawned: false,
+    runId: run.runId, phase: run.phase, active, completenessAssessment: 'unassessed', generationModel: 'project-knowledge-v1', egress: 'none', processSpawned: false,
     ...(run.authoringQuestions === undefined ? {} : { authoringQuestions: run.authoringQuestions,
       ...(!['awaiting-proposal', 'review-ready'].includes(run.phase) ? {} : {
         inspectionArgs: ['compile', 'hierarchy', 'inspect', '--project', run.projectId, '--run', run.runId,
@@ -197,8 +198,8 @@ export function createProjectKnowledgeWorkflow(options: Readonly<{
       : await session.finalize(run.semanticReview, proposal.proposalDigest);
     return { previous, session, proposal, generation };
   };
-  const bridgeFor = (generation: KnowledgeGenerationV1, previous: CurrentApprovedWikiAuthority | null) =>
-    bridgeKnowledgeToHierarchy({ knowledgeRoot, generation,
+  const bridgeFor = (generation: KnowledgeGenerationV1, previous: CurrentApprovedWikiAuthority | null, expectedLedgerDigest?: KnowledgeDigest) =>
+    bridgeKnowledgeToHierarchy({ knowledgeRoot, generation, ...(expectedLedgerDigest === undefined ? {} : { expectedLedgerDigest }),
       baselineGenerationDigest: previous?.state.generationDigest ?? null,
       baselineProposals: previous?.finalization.proposals ?? [] });
   const reviewViewDigest = (run: KnowledgeRun, proposal: KnowledgeProposalV1, session: KnowledgeSessionV1): KnowledgeDigest =>
@@ -288,7 +289,7 @@ export function createProjectKnowledgeWorkflow(options: Readonly<{
       if (!restored.proposal || expectReview !== reviewViewDigest(run, restored.proposal, restored.session)) throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
       const generation = await restored.session.finalize(await readInput(inputFile, projectId), restored.proposal.proposalDigest);
       const bridge = await bridgeFor(generation, restored.previous);
-      const ledger = finalizeCompileRun(bridge.finalization, projectId);
+      const ledger = finalizeCompileRun(bridge.finalization, projectId, bridge.reviewedQuality);
       const next = nextRecord(run, { phase: 'finalized', semanticReview: generation.review, ledgerDigest: ledger.ledgerDigest });
       await store.replace(run, next);
       return { ...baseStatus(next), generationDigest: generation.generationDigest, ledgerDigest: ledger.ledgerDigest };
@@ -298,8 +299,8 @@ export function createProjectKnowledgeWorkflow(options: Readonly<{
       if (!['finalized', 'approved'].includes(run.phase) || explicitConfirmation !== true || expectLedger !== run.ledgerDigest) invalid();
       const restored = await restore(run);
       if (!restored.generation) invalid();
-      const bridge = await bridgeFor(restored.generation, restored.previous);
-      const ledger = finalizeCompileRun(bridge.finalization, projectId);
+      const bridge = await bridgeFor(restored.generation, restored.previous, expectLedger);
+      const ledger = finalizeCompileRun(bridge.finalization, projectId, bridge.reviewedQuality);
       if (ledger.ledgerDigest !== expectLedger) throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
       const authority = await approveKnowledgeWikiHistoryAuthority({ generation: restored.generation, store: historyStore,
       bridge, previousAuthority: restored.previous, explicitConfirmation: true });
@@ -315,15 +316,19 @@ export function createProjectKnowledgeWorkflow(options: Readonly<{
 }
 
 export const KNOWLEDGE_COMPLETENESS_PURPOSE_VERSION = 'buildlore.hierarchical-workflow-purpose-input.v4';
-export const KNOWLEDGE_COMPLETENESS_RUN_VERSION = 'buildlore.project-knowledge-workflow-run.v4';
+export const KNOWLEDGE_CORRECTION_PURPOSE_VERSION = 'buildlore.hierarchical-workflow-purpose-input.v5';
+export const KNOWLEDGE_CORRECTION_RUN_VERSION = 'buildlore.project-knowledge-workflow-run.v6';
+const LEGACY_COMPLETENESS_RUN_VERSION = 'buildlore.project-knowledge-workflow-run.v4';
+export const KNOWLEDGE_COMPLETENESS_RUN_VERSION = 'buildlore.project-knowledge-workflow-run.v5';
 export interface KnowledgeCompletenessWorkflowStatusV2 {
-  readonly schemaVersion: 'buildlore.project-knowledge-workflow-status.v2';
+  readonly schemaVersion: 'buildlore.project-knowledge-workflow-status.v2' | 'buildlore.project-knowledge-workflow-status.v3';
   readonly projectId: string;
   readonly runId: string;
   readonly phase: KnowledgeCompletenessPhase | 'approved';
   readonly active: boolean;
   readonly generationModel: 'project-knowledge-v1';
-  readonly authoringMode: 'completeness-v1';
+  readonly authoringMode: 'completeness-v1' | 'completeness-v2';
+  readonly completenessAssessment: 'pending' | 'failed' | 'verified' | 'legacy-local-review';
   readonly stage: KnowledgeCompletenessStageViewV1 | null;
   readonly generationDigest: KnowledgeDigest | null;
   readonly ledgerDigest: KnowledgeDigest | null;
@@ -332,13 +337,13 @@ export interface KnowledgeCompletenessWorkflowStatusV2 {
   readonly processSpawned: false;
 }
 interface CompletenessRun {
-  readonly schemaVersion: typeof KNOWLEDGE_COMPLETENESS_RUN_VERSION;
+  readonly schemaVersion: typeof KNOWLEDGE_COMPLETENESS_RUN_VERSION | typeof LEGACY_COMPLETENESS_RUN_VERSION | typeof KNOWLEDGE_CORRECTION_RUN_VERSION;
   readonly projectId: string;
   readonly runId: string;
   readonly revision: number;
   readonly phase: KnowledgeCompletenessPhase | 'approved';
   readonly outputLanguage: string;
-  readonly authoringMode: 'completeness-v1';
+  readonly authoringMode: 'completeness-v1' | 'completeness-v2';
   readonly authoringQuestions: readonly KnowledgeAuthoringQuestion[];
   readonly snapshotDigest: KnowledgeDigest;
   readonly exchangeDigest: KnowledgeDigest;
@@ -351,7 +356,7 @@ interface CompletenessRun {
 }
 const PHASES = ['awaiting-shadow-inventory', 'awaiting-author-inventory', 'awaiting-inventory-review',
   'awaiting-inventory-reconciliation', 'awaiting-proposal', 'awaiting-initial-reviews', 'awaiting-correction',
-  'awaiting-correction-reviews', 'review-ready', 'finalized', 'approved', 'completeness-failed'] as const;
+  'awaiting-correction-reviews', 'awaiting-inventory-correction', 'review-ready', 'finalized', 'approved', 'completeness-failed'] as const;
 function freezeCompletenessRun(basis: Omit<CompletenessRun, 'recordDigest'>): CompletenessRun {
   const run = Object.freeze({ ...basis, recordDigest: digest(basis) });
   completenessJson(run, COMPLETENESS_LIMITS.run); return run;
@@ -360,18 +365,21 @@ function parseCompletenessRun(value: unknown, projectId: string, runId: string):
   const r = completenessJson(value, COMPLETENESS_LIMITS.run);
   keys(r, ['schemaVersion', 'projectId', 'runId', 'revision', 'phase', 'outputLanguage', 'authoringMode', 'authoringQuestions',
     'snapshotDigest', 'exchangeDigest', 'baselineAuthorityDigest', 'state', 'generationDigest', 'ledgerDigest', 'approvedAuthorityDigest', 'recordDigest']);
-  if (r.schemaVersion !== KNOWLEDGE_COMPLETENESS_RUN_VERSION || r.authoringMode !== 'completeness-v1' || r.runId !== runId ||
+  const version = choice(r.schemaVersion, [KNOWLEDGE_COMPLETENESS_RUN_VERSION, LEGACY_COMPLETENESS_RUN_VERSION, KNOWLEDGE_CORRECTION_RUN_VERSION]);
+  const mode = version === KNOWLEDGE_CORRECTION_RUN_VERSION ? 'completeness-v2' : 'completeness-v1';
+  if (r.authoringMode !== mode || r.runId !== runId ||
     !/^run-[0-9a-f]{64}$/u.test(runId) || typeof r.revision !== 'number' || !Number.isSafeInteger(r.revision) || r.revision < 0 ||
     typeof r.outputLanguage !== 'string' || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/u.test(r.outputLanguage)) invalid();
   const phase = choice(r.phase, PHASES), final = phase === 'finalized' || phase === 'approved';
   const state = record(r.state);
-  if (state.projectId !== projectId || state.runId !== runId || state.exchangeDigest !== r.exchangeDigest ||
+  if (state.schemaVersion !== (mode === 'completeness-v2' ? 'buildlore.knowledge-completeness-state.v2' : 'buildlore.knowledge-completeness-state.v1') ||
+    mode === 'completeness-v1' && phase === 'awaiting-inventory-correction' || state.projectId !== projectId || state.runId !== runId || state.exchangeDigest !== r.exchangeDigest ||
     state.snapshotDigest !== r.snapshotDigest || state.phase !== (phase === 'approved' ? 'finalized' : phase) ||
     state.revision !== r.revision - (phase === 'approved' ? 1 : 0) || state.finalized !== final ||
     final !== (r.generationDigest !== null) || final !== (r.ledgerDigest !== null) ||
     (phase === 'approved') !== (r.approvedAuthorityDigest !== null)) invalid();
-  const run = freezeCompletenessRun({ schemaVersion: KNOWLEDGE_COMPLETENESS_RUN_VERSION, projectId: project(r.projectId, projectId), runId,
-    revision: r.revision, phase, outputLanguage: r.outputLanguage, authoringMode: 'completeness-v1',
+  const run = freezeCompletenessRun({ schemaVersion: version, projectId: project(r.projectId, projectId), runId,
+    revision: r.revision, phase, outputLanguage: r.outputLanguage, authoringMode: mode,
     authoringQuestions: parseKnowledgeAuthoringQuestions(r.authoringQuestions), snapshotDigest: hash(r.snapshotDigest),
     exchangeDigest: hash(r.exchangeDigest), baselineAuthorityDigest: r.baselineAuthorityDigest === null ? null : hash(r.baselineAuthorityDigest),
     state, generationDigest: r.generationDigest === null ? null : hash(r.generationDigest),
@@ -393,55 +401,64 @@ export function createProjectKnowledgeCompletenessWorkflow(options: Readonly<{
     if (status.state === 'invalid') invalid(); return status.state === 'none' ? null : corpus.readAuthority(projectId);
   };
   const prepare = async (projectId: string, runId: string, previous: CurrentApprovedWikiAuthority | null,
-    outputLanguage: string, authoringQuestions: readonly KnowledgeAuthoringQuestion[]) =>
-    await preparePlannedKnowledgeCompletenessSession({ ...options, hubRoot, knowledgeRoot, projectId, runId, outputLanguage, authoringQuestions,
+    outputLanguage: string, authoringQuestions: readonly KnowledgeAuthoringQuestion[], proofPolicy: 'persisted-v1' | 'legacy-v1' = 'persisted-v1', inventoryPolicy: 'completeness-v1' | 'completeness-v2' = 'completeness-v1') =>
+    await preparePlannedKnowledgeCompletenessSession({ ...options, hubRoot, knowledgeRoot, projectId, runId, outputLanguage, authoringQuestions, proofPolicy, inventoryPolicy,
       ...(previous?.knowledgeGeneration?.schemaVersion === 'buildlore.knowledge-authority-extension.v2'
         ? { previousHistory: knowledgeAuthorityHistory(previous.knowledgeGeneration) }
         : { previousGenerations: previous?.knowledgeGeneration?.generations ?? [] }) });
-  const bridgeFor = (generation: KnowledgeGenerationV1, previous: CurrentApprovedWikiAuthority | null) =>
-    bridgeKnowledgeToHierarchy({ knowledgeRoot, generation, baselineGenerationDigest: previous?.state.generationDigest ?? null,
+  const bridgeFor = (generation: KnowledgeGenerationV1, previous: CurrentApprovedWikiAuthority | null, expectedLedgerDigest?: KnowledgeDigest) =>
+    bridgeKnowledgeToHierarchy({ knowledgeRoot, generation, ...(expectedLedgerDigest === undefined ? {} : { expectedLedgerDigest }), baselineGenerationDigest: previous?.state.generationDigest ?? null,
       baselineProposals: previous?.finalization.proposals ?? [] });
   const restore = async (run: CompletenessRun) => {
     const previous = await baseline(run.projectId);
     if ((previous === null ? null : digest(previous)) !== run.baselineAuthorityDigest) throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
-    const { session } = await prepare(run.projectId, run.runId, previous, run.outputLanguage, run.authoringQuestions);
+    const { session } = await prepare(run.projectId, run.runId, previous, run.outputLanguage, run.authoringQuestions,
+      run.schemaVersion === LEGACY_COMPLETENESS_RUN_VERSION ? 'legacy-v1' : 'persisted-v1', run.authoringMode);
     if (session.exchange.exchangeDigest !== run.exchangeDigest || session.exchange.snapshotDigest !== run.snapshotDigest) {
       throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
     }
     await replayKnowledgeCompletenessSession(session, run.state);
     const captured = await captureKnowledgeCompletenessSession(session);
     if ((captured.generation?.generationDigest ?? null) !== run.generationDigest) invalid();
-    if (captured.generation !== null && finalizeCompileRun((await bridgeFor(captured.generation, previous)).finalization,
-      run.projectId).ledgerDigest !== run.ledgerDigest) throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
+    if (captured.generation !== null) {
+      const bridge = await bridgeFor(captured.generation, previous, run.ledgerDigest ?? undefined);
+      if (finalizeCompileRun(bridge.finalization, run.projectId, bridge.reviewedQuality).ledgerDigest !== run.ledgerDigest) {
+        throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
+      }
+    }
     return { previous, session, ...captured };
   };
   const statusOf = async (run: CompletenessRun, session: KnowledgeCompletenessSessionV1 | null, role?: CompletenessRole,
     active = false): Promise<KnowledgeCompletenessWorkflowStatusV2> => {
-    const result: KnowledgeCompletenessWorkflowStatusV2 = { schemaVersion: 'buildlore.project-knowledge-workflow-status.v2',
+    const result: KnowledgeCompletenessWorkflowStatusV2 = { schemaVersion: run.authoringMode === 'completeness-v2' ? 'buildlore.project-knowledge-workflow-status.v3' : 'buildlore.project-knowledge-workflow-status.v2',
       projectId: run.projectId, runId: run.runId, phase: run.phase, active, generationModel: 'project-knowledge-v1',
-      authoringMode: 'completeness-v1', stage: session === null ? null : await session.status(role),
+      authoringMode: run.authoringMode, stage: session === null ? null : await session.status(role),
+      completenessAssessment: run.phase === 'completeness-failed' ? 'failed' : !['finalized', 'approved'].includes(run.phase)
+        ? 'pending' : run.schemaVersion === LEGACY_COMPLETENESS_RUN_VERSION ? 'legacy-local-review' : 'verified',
       generationDigest: run.generationDigest, ledgerDigest: run.ledgerDigest, egress: 'none', processSpawned: false };
     completenessJson(result, COMPLETENESS_LIMITS.view); return result;
   };
   const service = {
     async handlesPurpose(projectId: string, path: string): Promise<boolean> {
-      return record(await readInput(path, projectId)).schemaVersion === KNOWLEDGE_COMPLETENESS_PURPOSE_VERSION;
+      return [KNOWLEDGE_COMPLETENESS_PURPOSE_VERSION, KNOWLEDGE_CORRECTION_PURPOSE_VERSION].includes(String(record(await readInput(path, projectId)).schemaVersion));
     },
     async handlesRun(projectId: string, runId: string): Promise<boolean> {
-      return await store.schema(projectId, runId) === KNOWLEDGE_COMPLETENESS_RUN_VERSION;
+      return [KNOWLEDGE_COMPLETENESS_RUN_VERSION, LEGACY_COMPLETENESS_RUN_VERSION, KNOWLEDGE_CORRECTION_RUN_VERSION].includes(await store.schema(projectId, runId));
     },
     async start(projectId: string, purposeFile: string): Promise<KnowledgeCompletenessWorkflowStatusV2> {
       const p = completenessJson(await readInput(purposeFile, projectId));
       keys(p, ['schemaVersion', 'projectId', 'generationModel', 'outputLanguage', 'authoringMode', 'authoringQuestions']);
       project(p.projectId, projectId);
-      if (p.schemaVersion !== KNOWLEDGE_COMPLETENESS_PURPOSE_VERSION || p.generationModel !== 'project-knowledge-v1' ||
-        p.authoringMode !== 'completeness-v1') invalid();
+      const correctionMode = p.schemaVersion === KNOWLEDGE_CORRECTION_PURPOSE_VERSION;
+      const authoringMode = correctionMode ? 'completeness-v2' : 'completeness-v1';
+      if ((!correctionMode && p.schemaVersion !== KNOWLEDGE_COMPLETENESS_PURPOSE_VERSION) || p.generationModel !== 'project-knowledge-v1' ||
+        p.authoringMode !== authoringMode) invalid();
       const outputLanguage = text(p.outputLanguage, 35), authoringQuestions = parseKnowledgeAuthoringQuestions(p.authoringQuestions);
       const previous = await baseline(projectId), runId = `run-${randomBytes(32).toString('hex')}`;
-      const { session } = await prepare(projectId, runId, previous, outputLanguage, authoringQuestions);
+      const { session } = await prepare(projectId, runId, previous, outputLanguage, authoringQuestions, 'persisted-v1', authoringMode);
       const { state } = await captureKnowledgeCompletenessSession(session);
-      const run = freezeCompletenessRun({ schemaVersion: KNOWLEDGE_COMPLETENESS_RUN_VERSION, projectId, runId, revision: 0, phase: state.phase,
-        outputLanguage, authoringMode: 'completeness-v1', authoringQuestions, snapshotDigest: session.exchange.snapshotDigest,
+      const run = freezeCompletenessRun({ schemaVersion: correctionMode ? KNOWLEDGE_CORRECTION_RUN_VERSION : KNOWLEDGE_COMPLETENESS_RUN_VERSION, projectId, runId, revision: 0, phase: state.phase,
+        outputLanguage, authoringMode, authoringQuestions, snapshotDigest: session.exchange.snapshotDigest,
         exchangeDigest: session.exchange.exchangeDigest, baselineAuthorityDigest: previous === null ? null : digest(previous),
         state, generationDigest: null, ledgerDigest: null, approvedAuthorityDigest: null });
       const result = await statusOf(run, session); await store.create(run); return result;
@@ -468,8 +485,9 @@ export function createProjectKnowledgeCompletenessWorkflow(options: Readonly<{
         submit: () => restored.session.submitProse(input, expectStage),
         review: () => restored.session.submitCompletenessReview(input, expectStage),
         'source-review': () => restored.session.submitSourceReview(input, expectStage),
-        correct: () => restored.session.correctProse(input, expectStage) };
-      const actionName = choice(action, ['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct']);
+        correct: () => restored.session.correctProse(input, expectStage),
+        'correct-inventory': () => restored.session.correctInventory(input, expectStage) };
+      const actionName = choice(action, ['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct', 'correct-inventory']);
       const view = await methods[actionName]();
       const { state } = await captureKnowledgeCompletenessSession(restored.session);
       const { recordDigest, ...old } = run; void recordDigest;
@@ -480,7 +498,7 @@ export function createProjectKnowledgeCompletenessWorkflow(options: Readonly<{
     async finalize(projectId: string, runId: string, inputFile: string, expectStage: KnowledgeDigest): Promise<KnowledgeCompletenessWorkflowStatusV2> {
       const run = await store.read(projectId, runId), restored = await restore(run);
       const generation = await restored.session.finalize(await readInput(inputFile, projectId), expectStage);
-      const bridge = await bridgeFor(generation, restored.previous), ledger = finalizeCompileRun(bridge.finalization, projectId);
+      const bridge = await bridgeFor(generation, restored.previous), ledger = finalizeCompileRun(bridge.finalization, projectId, bridge.reviewedQuality);
       const { state } = await captureKnowledgeCompletenessSession(restored.session), { recordDigest, ...old } = run; void recordDigest;
       const next = freezeCompletenessRun({ ...old, state, phase: 'finalized', revision: state.revision,
         generationDigest: generation.generationDigest, ledgerDigest: ledger.ledgerDigest });
@@ -491,7 +509,7 @@ export function createProjectKnowledgeCompletenessWorkflow(options: Readonly<{
       const run = await store.read(projectId, runId);
       if (!['finalized', 'approved'].includes(run.phase) || explicitConfirmation !== true || expectLedger !== run.ledgerDigest) invalid();
       const restored = await restore(run), generation = restored.generation ?? invalid();
-      const bridge = await bridgeFor(generation, restored.previous);
+      const bridge = await bridgeFor(generation, restored.previous, expectLedger);
       const authority = await approveKnowledgeWikiHistoryAuthority({ generation, store: history, bridge,
         previousAuthority: restored.previous, explicitConfirmation: true });
       const { recordDigest, ...old } = run; void recordDigest;

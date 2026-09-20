@@ -51,6 +51,7 @@ import {
   HIERARCHICAL_MARKDOWN_NAMESPACE,
   HIERARCHICAL_MARKDOWN_RENDERER_DIGEST,
   KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION,
+  GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION,
   knowledgeMarkdownRendererDigest,
   HIERARCHICAL_MARKDOWN_STATUS_SCHEMA_VERSION,
   HierarchicalMarkdownMaterializationError,
@@ -543,7 +544,7 @@ async function inspectNamespace(
     }
     const entries = await readdir(directory, { withFileTypes: true });
     if (entries.some((entry) => !entry.isFile() || entry.isSymbolicLink() ||
-        !allowedGeneratedName(entry.name))) {
+        (!allowedGeneratedName(entry.name) && !/^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/u.test(entry.name)))) {
       return Object.freeze({ manifest: null, state: 'invalid' as const });
     }
     const manifestEntry = entries.find((entry) =>
@@ -582,7 +583,7 @@ async function inspectNamespace(
       const status = await pathStatus(path);
       if (status === null) return Object.freeze({ manifest, state: 'missing' as const });
       if (!status.isFile() || status.isSymbolicLink() || status.nlink !== 1 ||
-          status.size > (manifest.schemaVersion === KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION ? 16 : 4) * 1024 * 1024 || await realpath(path) !== resolve(path)) {
+          status.size > ([KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION, GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION].includes(manifest.schemaVersion as typeof KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION) ? 16 : 4) * 1024 * 1024 || await realpath(path) !== resolve(path)) {
         return Object.freeze({ manifest, state: 'invalid' as const });
       }
       if (status.size !== record.byteLength) {
@@ -607,7 +608,7 @@ async function inspectNamespace(
       const generation = expected.authority.knowledgeGeneration === undefined ? undefined : latestKnowledgeGeneration(expected.authority.knowledgeGeneration);
       const expectedRenderer = generation === undefined ? HIERARCHICAL_MARKDOWN_RENDERER_DIGEST
         : knowledgeMarkdownRendererDigest(generation.rendererVersion);
-      if (manifest.schemaVersion !== (knowledgeMode ? KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION : HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION) ||
+      if (manifest.schemaVersion !== (generation?.rendererVersion === 'knowledge-markdown-v3' ? GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION : knowledgeMode ? KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION : HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION) ||
           manifest.rendererDigest !== expectedRenderer) {
         return Object.freeze({ manifest, state: 'renderer-outdated' as const });
       }
@@ -629,8 +630,18 @@ async function assertReplaceableGeneratedDirectory(directory: string): Promise<v
     fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
   }
   const entries = await readdir(directory, { withFileTypes: true });
+  const dynamicNames = new Set<string>();
+  if (entries.some(entry => !allowedGeneratedName(entry.name))) {
+    const manifestPath = join(directory, HIERARCHICAL_MARKDOWN_MANIFEST_FILENAME);
+    const status = await lstat(manifestPath);
+    if (!status.isFile() || status.isSymbolicLink() || status.nlink !== 1 || status.size > HIERARCHICAL_MARKDOWN_MAXIMUM_MANIFEST_BYTES) fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    const value: unknown = parseJsonStrict(decodeUtf8Strict(await readFile(manifestPath)));
+    if (!isRecord(value) || value.schemaVersion !== GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION || typeof value.projectId !== 'string') fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
+    const manifest = parseHierarchicalMarkdownManifest(value, value.projectId);
+    manifest.files.forEach(file => dynamicNames.add(file.path));
+  }
   for (const entry of entries) {
-    if (!entry.isFile() || entry.isSymbolicLink() || !allowedGeneratedName(entry.name)) {
+    if (!entry.isFile() || entry.isSymbolicLink() || (!allowedGeneratedName(entry.name) && !dynamicNames.has(entry.name))) {
       fail('HIERARCHICAL_MARKDOWN_CONTRACT_INVALID');
     }
     const status = await lstat(join(directory, entry.name));
@@ -691,7 +702,7 @@ async function scanFinalBytes(
         prepared.approvedBodyDigest !== entry.digest ||
         prepared.inputBodyDigest !== entry.digest || prepared.projectId !== projectId ||
         prepared.policyDigest !== plan.publication.projection.sanitizerPolicyDigest ||
-        prepared.sourceKind !== 'wiki' || prepared.untrustedData) {
+        prepared.sourceKind !== 'wiki') {
       fail('HIERARCHICAL_MARKDOWN_SECURITY_DENIED');
     }
   }
@@ -706,7 +717,7 @@ async function preserveLegacyKnowledgeRecord(paths: HierarchyPaths, previous: Ap
     const result = await security.prepareSource({ body, bodyDigest, projectId, sourceKind: 'wiki',
       source: 'buildlore-hierarchy/legacy-record.json', sourceRevisionOrContentSha256: bodyDigest });
     const prepared = result.ok ? consumePreparedSource(result.prepared) : null;
-    if (!prepared || prepared.approvedBody !== body || prepared.policyDigest !== policyDigest || prepared.untrustedData) fail('HIERARCHICAL_MARKDOWN_SECURITY_DENIED');
+    if (!prepared || prepared.approvedBody !== body || prepared.policyDigest !== policyDigest) fail('HIERARCHICAL_MARKDOWN_SECURITY_DENIED');
   };
   const { knowledgeGeneration, ...hierarchy } = previous.authority;
   await screenRetainedKnowledgeHistory(knowledgeGeneration.generations, screen);
@@ -771,7 +782,7 @@ async function preserveLegacyAuthority(paths: HierarchyPaths, previous: Approved
     source: `buildlore-hierarchy/archives/${previous.authorityDigest.slice(7)}.json`,
     sourceRevisionOrContentSha256: bodyDigest });
   const prepared = result.ok ? consumePreparedSource(result.prepared) : null;
-  if (!prepared || prepared.approvedBody !== body || prepared.policyDigest !== policyDigest || prepared.untrustedData) {
+  if (!prepared || prepared.approvedBody !== body || prepared.policyDigest !== policyDigest) {
     fail('HIERARCHICAL_MARKDOWN_SECURITY_DENIED');
   }
   await assertStoreParentIdentities(paths);
@@ -1032,7 +1043,8 @@ async function inspectStatus(
   }
   if (inspection.state === 'ready' && inspection.manifest !== null &&
       (inspection.manifest.schemaVersion === HIERARCHICAL_MARKDOWN_MANIFEST_SCHEMA_VERSION ||
-        inspection.manifest.schemaVersion === KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION)) {
+        inspection.manifest.schemaVersion === KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION ||
+        inspection.manifest.schemaVersion === GENERIC_KNOWLEDGE_MARKDOWN_MANIFEST_SCHEMA_VERSION)) {
     return readyStatus(projectId, inspection.manifest);
   }
   if (inspection.state === 'ready') return recoveryStatus(projectId, 'invalid');

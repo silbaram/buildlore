@@ -2,13 +2,13 @@ import { compare, digest } from '../../src/knowledge/project-knowledge/guards.js
 import type { KnowledgeProposalV1 } from '../../src/knowledge/project-knowledge/types.js';
 import { COMPLETENESS_CATEGORIES, completenessBinding, completenessInventoryItems, parseKnowledgeCompletenessInventory,
   parseKnowledgeCompletenessInventoryReview, parseKnowledgeCompletenessProseMapping, parseKnowledgeCompletenessReview,
-  type KnowledgeCompletenessExchangeV1, type KnowledgeCompletenessAcceptedInventoryV1 } from '../../src/compiler/project-knowledge/completeness.js';
+  type KnowledgeCompletenessExchange, type KnowledgeCompletenessAcceptedInventoryV1 } from '../../src/compiler/project-knowledge/completeness.js';
 import { workflowFixtureProposal } from './project-knowledge-workflow.js';
 
 export const COMPLETENESS_FIXTURE_REVIEWER = Object.freeze({ sessionId: 'completeness-fixture-reviewer', model: 'deterministic-protocol-fixture', kind: 'agent' as const });
 export function sealCompletenessFixture(value: object, key: string): object { return { ...value, [key]: digest(value) }; }
 /** Mechanical contract fixtures only; never AI authoring or quality evidence. */
-export function completenessFixture(exchange: KnowledgeCompletenessExchangeV1, useShadow = false) {
+export function completenessFixture(exchange: KnowledgeCompletenessExchange, useShadow = false) {
   const proposal = workflowFixtureProposal(exchange.baseExchange);
   const inventory = (role: 'blind-shadow-reviewer' | 'author') => parseKnowledgeCompletenessInventory(sealCompletenessFixture({
     schemaVersion: 'buildlore.knowledge-completeness-inventory.v1', ...completenessBinding(exchange), role,
@@ -39,7 +39,7 @@ export function completenessFixture(exchange: KnowledgeCompletenessExchangeV1, u
   }, 'reviewDigest'), exchange, shadow, author);
   return { proposal, shadow, author, review };
 }
-export function completenessMappingFixture(exchange: KnowledgeCompletenessExchangeV1, accepted: KnowledgeCompletenessAcceptedInventoryV1,
+export function completenessMappingFixture(exchange: KnowledgeCompletenessExchange, accepted: KnowledgeCompletenessAcceptedInventoryV1,
   proposal: KnowledgeProposalV1, alternate = false) {
   return parseKnowledgeCompletenessProseMapping(sealCompletenessFixture({ schemaVersion: 'buildlore.knowledge-completeness-prose-mapping.v1',
     ...completenessBinding(exchange), acceptedInventoryDigest: accepted.acceptedInventoryDigest, proposalDigest: proposal.proposalDigest,
@@ -51,7 +51,7 @@ export function completenessMappingFixture(exchange: KnowledgeCompletenessExchan
     }),
   }, 'mappingDigest'), exchange, accepted, proposal);
 }
-export function completenessReviewFixture(exchange: KnowledgeCompletenessExchangeV1, accepted: KnowledgeCompletenessAcceptedInventoryV1,
+export function completenessReviewFixture(exchange: KnowledgeCompletenessExchange, accepted: KnowledgeCompletenessAcceptedInventoryV1,
   mapping: ReturnType<typeof completenessMappingFixture>, round: 1 | 2 = 1, defect = false) {
   return parseKnowledgeCompletenessReview(sealCompletenessFixture({ schemaVersion: 'buildlore.knowledge-completeness-review.v1',
     ...completenessBinding(exchange), acceptedInventoryDigest: accepted.acceptedInventoryDigest, proposalDigest: mapping.proposalDigest,

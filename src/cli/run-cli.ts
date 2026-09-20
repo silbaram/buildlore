@@ -1,3 +1,10 @@
+import { createProjectWikiWorkflow } from './project-wiki-workflow.js';
+import { safeSyncSourceRef } from '../projector/sync-sanitization-diagnostics.js';
+import { workspaceGuide } from '../application/workspace-guide.js';
+import { workspaceConnect, workspaceClientGuide } from '../application/workspace-setup.js';
+import { workspaceCheck } from '../application/workspace-check.js';
+import { createWorkspacePublicationService, normalizeWorkspacePublication } from '../knowledge/workspace-publication.js';
+import { initializeKnowledgeWorkspace, resolveWorkspaceLayout, inspectKnowledgeWorkspace, type WorkspaceLayout } from '../knowledge/knowledge-workspace.js';
 import type { ReadObserver } from '../retrieval/read-observer.js';
 import { setupHub, connectProject, disconnectProject, resolveConnection, connectionOutcome, relocateHub } from '../connection/service.js';
 import { fail as connectionFail, ConnectionError, digest as connectionPlanDigest } from '../connection/contracts.js';
@@ -48,6 +55,7 @@ import {
 } from '../projector/index.js';
 import { SECURITY_RULES } from '../sanitizer/index.js';
 import { readSourceCollectionManifest } from '../projector/source-manifest.js';
+import { createProfileBindingV2, resolveRegisteredProfileBinding } from '../profile/index.js';
 import {
   createKnowledgePublicationService,
   createParentKnowledgePinService,
@@ -98,13 +106,14 @@ import {
 } from './hierarchical-workflow.js';
 import { createProjectKnowledgeWorkflow, type ProjectKnowledgeWorkflowService } from './project-knowledge-workflow.js';
 import { createKnowledgeWikiReader } from '../retrieval/project-knowledge-reader.js';
-import { hash, choice, invalid } from '../knowledge/project-knowledge/guards.js';
+import { hash, choice, invalid, ProjectKnowledgeError } from '../knowledge/project-knowledge/guards.js';
 import { HELP_TEXT } from './help.js';
 import { CliUsageError, CONNECTED_READ_COMMANDS, inferCliCommand, parseCliArguments } from './parser.js';
 import { renderCliResult, writeRenderedCliResult } from './presentation.js';
 import { createCliPublicationLineageResolver } from './publication-lineage.js';
 import type {
   CliOutputMode,
+  CliResult,
   CliFailureResult,
   CliPresentationContext,
   CliSuccessResult,
@@ -141,6 +150,10 @@ export interface CliIo {
 }
 
 export interface CliRuntime {
+  /** @internal Installed CLI override for isolated package verification. */
+  readonly workspaceBinPath?: string;
+  /** @internal Resolved per invocation; callers cannot select a mode through this field. */
+  readonly workspaceLayout?: WorkspaceLayout;
   readonly readObserver?: ReadObserver;
   readonly configDir?: string;
   readonly artifactRoot?: string;
@@ -165,6 +178,10 @@ export interface CliRuntime {
   readonly sync?: ProjectSyncPort;
   readonly wikiExport?: WikiExportPort;
   readonly wikiRead?: WikiReadPort;
+}
+
+function runtimeKnowledgeRoot(runtime: CliRuntime): string {
+  return runtime.workspaceLayout?.knowledgeRoot ?? join(runtime.cwd, 'knowledge');
 }
 
 async function publicationInput(
@@ -245,6 +262,11 @@ async function assertProjectCommandsReady(
   runtime: CliRuntime,
   projectId?: string,
 ): Promise<void> {
+  if (runtime.workspaceLayout?.mode === 'knowledge') {
+    await inspectKnowledgeWorkspace(runtime.cwd);
+    if (projectId !== undefined) await showProject(runtime.cwd, projectId);
+    return;
+  }
   const status = await getKnowledgeStatus(runtime.cwd);
   if (!status.ok) {
     throw new KnowledgeError(
@@ -256,7 +278,7 @@ async function assertProjectCommandsReady(
       );
   }
   if (projectId !== undefined) {
-    await showProject(join(runtime.cwd, 'knowledge'), projectId);
+    await showProject(runtimeKnowledgeRoot(runtime), projectId);
   }
 }
 
@@ -265,6 +287,11 @@ async function assertPublicationPushReady(
   projectId: string,
   knowledgeRevision: string,
 ): Promise<void> {
+  if (runtime.workspaceLayout?.mode === 'knowledge') {
+    await inspectKnowledgeWorkspace(runtime.cwd);
+    if (projectId !== undefined) await showProject(runtime.cwd, projectId);
+    return;
+  }
   const status = await getKnowledgeStatus(runtime.cwd);
   const expectedPinMismatch =
     status.knowledge.state === 'commit-mismatch' &&
@@ -278,7 +305,7 @@ async function assertPublicationPushReady(
         : { recoveryCommand: status.recoveryCommand },
     );
   }
-  await showProject(join(runtime.cwd, 'knowledge'), projectId);
+  await showProject(runtimeKnowledgeRoot(runtime), projectId);
 }
 
 function retrievalMode(command: ParsedCliCommand): LocalWikiRetrievalMode {
@@ -316,7 +343,7 @@ function retrievalIntent(command: ParsedCliCommand): LocalWikiRetrievalIntent {
 function createDefaultLocalWiki(runtime: CliRuntime): LocalWikiOperatorPort {
   return createLocalWikiOperator({
     hubRoot: runtime.cwd,
-    knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    knowledgeRoot: runtimeKnowledgeRoot(runtime),
     repositoryLease: createRepositoryWriterLease(),
   });
 }
@@ -326,23 +353,24 @@ type RoutedHierarchyWorkflow = {
 };
 
 function createDefaultHierarchyWorkflow(runtime: CliRuntime, role?: CompletenessRole,
-  stageBound = false): RoutedHierarchyWorkflow {
+  stageBound = false, allowLegacyAuthoring = false): RoutedHierarchyWorkflow {
   const legacy = createHierarchicalWorkflowService({
     compiler: createProjectSessionCompiler({
       hubRoot: runtime.cwd,
       jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-      knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      knowledgeRoot: runtimeKnowledgeRoot(runtime),
     }),
     hubRoot: runtime.cwd,
-    knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    knowledgeRoot: runtimeKnowledgeRoot(runtime),
   });
   const knowledge = createProjectKnowledgeWorkflow({ hubRoot: runtime.cwd,
-    knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+    knowledgeRoot: runtimeKnowledgeRoot(runtime), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
   const completeness = createProjectKnowledgeCompletenessWorkflow({ hubRoot: runtime.cwd,
-    knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+    knowledgeRoot: runtimeKnowledgeRoot(runtime), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
   return {
     async start(projectId, purposeFile) {
       if (await completeness.handlesPurpose(projectId, purposeFile)) return completeness.start(projectId, purposeFile);
+      if (!allowLegacyAuthoring) throw new ProjectKnowledgeError('KNOWLEDGE_COMPLETENESS_REQUIRED');
       return (await knowledge.handlesPurpose(projectId, purposeFile) ? knowledge : legacy).start(projectId, purposeFile);
     },
     async status(projectId, runId) {
@@ -398,14 +426,14 @@ async function listWikiPages(
   };
   if (runtime.localWiki !== undefined) return runtime.localWiki.listPages(input);
   if (runtime.wikiRead !== undefined) return runtime.wikiRead.list(input);
-  const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).list(projectId, input);
+  const knowledge = await createKnowledgeWikiReader(runtimeKnowledgeRoot(runtime)).list(projectId, input);
   if (knowledge !== null) return knowledge;
   try {
     return await createDefaultLocalWiki(runtime).listPages(input);
   } catch (error) {
     if (!isApprovedWikiUnavailable(error)) throw error;
     return createWikiReadService({
-      knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      knowledgeRoot: runtimeKnowledgeRoot(runtime),
       sourceAdapterRegistrations: CLI_JSON_KNOWLEDGE_ADAPTERS,
     }).list(input);
   }
@@ -419,10 +447,10 @@ async function readWikiPage(
   const pageRef = requiredStringOption(command, '--page');
   if (command.options['--view'] === 'reader') {
     if (runtime.localWiki !== undefined || runtime.wikiRead !== undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
-    return await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).readContext(projectId, pageRef) ?? invalid();
+    return await createKnowledgeWikiReader(runtimeKnowledgeRoot(runtime)).readContext(projectId, pageRef) ?? invalid();
   }
   if (runtime.localWiki === undefined && runtime.wikiRead === undefined) {
-    const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).read(projectId, pageRef);
+    const knowledge = await createKnowledgeWikiReader(runtimeKnowledgeRoot(runtime)).read(projectId, pageRef);
     if (knowledge !== null) return knowledge;
   }
   if (isRawHierarchyPageId(pageRef)) {
@@ -432,7 +460,7 @@ async function readWikiPage(
     });
   }
   return (runtime.wikiRead ?? createWikiReadService({
-    knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    knowledgeRoot: runtimeKnowledgeRoot(runtime),
     sourceAdapterRegistrations: CLI_JSON_KNOWLEDGE_ADAPTERS,
   })).read({ pageRef, projectId });
 }
@@ -444,7 +472,7 @@ async function readWikiCitations(
 ): Promise<unknown> {
   const pageRef = requiredStringOption(command, '--page');
   if (runtime.localWiki === undefined && runtime.wikiRead === undefined) {
-    const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).citations(projectId, pageRef);
+    const knowledge = await createKnowledgeWikiReader(runtimeKnowledgeRoot(runtime)).citations(projectId, pageRef);
     if (knowledge !== null) return knowledge;
   }
   if (isRawHierarchyPageId(pageRef)) {
@@ -454,7 +482,7 @@ async function readWikiCitations(
     });
   }
   return (runtime.wikiRead ?? createWikiReadService({
-    knowledgeRoot: join(runtime.cwd, 'knowledge'),
+    knowledgeRoot: runtimeKnowledgeRoot(runtime),
     sourceAdapterRegistrations: CLI_JSON_KNOWLEDGE_ADAPTERS,
   })).citations({ pageRef, projectId });
 }
@@ -471,7 +499,7 @@ async function searchWithApprovedWiki(
     return runtime.retrieval.search({ mode, projectId, query });
   }
   if (runtime.retrieval === undefined && runtime.localWiki === undefined) {
-    const knowledge = await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge'), { hubRoot: runtime.cwd })
+    const knowledge = await createKnowledgeWikiReader(runtimeKnowledgeRoot(runtime), { hubRoot: runtime.cwd })
       .search(projectId, query, mode, intent);
     if (knowledge !== null) return knowledge;
   }
@@ -488,7 +516,7 @@ async function searchWithApprovedWiki(
         (mode !== 'lexical' && mode !== 'hybrid')) throw error;
     const legacy = await createProjectRetrieval({
       jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-      knowledgeRoot: join(runtime.cwd, 'knowledge'),
+      knowledgeRoot: runtimeKnowledgeRoot(runtime),
     }).search({ mode: 'lexical', projectId, query });
     return Object.freeze({
       ...legacy,
@@ -523,11 +551,18 @@ async function executeCommand(
     await assertProjectCommandsReady(runtime, projectId);
     return (await readApprovedWiki(runtime.cwd, projectId, connectedRequest(command), 'hub-compatible')).data;
   }
+  if (runtime.workspaceLayout?.mode === 'knowledge' && ['init', 'knowledge.clone', 'knowledge.init', 'knowledge.pin.plan', 'knowledge.pin.commit'].includes(command.operation)) {
+    throw new CliUsageError('CLI_COMMAND_UNSUPPORTED');
+  }
   switch (command.operation) {
+    case 'workspace.guide': case 'workspace.connect': case 'workspace.check': throw new CliUsageError('CLI_ARGUMENT_INVALID');
+    case 'workspace.init': return initializeKnowledgeWorkspace(runtime.cwd, stringOption(command, '--knowledge-repo'));
     case 'setup': return setupHub(requiredStringOption(command, '--hub'), requiredStringOption(command, '--knowledge-repo'), runtime);
     case 'connect': {
       const sourceRepository = stringOption(command, '--source-repo');
-      const context = await connectProject(runtime.cwd, { hub: requiredStringOption(command, '--hub'), projectId: requiredStringOption(command, '--project'),
+      const hub = stringOption(command, '--hub'), workspace = stringOption(command, '--workspace');
+      if ((hub === undefined) === (workspace === undefined)) throw new CliUsageError('CLI_OPTION_CONFLICT');
+      const context = await connectProject(runtime.cwd, { ...(hub === undefined ? {} : { hub }), ...(workspace === undefined ? {} : { workspace }), projectId: requiredStringOption(command, '--project'),
         ...(sourceRepository === undefined ? {} : { sourceRepository }) }, runtime);
       const status = await connectionStatus(context);
       return { outcome: connectionOutcome(context), projectId: context.projectId, connectionDigest: context.connectionDigest, readable: status.readable };
@@ -600,10 +635,15 @@ async function executeCommand(
     case 'knowledge.init':
       return initKnowledge(runtime.cwd);
     case 'knowledge.status': {
+      if (runtime.workspaceLayout?.mode === 'knowledge') {
+        await inspectKnowledgeWorkspace(runtime.cwd);
+        return { schemaVersion: 'buildlore.workspace-status.v1', mode: 'knowledge', ok: true, parentPin: 'not_applicable',
+          registry: await validateProjectRegistry(runtime.cwd, command.projectId ?? undefined) };
+      }
       const compiler = runtime.compiler ??
         createProjectCompiler({
           jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-          knowledgeRoot: join(runtime.cwd, 'knowledge'),
+          knowledgeRoot: runtimeKnowledgeRoot(runtime),
         });
       return getKnowledgeStatus(runtime.cwd, {
         compiler,
@@ -622,18 +662,27 @@ async function executeCommand(
         sourceRepository,
         sourceRoot,
       });
-      await readSourceCollectionManifest(candidate.checkout, projectId, {
+      const sources = await readSourceCollectionManifest(candidate.checkout, projectId, {
         sourceAdapterRegistry: CLI_SOURCE_ADAPTER_REGISTRY,
       });
+      const declaredAdapters = new Set(sources.manifest.sources.map(source =>
+        'adapterId' in source ? source.adapterId :
+          source.documentKind === 'p2a-planning' ? 'buildlore.p2a' : 'buildlore.generic'));
+      const registrations = CLI_JSON_KNOWLEDGE_ADAPTERS
+        .filter(adapter => declaredAdapters.has(adapter.registration.adapterId));
       let binding: Awaited<ReturnType<typeof bindLocalProject>> | undefined;
-      const project = await addProject(join(runtime.cwd, 'knowledge'), {
+      const project = await addProject(runtimeKnowledgeRoot(runtime), {
         displayName: stringOption(command, '--name') ?? projectId,
         projectId,
         sourceRepository,
       }, {
+        initialProfileBinding: createProfileBindingV2('general', 'en', registrations),
         afterRegistration: async () => {
+          const profile = await resolveRegisteredProfileBinding(runtimeKnowledgeRoot(runtime), projectId, {
+            registrations: CLI_JSON_KNOWLEDGE_ADAPTERS,
+          });
           await readSourceCollectionManifest(candidate.checkout, projectId, {
-            sourceAdapterRegistry: CLI_SOURCE_ADAPTER_REGISTRY,
+            sourceAdapterRegistry: profile.sourceAdapters,
           });
           binding = await bindLocalProject(runtime.cwd, {
             expectedBindingDigest: null,
@@ -659,7 +708,7 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       await ensureLocalProjectRegistryIgnored(runtime.cwd);
-      const project = await showProject(join(runtime.cwd, 'knowledge'), projectId);
+      const project = await showProject(runtimeKnowledgeRoot(runtime), projectId);
       const sourceRoot = requiredStringOption(command, '--source-root');
       const candidate = await inspectLocalProjectBindingCandidate(runtime.cwd, {
         allowReplacement: true,
@@ -686,14 +735,14 @@ async function executeCommand(
     }
     case 'project.list': {
       await assertProjectCommandsReady(runtime);
-      const projects = await listProjects(join(runtime.cwd, 'knowledge'));
+      const projects = await listProjects(runtimeKnowledgeRoot(runtime));
       return Promise.all(projects.map(async (project) =>
         projectListCliView(project, await inspectLocalSourceStatus(runtime.cwd, project))));
     }
     case 'project.show': {
       await assertProjectCommandsReady(runtime);
       const project = await showProject(
-        join(runtime.cwd, 'knowledge'),
+        runtimeKnowledgeRoot(runtime),
         requiredStringOption(command, '--project'),
       );
       return projectCliView(
@@ -704,13 +753,14 @@ async function executeCommand(
     case 'project.validate':
       await assertProjectCommandsReady(runtime);
       return validateProjectRegistry(
-        join(runtime.cwd, 'knowledge'),
+        runtimeKnowledgeRoot(runtime),
         command.projectId ?? undefined,
       );
     case 'source.add': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const sourceManagement = runtime.sourceManagement ?? createSourceManagement({
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
         hubRoot: runtime.cwd,
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
       });
@@ -726,6 +776,7 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const sourceManagement = runtime.sourceManagement ?? createSourceManagement({
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
         hubRoot: runtime.cwd,
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
       });
@@ -735,6 +786,7 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const sourceManagement = runtime.sourceManagement ?? createSourceManagement({
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
         hubRoot: runtime.cwd,
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
       });
@@ -769,7 +821,7 @@ async function executeCommand(
       const progressive = command.options['--progressive'] === true;
       const cursor = stringOption(command, '--cursor');
       if (cursor !== undefined && !progressive) throw new CliUsageError('CLI_ARGUMENT_INVALID');
-      const reader = createKnowledgeWikiReader(join(runtime.cwd, 'knowledge'), runtime.readObserver ? { observer: runtime.readObserver } : {});
+      const reader = createKnowledgeWikiReader(runtimeKnowledgeRoot(runtime), runtime.readObserver ? { observer: runtime.readObserver } : {});
       if (task === undefined) {
         if (budget !== undefined || progressive) throw new CliUsageError('CLI_ARGUMENT_INVALID');
         return await reader.readMemory(projectId) ?? invalid();
@@ -784,13 +836,13 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       if (runtime.localWiki !== undefined || runtime.wikiRead !== undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
-      return await createKnowledgeWikiReader(join(runtime.cwd, 'knowledge')).readPacket(projectId) ?? invalid();
+      return await createKnowledgeWikiReader(runtimeKnowledgeRoot(runtime)).readPacket(projectId) ?? invalid();
     }
     case 'wiki.lookup': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       if (runtime.localWiki !== undefined || runtime.wikiRead !== undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
-      const reader = createKnowledgeWikiReader(join(runtime.cwd, 'knowledge'), runtime.readObserver ? { observer: runtime.readObserver } : {});
+      const reader = createKnowledgeWikiReader(runtimeKnowledgeRoot(runtime), runtime.readObserver ? { observer: runtime.readObserver } : {});
       const ids = stringOption(command, '--ids'), maxBytes = stringOption(command, '--max-bytes');
       if (ids !== undefined) return reader.lookupBatch(projectId,
         hash(requiredStringOption(command, '--expect-generation')),
@@ -805,7 +857,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const service = runtime.wikiExport ?? createWikiExportService({
         hubRoot: runtime.cwd,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       return service.export({
         format: requiredStringOption(command, '--format') as WikiExportFormat,
@@ -830,7 +882,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.projectCompiler ?? createProjectCompiler({
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       return compiler.execute({
         capability: 'compile',
@@ -844,7 +896,7 @@ async function executeCommand(
       const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
         hubRoot: runtime.cwd,
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       return compiler.plan({ projectId });
     }
@@ -854,7 +906,7 @@ async function executeCommand(
       const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
         hubRoot: runtime.cwd,
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       return compiler.apply({
         projectId,
@@ -867,7 +919,7 @@ async function executeCommand(
       const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
         hubRoot: runtime.cwd,
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       return compiler.candidates({ projectId });
     }
@@ -877,17 +929,42 @@ async function executeCommand(
       const compiler = runtime.sessionCompiler ?? createProjectSessionCompiler({
         hubRoot: runtime.cwd,
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       return compiler.approve({
         candidateId: requiredStringOption(command, '--candidate'),
         projectId,
       });
     }
+    case 'compile.wiki.start':
+    case 'compile.wiki.status':
+    case 'compile.wiki.inspect':
+    case 'compile.wiki.submit':
+    case 'compile.wiki.review':
+    case 'compile.wiki.revise':
+    case 'compile.wiki.finalize':
+    case 'compile.wiki.approve': {
+      const projectId = requiredStringOption(command, '--project');
+      await assertProjectCommandsReady(runtime, projectId);
+      const service = createProjectWikiWorkflow({ hubRoot: runtime.cwd, knowledgeRoot: runtimeKnowledgeRoot(runtime),
+        jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+      if (command.command === 'compile.wiki.start') return service.start(projectId, requiredStringOption(command, '--purpose'));
+      const runId = requiredStringOption(command, '--run');
+      if (command.command === 'compile.wiki.status') return service.status(projectId, runId);
+      if (command.command === 'compile.wiki.approve') return service.approve(projectId, runId,
+        requiredStringOption(command, '--expect-ledger') as `sha256:${string}`, command.options['--confirm-approval'] === true);
+      const stage = requiredStringOption(command, '--expect-stage') as `sha256:${string}`;
+      if (command.command === 'compile.wiki.finalize') return service.finalize(projectId, runId, stage);
+      const input = requiredStringOption(command, '--input');
+      if (command.command === 'compile.wiki.inspect') return service.inspect(projectId, runId, input, stage);
+      if (command.command === 'compile.wiki.review') return service.review(projectId, runId, input, stage);
+      return service.submit(projectId, runId, input, stage, command.command === 'compile.wiki.revise');
+    }
     case 'compile.hierarchy.start': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
-      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime)).start(
+      return (runtime.hierarchyWorkflow ?? createDefaultHierarchyWorkflow(runtime, undefined, false,
+        command.options['--allow-legacy-authoring'] === true)).start(
         projectId,
         requiredStringOption(command, '--purpose'),
       );
@@ -904,13 +981,13 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const completeness = createProjectKnowledgeCompletenessWorkflow({ hubRoot: runtime.cwd,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+        knowledgeRoot: runtimeKnowledgeRoot(runtime), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
       if (runtime.knowledgeInspection === undefined && await completeness.handlesRun(projectId, requiredStringOption(command, '--run'))) {
         return completeness.inspect(projectId, requiredStringOption(command, '--run'), requiredStringOption(command, '--input'),
           requiredStringOption(command, '--expect-exchange') as HierarchySha256Digest);
       }
       const inspector = runtime.knowledgeInspection ?? createProjectKnowledgeWorkflow({ hubRoot: runtime.cwd,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+        knowledgeRoot: runtimeKnowledgeRoot(runtime), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
       return inspector.inspect(projectId, requiredStringOption(command, '--run'), requiredStringOption(command, '--input'),
         requiredStringOption(command, '--expect-exchange') as HierarchySha256Digest);
     }
@@ -970,13 +1047,14 @@ async function executeCommand(
     case 'compile.hierarchy.completeness.submit':
     case 'compile.hierarchy.completeness.review':
     case 'compile.hierarchy.completeness.source-review':
-    case 'compile.hierarchy.completeness.correct': {
+    case 'compile.hierarchy.completeness.correct':
+    case 'compile.hierarchy.completeness.correct-inventory': {
       const projectId = requiredStringOption(command, '--project');
       await assertProjectCommandsReady(runtime, projectId);
       const service = createProjectKnowledgeCompletenessWorkflow({ hubRoot: runtime.cwd,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
+        knowledgeRoot: runtimeKnowledgeRoot(runtime), jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS });
       const action = command.command.slice('compile.hierarchy.completeness.'.length);
-      const names = ['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct'] as const;
+      const names = ['shadow', 'inventory', 'inventory-review', 'reconcile', 'submit', 'review', 'source-review', 'correct', 'correct-inventory'] as const;
       const selected = names.find(name => name === action);
       if (selected === undefined) throw new CliUsageError('CLI_ARGUMENT_INVALID');
       return service.write(selected, projectId, requiredStringOption(command, '--run'), requiredStringOption(command, '--input'),
@@ -1001,7 +1079,7 @@ async function executeCommand(
       const activation = runtime.hierarchyActivation ?? createHierarchicalWikiActivationService({
         hubRoot: runtime.cwd,
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       if (command.options['--rematerialize'] === true) {
         return activation.activate({ projectId, rematerialize: true });
@@ -1019,7 +1097,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.projectCompiler ?? createProjectCompiler({
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       const check = runtime.check ?? createProjectCheck(compiler);
       return check.check(projectId);
@@ -1049,7 +1127,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const compiler = runtime.projectCompiler ?? createProjectCompiler({
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       return compiler.execute({
         capability: 'query',
@@ -1062,7 +1140,7 @@ async function executeCommand(
       await assertProjectCommandsReady(runtime, projectId);
       const retrieval = runtime.retrieval ?? createProjectRetrieval({
         jsonKnowledgeAdapters: CLI_JSON_KNOWLEDGE_ADAPTERS,
-        knowledgeRoot: join(runtime.cwd, 'knowledge'),
+        knowledgeRoot: runtimeKnowledgeRoot(runtime),
       });
       return retrieval.context({
         projectId,
@@ -1070,15 +1148,13 @@ async function executeCommand(
       });
     }
     case 'publish.plan': {
-      const service = runtime.publication ?? createKnowledgePublicationService(
-        join(runtime.cwd, 'knowledge'),
-      );
+      const inner = runtime.publication ?? createKnowledgePublicationService(runtimeKnowledgeRoot(runtime));
+      const service = runtime.workspaceLayout?.mode === 'knowledge' ? createWorkspacePublicationService(runtime.cwd, inner) : inner;
       return service.plan(await publicationInput(command, runtime));
     }
     case 'publish.commit': {
-      const service = runtime.publication ?? createKnowledgePublicationService(
-        join(runtime.cwd, 'knowledge'),
-      );
+      const inner = runtime.publication ?? createKnowledgePublicationService(runtimeKnowledgeRoot(runtime));
+      const service = runtime.workspaceLayout?.mode === 'knowledge' ? createWorkspacePublicationService(runtime.cwd, inner) : inner;
       return service.commit({
         ...await publicationInput(command, runtime),
         expectedPlanDigest: requiredStringOption(command, '--expect-plan') as PublicationDigest,
@@ -1088,9 +1164,8 @@ async function executeCommand(
       const projectId = requiredStringOption(command, '--project');
       const knowledgeRevision = requiredStringOption(command, '--knowledge-revision');
       await assertPublicationPushReady(runtime, projectId, knowledgeRevision);
-      const service = runtime.publication ?? createKnowledgePublicationService(
-        join(runtime.cwd, 'knowledge'),
-      );
+      const inner = runtime.publication ?? createKnowledgePublicationService(runtimeKnowledgeRoot(runtime));
+      const service = runtime.workspaceLayout?.mode === 'knowledge' ? createWorkspacePublicationService(runtime.cwd, inner) : inner;
       return service.push({
         knowledgeRevision,
         projectId,
@@ -1167,7 +1242,7 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
   if (typeof data !== 'object' || data === null || !('warnings' in data) ||
       !Array.isArray(data.warnings)) return [];
   const redactionRuleIds = new Set(SECURITY_RULES
-    .filter((rule) => rule.action === 'redact')
+    .filter((rule) => rule.action === 'redact' || rule.action === 'warn')
     .map((rule) => rule.ruleId));
   const warnings = data.warnings.map((warning: unknown) => {
     if (typeof warning === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(warning)) {
@@ -1180,7 +1255,7 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
         typeof warning.code !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(warning.code)) {
       return null;
     }
-    if (warning.code !== 'sanitization-redaction-applied') {
+    if (warning.code !== 'sanitization-redaction-applied' && warning.code !== 'sanitization-risk-warning') {
       return Object.freeze({
         code: warning.code,
         message: 'The command completed with a structured warning.',
@@ -1188,7 +1263,7 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
     }
     if (
       Object.keys(warning).some((key) =>
-        !['code', 'occurrenceCount', 'ruleId', 'sourceCount'].includes(key)) ||
+        !['code', 'occurrenceCount', 'ruleId', 'sourceCount', 'sourceRefs', 'omittedSourceCount'].includes(key)) ||
       !('ruleId' in warning) || typeof warning.ruleId !== 'string' ||
       !redactionRuleIds.has(warning.ruleId) ||
       !('occurrenceCount' in warning) || typeof warning.occurrenceCount !== 'number' ||
@@ -1197,9 +1272,14 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
       !Number.isSafeInteger(warning.sourceCount) || warning.sourceCount <= 0 ||
       warning.sourceCount > warning.occurrenceCount
     ) return null;
+    const refs = 'sourceRefs' in warning && Array.isArray(warning.sourceRefs)
+      ? warning.sourceRefs.slice(0, 32).filter((ref: unknown): ref is string =>
+          typeof ref === 'string' && safeSyncSourceRef(ref) === ref) : [];
     return Object.freeze({
       code: warning.code,
-      message: `Sanitizer rule ${warning.ruleId} redacted ${warning.occurrenceCount} occurrence(s) across ${warning.sourceCount} source(s).`,
+      message: warning.code === 'sanitization-risk-warning'
+        ? `Sanitizer rule ${warning.ruleId} flagged ${warning.occurrenceCount} occurrence(s) across ${warning.sourceCount} source(s); processing continued.${refs.length > 0 ? ` Files: ${refs.join(', ')}.` : ''}`
+        : `Sanitizer rule ${warning.ruleId} redacted ${warning.occurrenceCount} occurrence(s) across ${warning.sourceCount} source(s).`,
     });
   });
   if (warnings.some((warning) => warning === null)) return [];
@@ -1215,6 +1295,10 @@ function safeWarnings(data: unknown): readonly { readonly code: string; readonly
 }
 
 function normalizeDomainData(command: ParsedCliCommand, data: unknown): unknown {
+  if (command.operation.startsWith('publish.') && typeof data === 'object' && data !== null && 'schemaVersion' in data &&
+      (data.schemaVersion === 'buildlore.workspace-publish-plan.v1' || data.schemaVersion === 'buildlore.workspace-publish-result.v1')) {
+    return normalizeWorkspacePublication(data);
+  }
   switch (command.operation) {
     case 'publish.plan':
       return parseKnowledgePublishPlan(renderKnowledgePublishPlan(
@@ -1378,6 +1462,35 @@ export async function runCli(
       io.stdout(HELP_TEXT);
       return 0;
     }
+    if (invocation.command === 'workspace.connect' || invocation.command === 'workspace.check' ||
+        invocation.command === 'workspace.guide' && stringOption(invocation, '--client') !== undefined) {
+      if (stringOption(invocation, '--client') !== 'codex' || !invocation.projectId) throw new CliUsageError('CLI_ARGUMENT_INVALID');
+      const options = { directory: runtime.cwd, projectId: invocation.projectId, client: 'codex' as const,
+        apply: invocation.options['--apply'] === true,
+        ...(runtime.configDir === undefined ? {} : { configDir: runtime.configDir }),
+        ...(runtime.workspaceBinPath === undefined ? {} : { binPath: runtime.workspaceBinPath }) };
+      const data = invocation.command === 'workspace.connect' ? await workspaceConnect(options)
+        : invocation.command === 'workspace.check' ? await workspaceCheck(options) : await workspaceClientGuide(options);
+      const result: CliResult = data.overall === 'blocked'
+        ? { ...successResult(invocation, data), ok: false, exitCode: 3,
+          partial: data.operation === 'connect' && data.stages.some(s => s.id === 'connection' && s.state === 'complete'),
+          errors: [{ code: data.stages.find(s => s.state === 'blocked')?.code ?? 'WORKSPACE_SETUP_FAILED',
+            message: 'Follow the next action, then repeat the command.' }] }
+        : successResult(invocation, data);
+      const rendered = renderCliResult(result, invocation.outputMode);
+      writeRenderedCliResult(io, rendered); return rendered.exitCode;
+    }
+    if (invocation.command === 'workspace.guide') {
+      const data = await workspaceGuide(runtime.cwd, invocation.projectId ?? undefined, runtime.configDir);
+      const result: CliResult = data.overall === 'blocked'
+        ? { ...successResult(invocation, data), ok: false, exitCode: 3,
+          errors: [{ code: 'WORKSPACE_GUIDE_BLOCKED', message: 'Setup needs repair. Follow the next action at its specified location.' }] }
+        : successResult(invocation, data);
+      const rendered = renderCliResult(result, invocation.outputMode);
+      writeRenderedCliResult(io, rendered);
+      return rendered.exitCode;
+    }
+    runtime = { ...runtime, workspaceLayout: await resolveWorkspaceLayout(runtime.cwd) };
     outputMode = invocation.outputMode;
     context = { command: invocation.command, projectId: invocation.projectId };
     const options = runtime.configDir === undefined ? {} : { configDir: runtime.configDir };
@@ -1403,7 +1516,7 @@ export async function runCli(
         if (diagnostic) {
           const data = await connectionStatus(connection);
           const result = data.readable === true ? { ...successResult(invocation, data), ...context } :
-            { ...mapCliError(new ConnectionError(data.pin !== 'matched' ? 'KNOWLEDGE_PIN_MISMATCH' :
+            { ...mapCliError(new ConnectionError(data.pin !== 'matched' && data.pin !== 'not_applicable' ? 'KNOWLEDGE_PIN_MISMATCH' :
               data.approval === 'invalid' ? 'KNOWLEDGE_INVALID' : 'APPROVAL_MISSING'), context), data };
           const rendered = renderCliResult(result, outputMode); writeRenderedCliResult(io, rendered); return rendered.exitCode;
         }

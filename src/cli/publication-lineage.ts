@@ -1,5 +1,8 @@
+import { resolveWorkspaceLayout } from '../knowledge/knowledge-workspace.js';
+import { resolveLocalProjectBinding } from '../knowledge/local-project-registry.js';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { gitRead } from '../connection/git-read.js';
+import { readApprovedPublicationLineage } from './approved-publication-lineage.js';
 
 import { createLlmWikiCompilerBackend } from '../compiler/backend.js';
 import { resolveConfiguredEmbeddingIdentity } from '../compiler/embedding-identity.js';
@@ -95,16 +98,27 @@ export function createCliPublicationLineageResolver(
   parentRoot: string,
   options: CliPublicationLineageResolverOptions = {},
 ): CliPublicationLineagePort {
-  const knowledgeRoot = join(parentRoot, 'knowledge');
   const compilerExport = options.compilerExport ?? createLlmWikiCompilerBackend();
   const environment = options.environment ?? process.env;
   const inspector = options.inspector ?? createGitPublicationInspector();
-  const profilePreflight = options.profilePreflight ?? createProfileBindingPreflight(knowledgeRoot);
   return {
     async resolve(projectId) {
       try {
-        const [parent, recordValue, profile] = await Promise.all([
-          inspector.inspectRepository(parentRoot),
+        const layout = await resolveWorkspaceLayout(parentRoot);
+        const knowledgeRoot = layout.knowledgeRoot;
+        const profilePreflight = options.profilePreflight ?? createProfileBindingPreflight(knowledgeRoot);
+        const project = await showProject(knowledgeRoot, projectId);
+        const codeRoot = layout.mode === 'knowledge'
+          ? (await resolveLocalProjectBinding(parentRoot, projectId, project.entry.sourceRepository)).checkout.resolveRootForInternalUse()
+          : parentRoot;
+        const [codeRevision, recordValue, profile] = await Promise.all([
+          layout.mode === 'knowledge'
+            ? gitRead(codeRoot, ['rev-parse', '--verify', 'HEAD^{commit}']).then(value => {
+              const revision = value?.trim();
+              if (!revision || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(revision)) throw new CliPublicationIdentityError();
+              return revision;
+            })
+            : inspector.inspectRepository(codeRoot).then(repository => repository.baseRevision),
           showProject(knowledgeRoot, projectId),
           profilePreflight.resolve(projectId),
         ]);
@@ -112,20 +126,22 @@ export function createCliPublicationLineageResolver(
           mustExist: true,
         });
         if (profile.workspace !== workspace) throw new CliPublicationIdentityError();
-        const embedding = resolveConfiguredEmbeddingIdentity(environment);
-        if (embedding === null) throw new CliPublicationIdentityError();
-        const stamps = stampedIdentityDigests(
-          await compilerExport.exportProject(workspace, projectId),
-          projectId,
-        );
+        let identities = layout.mode === 'knowledge'
+          ? await readApprovedPublicationLineage(knowledgeRoot, projectId) : null;
+        if (identities === null) {
+          const embedding = resolveConfiguredEmbeddingIdentity(environment);
+          if (embedding === null) throw new CliPublicationIdentityError();
+          identities = { ...stampedIdentityDigests(await compilerExport.exportProject(workspace, projectId), projectId),
+            embeddingCompatibilityDigest: embedding.compatibilityDigest };
+        }
         return Object.freeze({
-          codeRevision: parent.baseRevision,
-          embeddingCompatibilityDigest: embedding.compatibilityDigest,
-          modelCompatibilityDigest: stamps.modelCompatibilityDigest,
+          codeRevision,
+          embeddingCompatibilityDigest: identities.embeddingCompatibilityDigest,
+          modelCompatibilityDigest: identities.modelCompatibilityDigest,
           profileDigest: sha256(serializeCanonicalJson(
             resolveProjectProfileBinding(recordValue.descriptor),
           )),
-          promptDigest: stamps.promptDigest,
+          promptDigest: identities.promptDigest,
         });
       } catch (error) {
         if (error instanceof CliPublicationIdentityError) throw error;

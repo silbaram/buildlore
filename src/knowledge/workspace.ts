@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { parseProfileBinding, type AnyProfileBinding } from '../profile/bindings.js';
 import {
   lstat,
   mkdir,
@@ -36,6 +37,8 @@ const MAX_DESCRIPTOR_BYTES = 64 * 1024;
 
 /** Package-internal coordination seam for committing a related local binding. */
 export interface ProjectRegistrationHooks {
+  /** Written only into a newly staged workspace; existing configuration is preserved. */
+  readonly initialProfileBinding?: AnyProfileBinding;
   readonly afterRegistration?: (project: ProjectRecord) => Promise<void> | void;
 }
 
@@ -180,6 +183,7 @@ async function removeUnchangedNewWorkspace(
   projectsRoot: string,
   workspace: string,
   expectedDescriptor: ProjectDescriptor,
+  profileBindingBytes?: string,
 ): Promise<void> {
   try {
     const actualDescriptor = await validateWorkspaceShape(workspace);
@@ -192,6 +196,15 @@ async function removeUnchangedNewWorkspace(
         readFile(join(workspace, 'project.json'), 'utf8'),
         readFile(join(workspace, 'log.md'), 'utf8'),
       ]);
+    if (profileBindingBytes !== undefined) {
+      const path = join(workspace, 'profile-binding.json');
+      await assertSafeRegularFile(path);
+      if (await readFile(path, 'utf8') !== profileBindingBytes) {
+        throw new Error('Profile binding changed before registration rollback.');
+      }
+    }
+    const expectedEntries = ['.llmwiki', 'log.md', 'project.json', 'sources', 'wiki'];
+    if (profileBindingBytes !== undefined) expectedEntries.push('profile-binding.json');
     if (
       !descriptorMatches(actualDescriptor, expectedDescriptor) ||
       serializeCanonicalJson(actualDescriptor) !== descriptorBytes ||
@@ -199,7 +212,7 @@ async function removeUnchangedNewWorkspace(
       sourceEntries.length > 0 ||
       wikiEntries.length > 0 ||
       stateEntries.length > 0 ||
-      rootEntries.sort().join('\n') !== '.llmwiki\nlog.md\nproject.json\nsources\nwiki'
+      rootEntries.sort().join('\n') !== expectedEntries.sort().join('\n')
     ) {
       throw new Error('Workspace changed before registration rollback.');
     }
@@ -229,6 +242,7 @@ function descriptorMatches(
 async function createStagedWorkspace(
   projectsRoot: string,
   descriptor: ProjectDescriptor,
+  profileBindingBytes?: string,
 ): Promise<string> {
   const staging = join(projectsRoot, `.buildlore-workspace-${randomUUID()}`);
   await mkdir(staging, { mode: 0o700 });
@@ -238,6 +252,9 @@ async function createStagedWorkspace(
     ),
   );
   await Promise.all([
+    ...(profileBindingBytes === undefined ? [] : [writeFile(join(staging, 'profile-binding.json'), profileBindingBytes, {
+      encoding: 'utf8', flag: 'wx', flush: true, mode: 0o600,
+    })]),
     writeFile(join(staging, 'project.json'), serializeCanonicalJson(descriptor), {
       encoding: 'utf8',
       flag: 'wx',
@@ -284,6 +301,8 @@ export async function addProject(
   hooks: ProjectRegistrationHooks = {},
 ): Promise<ProjectRecord> {
   const root = await resolveKnowledgeRoot(knowledgeRoot);
+  const profileBindingBytes = hooks.initialProfileBinding === undefined ? undefined :
+    serializeCanonicalJson(parseProfileBinding(hooks.initialProfileBinding));
   const projectId = validateProjectId(input.projectId);
   const descriptor = createProjectDescriptor({
     projectId,
@@ -329,7 +348,7 @@ export async function addProject(
     if (!workspaceExists) {
       let staging: string;
       try {
-        staging = await createStagedWorkspace(projectsRoot, descriptor);
+        staging = await createStagedWorkspace(projectsRoot, descriptor, profileBindingBytes);
         await rename(staging, workspace);
         await syncDirectory(projectsRoot);
       } catch (error) {
@@ -363,7 +382,7 @@ export async function addProject(
       try {
         await writeManifest(root, manifest);
         if (!workspaceExists) {
-          await removeUnchangedNewWorkspace(projectsRoot, workspace, descriptor);
+          await removeUnchangedNewWorkspace(projectsRoot, workspace, descriptor, profileBindingBytes);
         }
       } catch {
         throw new KnowledgeError(

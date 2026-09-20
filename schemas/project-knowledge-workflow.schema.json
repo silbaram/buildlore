@@ -30,6 +30,15 @@
     },
     {
       "$ref": "project-knowledge-inspection.schema.json"
+    },
+    {
+      "$ref": "project-knowledge-completeness.schema.json#/$defs/purposeV2"
+    },
+    {
+      "$ref": "project-knowledge-completeness.schema.json#/$defs/runV2"
+    },
+    {
+      "$ref": "project-knowledge-completeness.schema.json#/$defs/statusV2"
     }
   ],
   "$defs": {
@@ -752,6 +761,9 @@
         },
         "developmentMemoryInspection": {
           "$ref": "project-knowledge-inspection.schema.json#/$defs/developmentMemoryInspection"
+        },
+        "completenessAssessment": {
+          "const": "unassessed"
         }
       }
     },

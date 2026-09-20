@@ -24,7 +24,7 @@ export function reconcileKnowledge(snapshot: KnowledgeSnapshotV1, proposal: Know
     // Partial loss also needs a fresh review: the remaining excerpt may support only
     // part of a compound statement. Re-proposing with sufficient support restores it.
     const supported = fact.evidenceIds.every((id) => currentEvidence.has(id));
-    records.set(fact.id, update(fact, fact.lifecycle === 'current' && !supported ? { lifecycle: 'stale' } : {}));
+    records.set(fact.id, update(fact, fact.lifecycle === 'current' && (!supported || proposal.schemaVersion === 'buildlore.knowledge-proposal.v2') ? { lifecycle: 'stale' } : {}));
   }
   for (const fact of proposal.facts) {
     const prior = records.get(fact.id);
@@ -62,9 +62,10 @@ export function reconcileKnowledge(snapshot: KnowledgeSnapshotV1, proposal: Know
   }
   for (const page of proposal.pages) {
     const titles = [`title:${page.role}`, ...page.sections.map((_, i) => `section:${page.role}:${String(i)}`)];
-    if (titles.some((id) => judgmentById.get(id)?.verdict !== 'supported')) throw new ProjectKnowledgeError('KNOWLEDGE_REVIEW_REQUIRED');
+    if (proposal.schemaVersion === 'buildlore.knowledge-proposal.v1' && titles.some((id) => judgmentById.get(id)?.verdict !== 'supported')) throw new ProjectKnowledgeError('KNOWLEDGE_REVIEW_REQUIRED');
     for (const claim of page.sections.flatMap((s) => s.claims)) {
       const judgment = judgmentById.get(claim.claimId);
+      if (proposal.schemaVersion === 'buildlore.knowledge-proposal.v2' && judgment?.verdict !== 'supported') continue;
       if (judgment?.verdict !== 'supported') throw new ProjectKnowledgeError('KNOWLEDGE_REVIEW_REQUIRED');
       const facts = claim.factIds.map((id) => {
         const fact = records.get(id);

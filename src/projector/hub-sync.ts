@@ -1,3 +1,6 @@
+import { hasOnlyWarningSummaries, isWarningSummary } from '../sanitizer/findings.js';
+import { securityRule } from '../sanitizer/rules.js';
+import { resolveWorkspaceLayout } from '../knowledge/knowledge-workspace.js';
 import { createHash } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -435,12 +438,12 @@ function reportAllowsPreparedSource(
     report.policyDigest === expected.policyDigest && report.projectId === expected.projectId &&
     report.sourceIdentitySha256 === expected.sourceIdentitySha256 &&
     report.summaries.every((summary) =>
-      ['block', 'quarantine', 'redact'].includes(summary.action) &&
+      securityRule(summary.ruleId)?.action === summary.action &&
       Number.isSafeInteger(summary.count) && summary.count > 0 &&
       Number.isSafeInteger(summary.overriddenCount) && summary.overriddenCount >= 0 &&
       summary.overriddenCount <= summary.count &&
       /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u.test(summary.ruleId) &&
-      (summary.action === 'redact' || summary.count === summary.overriddenCount));
+      (isWarningSummary(summary) || summary.action === 'redact' || summary.count === summary.overriddenCount));
 }
 
 function validatedPreparedResult(
@@ -541,7 +544,7 @@ async function prepareCandidate(
       sourceRevisionOrContentSha256: candidate.sourceRevision,
     }));
   }
-  const rawInputs = inspectRawSourceInputs(candidate, maskSecrets);
+  const rawInputs = inspectRawSourceInputs(candidate, true);
   for (const rawInput of rawInputs) {
     requests.push(security.prepareSource({
       body: rawInput.body,
@@ -598,7 +601,7 @@ async function prepareCandidate(
       });
   const metadataIsSafe = metadataBody === null || (
     metadata !== null && metadataResult?.status === 'fulfilled' && metadataResult.value.ok &&
-    metadata.approvedBody === metadataBody && metadataResult.value.report.summaries.length === 0
+    metadata.approvedBody === metadataBody && hasOnlyWarningSummaries(metadataResult.value.report.summaries)
   );
   const rawBindings = rawResults.map((result, index) => {
     if (result.status !== 'fulfilled') return null;
@@ -621,6 +624,7 @@ async function prepareCandidate(
       binding.approvedBody,
       rawResults[index].value.report.summaries,
       maskSecrets,
+      `${title?.approvedBody ?? ''}\n${body?.approvedBody ?? ''}`,
     ));
   if (
     title === null || body === null || !titleResult.value.ok || !bodyResult.value.ok ||
@@ -679,7 +683,7 @@ async function initialState(
   failure: HubSyncFailurePort,
   jsonKnowledgeAdapters: readonly RegisteredJsonKnowledgeAdapterV1[] = [],
 ): Promise<PlannedState> {
-  const knowledgeRoot = join(input.hubRoot, 'knowledge');
+  const knowledgeRoot = (await resolveWorkspaceLayout(input.hubRoot)).knowledgeRoot;
   let project;
   let workspace;
   let binding;
@@ -744,7 +748,7 @@ async function assertInputsUnchanged(
   jsonKnowledgeAdapters: readonly RegisteredJsonKnowledgeAdapterV1[] = [],
 ): Promise<void> {
   try {
-    const knowledgeRoot = join(input.hubRoot, 'knowledge');
+    const knowledgeRoot = (await resolveWorkspaceLayout(input.hubRoot)).knowledgeRoot;
     const project = await showProject(knowledgeRoot, input.projectId);
     const workspace = await resolveProjectWorkspace(knowledgeRoot, input.projectId, {
       mustExist: true,
@@ -860,7 +864,7 @@ function warningsFor(
 }
 
 function warningSortKey(warning: ProjectSyncWarning): string {
-  return warning.code === 'sanitization-redaction-applied'
+  return 'ruleId' in warning
     ? `${warning.code}\u0000${warning.ruleId}`
     : `${warning.code}\u0000${warning.sourceRef}\u0000${warning.fieldName ?? ''}`;
 }
@@ -897,10 +901,24 @@ export async function runHubProjectSync(
     return failure.fail('SYNC_SELECTION_FAILED', 'selection', { cause });
   }
 
-  const knowledgeRoot = join(input.hubRoot, 'knowledge');
+  const knowledgeRoot = (await resolveWorkspaceLayout(input.hubRoot)).knowledgeRoot;
   const security = createProjectSecurityService({ knowledgeRoot, sourceIngestion: true });
   const maskSecrets = (await readSecurityPolicy(knowledgeRoot, input.projectId)).policy.sourceSecretHandling === 'mask';
+  const rawRefs = new Map<string, string>();
+  const refsByDigest = new Map(planned.inventory.files.map((file) => [file.contentDigest, file.sourceRef]));
+  for (const raw of inspectRawSourceInputs(collection)) {
+    const ref = refsByDigest.get(sha256(raw.body));
+    if (ref !== undefined) {
+      rawRefs.set(sha256(raw.body), ref);
+      if (raw.maskingPreflightBody !== undefined) rawRefs.set(sha256(raw.maskingPreflightBody), ref);
+    }
+  }
+  const rawDiagnostics: SyncSanitizationDiagnosticInput[] = [];
   if (!await boundRawSourceInputsAreSafe(collection, {
+    sourceForInput: (raw) => `buildlore://project/${input.projectId}/selected-json/${sha256(rawRefs.get(sha256(raw.body)) ?? raw.body).slice(7)}`,
+    onReport: (raw, report) => rawDiagnostics.push({ reports: [report],
+      sourceIdentitySha256: report.sourceIdentitySha256, sourceKind: 'json',
+      sourceRef: rawRefs.get(sha256(raw.body)) ?? null }),
     maskSecrets,
     policyDigest: planned.policyDigest,
     projectId: input.projectId,
@@ -909,7 +927,10 @@ export async function runHubProjectSync(
     sourceKind: 'json',
     sourceRevision: planned.loadedManifest.manifestDigest,
   })) {
-    return failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
+    return failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization', {
+      // Preflight stops at the first failed input; earlier warnings must not hide it.
+      sanitization: buildProjectSyncSanitizationDiagnostics(rawDiagnostics.slice(-1)),
+    });
   }
   let writer;
   try {
@@ -992,12 +1013,12 @@ export async function runHubProjectSync(
         planFingerprints: plannedExecutions.map((item) => item.plan.planFingerprint),
         sourceKind: 'execution',
       });
-  const redactionWarnings = buildProjectSyncRedactionWarnings(prepared.map((item) => ({
+  const redactionWarnings = buildProjectSyncRedactionWarnings([...rawDiagnostics, ...prepared.map((item) => ({
     reports: item.reports,
     sourceIdentitySha256: sha256(item.candidate.sourceUri).slice('sha256:'.length),
     sourceKind: item.sourceKind,
     sourceRef: item.candidate.sourceRef,
-  })));
+  }))]);
   if (redactionWarnings === null) {
     return failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
   }
@@ -1080,7 +1101,7 @@ export async function runHubProjectSync(
           failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
         }
       }
-      const rawInputs = inspectRawSourceInputs(item.candidate, maskSecrets);
+      const rawInputs = inspectRawSourceInputs(item.candidate, true);
       if ((item.rawPrepared?.length ?? 0) !== rawInputs.length) {
         failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
       }

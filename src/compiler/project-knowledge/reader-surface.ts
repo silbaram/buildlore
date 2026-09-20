@@ -1,3 +1,4 @@
+import { knowledgeWikiReadMetadata } from './wiki-contracts.js';
 import { hash, invalid } from '../../knowledge/project-knowledge/guards.js';
 import type { KnowledgeDigest, KnowledgeGenerationV1, KnowledgePageRole } from '../../knowledge/project-knowledge/types.js';
 import { knowledgeFactSupport, type KnowledgeFactSupportV1 } from './citation-support.js';
@@ -5,7 +6,8 @@ import { knowledgeEvidenceSectionContext } from './evidence-section-context.js';
 import { renderKnowledgeReaderPages } from './reader-context.js';
 
 export interface KnowledgeReaderPageV1 {
-  readonly schemaVersion: 'buildlore.knowledge-reader-page.v1';
+  readonly schemaVersion: 'buildlore.knowledge-reader-page.v1' | 'buildlore.knowledge-reader-page.v2';
+  readonly knowledgeReview?: NonNullable<ReturnType<typeof knowledgeWikiReadMetadata>['knowledgeReview']>;
   readonly projectId: string;
   readonly generationDigest: KnowledgeDigest;
   readonly page: KnowledgePageRole;
@@ -14,7 +16,8 @@ export interface KnowledgeReaderPageV1 {
 }
 
 export interface KnowledgeReaderLookupV1 {
-  readonly schemaVersion: 'buildlore.knowledge-reader-lookup.v1';
+  readonly schemaVersion: 'buildlore.knowledge-reader-lookup.v1' | 'buildlore.knowledge-reader-lookup.v2';
+  readonly knowledgeReview?: NonNullable<ReturnType<typeof knowledgeWikiReadMetadata>['knowledgeReview']>;
   readonly projectId: string;
   readonly generationDigest: KnowledgeDigest;
   readonly kind: 'evidence' | 'fact';
@@ -31,7 +34,8 @@ export interface KnowledgeReaderLookupV1 {
  */
 export function knowledgeReaderPage(generation: KnowledgeGenerationV1, page: KnowledgePageRole): KnowledgeReaderPageV1 {
   const file = renderKnowledgeReaderPages(generation).find(item => item.path === `${page}.md`) ?? invalid();
-  return Object.freeze({ schemaVersion: 'buildlore.knowledge-reader-page.v1', projectId: generation.projectId,
+  return Object.freeze({ schemaVersion: generation.wikiProof === undefined ? 'buildlore.knowledge-reader-page.v1' : 'buildlore.knowledge-reader-page.v2',
+    ...knowledgeWikiReadMetadata(generation), projectId: generation.projectId,
     generationDigest: generation.generationDigest, page, markdown: file.body, egress: 'none' });
 }
 
@@ -43,6 +47,7 @@ export function knowledgeReaderLookup(generation: KnowledgeGenerationV1, kind: '
     const evidence = generation.evidence.find(item => item.evidenceId === id) ?? invalid();
     return Object.freeze({ evidence, sectionContext: knowledgeEvidenceSectionContext(generation, evidence) });
   })();
-  return Object.freeze({ schemaVersion: 'buildlore.knowledge-reader-lookup.v1', projectId: generation.projectId,
+  return Object.freeze({ schemaVersion: generation.wikiProof === undefined ? 'buildlore.knowledge-reader-lookup.v1' : 'buildlore.knowledge-reader-lookup.v2',
+    ...knowledgeWikiReadMetadata(generation), projectId: generation.projectId,
     generationDigest: generation.generationDigest, kind, id, result, egress: 'none' });
 }

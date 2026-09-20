@@ -32,6 +32,11 @@ export interface KnowledgeCompletenessExchangeV1 extends CompletenessBinding {
   readonly roleBoundary: 'ordered-disclosure-declared-identities';
   readonly instructions: readonly string[];
 }
+export interface KnowledgeCompletenessExchangeV2 extends Omit<KnowledgeCompletenessExchangeV1, 'schemaVersion' | 'policyVersion'> {
+  readonly schemaVersion: 'buildlore.knowledge-completeness-exchange.v2';
+  readonly policyVersion: 'completeness-v2';
+}
+export type KnowledgeCompletenessExchange = KnowledgeCompletenessExchangeV1 | KnowledgeCompletenessExchangeV2;
 export interface CompletenessItem {
   readonly itemId: string;
   readonly questionId: string;
@@ -154,13 +159,13 @@ export function completenessJson(value: unknown, maximum: number = COMPLETENESS_
   if (Buffer.byteLength(serializeCanonicalJson(parsed)) > maximum) throw new KnowledgeCompletenessBudgetError(maximum);
   return parsed;
 }
-export function completenessBinding(exchange: KnowledgeCompletenessExchangeV1): CompletenessBinding {
+export function completenessBinding(exchange: KnowledgeCompletenessExchange): CompletenessBinding {
   return Object.freeze({ projectId: exchange.projectId, runId: exchange.runId, exchangeDigest: exchange.exchangeDigest,
     baseExchangeDigest: exchange.baseExchangeDigest, snapshotDigest: exchange.snapshotDigest,
     baselineGenerationDigest: exchange.baselineGenerationDigest, questionsDigest: exchange.questionsDigest });
 }
 const BINDING_KEYS = ['projectId', 'runId', 'exchangeDigest', 'baseExchangeDigest', 'snapshotDigest', 'baselineGenerationDigest', 'questionsDigest'];
-function checkedBinding(value: Readonly<Record<string, unknown>>, exchange: KnowledgeCompletenessExchangeV1): CompletenessBinding {
+function checkedBinding(value: Readonly<Record<string, unknown>>, exchange: KnowledgeCompletenessExchange): CompletenessBinding {
   const binding = completenessBinding(exchange);
   project(value.projectId, exchange.projectId);
   for (const key of BINDING_KEYS) if (value[key] !== record(binding)[key]) throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
@@ -177,7 +182,7 @@ function ids(value: unknown, maximum = 256): readonly string[] {
   if (new Set(result).size !== result.length) invalid();
   return Object.freeze(result);
 }
-function evidence(value: unknown, exchange: KnowledgeCompletenessExchangeV1, minimum = 1): readonly KnowledgeDigest[] {
+function evidence(value: unknown, exchange: KnowledgeCompletenessExchange, minimum = 1): readonly KnowledgeDigest[] {
   const result = hashes(value, 32);
   const available = new Set([...exchange.baseExchange.snapshot.evidence, ...exchange.baseExchange.previousEvidence].map(e => e.evidenceId));
   if (result.length < minimum || result.some(id => !available.has(id))) invalid();
@@ -197,15 +202,25 @@ function itemRef(value: unknown): CompletenessItemRef {
   return Object.freeze({ role: choice(r.role, ['blind-shadow-reviewer', 'author']), itemId: identifier(r.itemId) });
 }
 
+export function createKnowledgeCompletenessExchange(baseExchange: KnowledgeExchangeV1, value: unknown,
+  runId?: string, policyVersion?: 'completeness-v1'): KnowledgeCompletenessExchangeV1;
+export function createKnowledgeCompletenessExchange(baseExchange: KnowledgeExchangeV1, value: unknown,
+  runId: string | undefined, policyVersion: 'completeness-v2'): KnowledgeCompletenessExchangeV2;
+export function createKnowledgeCompletenessExchange(baseExchange: KnowledgeExchangeV1, value: unknown,
+  runId: string | undefined, policyVersion: 'completeness-v1' | 'completeness-v2'): KnowledgeCompletenessExchange;
 export function createKnowledgeCompletenessExchange(baseExchange: KnowledgeExchangeV1,
-  value: unknown, runId?: string): KnowledgeCompletenessExchangeV1 {
+  value: unknown, runId?: string, policyVersion: 'completeness-v1' | 'completeness-v2' = 'completeness-v1'): KnowledgeCompletenessExchange {
+  choice(policyVersion, ['completeness-v1', 'completeness-v2']);
   const authoringQuestions = parseKnowledgeAuthoringQuestions(value);
   const identity = runId ?? `run-${digest({ base: baseExchange.exchangeDigest, questions: authoringQuestions }).slice(7)}`;
   if (!/^run-[0-9a-f]{64}$/u.test(identity)) invalid();
-  const basis = { schemaVersion: 'buildlore.knowledge-completeness-exchange.v1' as const,
+  const version = policyVersion === 'completeness-v1'
+    ? { schemaVersion: 'buildlore.knowledge-completeness-exchange.v1' as const, policyVersion }
+    : { schemaVersion: 'buildlore.knowledge-completeness-exchange.v2' as const, policyVersion };
+  const basis = { ...version,
     projectId: baseExchange.projectId, runId: identity, baseExchange, baseExchangeDigest: baseExchange.exchangeDigest,
     snapshotDigest: baseExchange.snapshot.snapshotDigest, baselineGenerationDigest: baseExchange.baselineGenerationDigest,
-    authoringQuestions, questionsDigest: digest(authoringQuestions), policyVersion: 'completeness-v1' as const,
+    authoringQuestions, questionsDigest: digest(authoringQuestions),
     roleBoundary: 'ordered-disclosure-declared-identities' as const,
     instructions: Object.freeze([
       'Before prose, independently inventory each frozen question: its direct answer, conditions, exceptions, decision reasons, change history, verification scope and limits.',
@@ -213,7 +228,9 @@ export function createKnowledgeCompletenessExchange(baseExchange: KnowledgeExcha
       'Bind each supported item to actual evidence. Separate evidence-backed uncertainty from unavailable source material. Preserve explicit gaps and justified non-applicability.',
       'The completeness reviewer commits a shadow inventory before author inventory disclosure. The author commits without shadow contents; then review their complete union.',
       'Freeze the accepted inventory before canonical prose. Map every required item to exact page, section and claim locators, including supported uncertainty in uncertainty prose.',
-      'Support/currentness and omission reviewers remain separate. One prose correction requires both reviewers to review again; a newly discovered inventory defect is terminal.',
+      policyVersion === 'completeness-v1'
+        ? 'Support/currentness and omission reviewers remain separate. One prose correction requires both reviewers to review again; a newly discovered inventory defect is terminal.'
+        : 'Support/currentness and omission reviewers remain separate. Correct recoverable inventory defects up to twice, preserving each prior cycle and the original blind shadow. Independently review every correction, then remap prose and obtain both fresh reviews. Missing required source material and exhausted correction budgets block completion.',
       'Hashes and declared actor identities record bindings and order; they do not prove independence, semantic correctness, approval or activation.',
     ]) };
   const result = Object.freeze({ ...basis, exchangeDigest: digest(basis) });
@@ -221,7 +238,15 @@ export function createKnowledgeCompletenessExchange(baseExchange: KnowledgeExcha
   return result;
 }
 
-export function parseKnowledgeCompletenessInventory(value: unknown, exchange: KnowledgeCompletenessExchangeV1,
+function declaredCompletenessRequirements(exchange: KnowledgeCompletenessExchange,
+  question: KnowledgeAuthoringQuestion): ReturnType<typeof createKnowledgeEvidenceCoverage>['requirements'] {
+  // A profile may leave source requirements unselected. This does not waive
+  // evidence on inventory items, direct answers, or the independent reviews.
+  if (question.contentProfile?.id === 'development-memory-v1' && question.requirements.length === 0) return [];
+  return createKnowledgeEvidenceCoverage(exchange.baseExchange.snapshot, question.requirements, exchange.projectId).requirements;
+}
+
+export function parseKnowledgeCompletenessInventory(value: unknown, exchange: KnowledgeCompletenessExchange,
   role: CompletenessInventoryRole): KnowledgeCompletenessInventoryV1 {
   const r = completenessJson(value);
   keys(r, ['schemaVersion', ...BINDING_KEYS, 'role', 'actor', 'questions', 'inventoryDigest']);
@@ -232,7 +257,7 @@ export function parseKnowledgeCompletenessInventory(value: unknown, exchange: Kn
     const q = record(raw); keys(q, ['questionId', 'categories']);
     const question = exchange.authoringQuestions[questionIndex] ?? invalid();
     if (q.questionId !== question.id) invalid();
-    const coverage = createKnowledgeEvidenceCoverage(exchange.baseExchange.snapshot, question.requirements, exchange.projectId);
+    const coverage = declaredCompletenessRequirements(exchange, question);
     const requirementIds = new Set(question.requirements.map(item => item.id));
     const categories = list(q.categories, 7).map((raw, categoryIndex) => {
       const c = record(raw); keys(c, ['category', 'items', 'disposition']);
@@ -253,7 +278,7 @@ export function parseKnowledgeCompletenessInventory(value: unknown, exchange: Kn
           seen.add(itemId);
           const evidenceIds = evidence(item.evidenceIds, exchange);
           for (const [requirementIndex, id] of requirements.entries()) {
-            const requirement = coverage.requirements.find(item => item.id === id) ?? invalid();
+            const requirement = coverage.find(item => item.id === id) ?? invalid();
             if (requirement.status !== 'available' || !requirement.evidenceIds.some(id => evidenceIds.includes(id))) {
               reject('requirement-needs-current-evidence', requirementIndex);
             }
@@ -275,7 +300,7 @@ export function parseKnowledgeCompletenessInventory(value: unknown, exchange: Kn
         if (required.some(id => !requirementIds.has(id))) invalid();
         const sourceStatuses = list(d.sourceStatuses, 256).map(raw => {
           const status = record(raw); keys(status, ['requirementId', 'status']);
-          const requirement = coverage.requirements.find(item => item.id === status.requirementId) ?? invalid();
+          const requirement = coverage.find(item => item.id === status.requirementId) ?? invalid();
           if (status.status !== requirement.status) invalid();
           return Object.freeze({ requirementId: requirement.id, status: requirement.status });
         });
@@ -289,7 +314,7 @@ export function parseKnowledgeCompletenessInventory(value: unknown, exchange: Kn
       return Object.freeze({ category, items: Object.freeze(items), disposition });
     });
     if (categories.length !== COMPLETENESS_CATEGORIES.length) invalid();
-    for (const requirement of coverage.requirements) {
+    for (const requirement of coverage) {
       if (requirement.status === 'available'
         ? !categories.some(c => c.items.some(i => i.requirementIds.includes(requirement.id)))
         : !categories.some(c => c.disposition?.status === 'source-gap-unknown' && c.disposition.requirementIds.includes(requirement.id))) invalid();
@@ -306,7 +331,7 @@ export function parseKnowledgeCompletenessInventory(value: unknown, exchange: Kn
 /** Repair a caller-owned, uncommitted draft. Does not change any session or saved inventory.
  * The caller supplies the replacement and exact whole-draft digest. Normal submission still
  * checks stage, actor and security; the complete repaired inventory is validated here. */
-export function repairKnowledgeCompletenessInventoryDraft(value: unknown, exchange: KnowledgeCompletenessExchangeV1,
+export function repairKnowledgeCompletenessInventoryDraft(value: unknown, exchange: KnowledgeCompletenessExchange,
   role: CompletenessInventoryRole, repair: unknown): KnowledgeCompletenessInventoryV1 {
   const draft = completenessJson(value), patch = completenessJson(repair);
   keys(draft, ['schemaVersion', ...BINDING_KEYS, 'role', 'actor', 'questions', 'inventoryDigest']);
@@ -335,7 +360,7 @@ export function repairKnowledgeCompletenessInventoryDraft(value: unknown, exchan
   return parseKnowledgeCompletenessInventory({ ...basis, inventoryDigest: digest(basis) }, exchange, role);
 }
 
-export function parseKnowledgeCompletenessInventoryReview(value: unknown, exchange: KnowledgeCompletenessExchangeV1,
+export function parseKnowledgeCompletenessInventoryReview(value: unknown, exchange: KnowledgeCompletenessExchange,
   shadow: KnowledgeCompletenessInventoryV1, author: KnowledgeCompletenessInventoryV1): KnowledgeCompletenessInventoryReviewV1 {
   const r = completenessJson(value);
   keys(r, ['schemaVersion', ...BINDING_KEYS, 'shadowInventoryDigest', 'authorInventoryDigest',
@@ -397,7 +422,7 @@ export function parseKnowledgeCompletenessInventoryReview(value: unknown, exchan
   return Object.freeze({ ...basis, reviewDigest: verified(r, basis, 'reviewDigest') });
 }
 
-export function parseKnowledgeCompletenessReconciliation(value: unknown, exchange: KnowledgeCompletenessExchangeV1,
+export function parseKnowledgeCompletenessReconciliation(value: unknown, exchange: KnowledgeCompletenessExchange,
   review: KnowledgeCompletenessInventoryReviewV1, author: KnowledgeActor): KnowledgeCompletenessInventoryReconciliationV1 {
   const r = completenessJson(value);
   keys(r, ['schemaVersion', ...BINDING_KEYS, 'inventoryReviewDigest', 'author', 'dispositions', 'reconciliationDigest']);
@@ -418,7 +443,7 @@ export function parseKnowledgeCompletenessReconciliation(value: unknown, exchang
 }
 
 /** Project the reviewed union; this is not a new author-editable inventory. */
-export function acceptKnowledgeCompletenessInventory(exchange: KnowledgeCompletenessExchangeV1,
+export function acceptKnowledgeCompletenessInventory(exchange: KnowledgeCompletenessExchange,
   shadow: KnowledgeCompletenessInventoryV1, author: KnowledgeCompletenessInventoryV1,
   review: KnowledgeCompletenessInventoryReviewV1,
   reconciliation: KnowledgeCompletenessInventoryReconciliationV1 | null): KnowledgeCompletenessAcceptedInventoryV1 {
@@ -435,8 +460,8 @@ export function acceptKnowledgeCompletenessInventory(exchange: KnowledgeComplete
   for (const question of exchange.authoringQuestions) {
     const items = requiredItems.filter(i => i.questionId === question.id);
     if (!items.some(i => i.category === 'direct-answer')) invalid();
-    const requirements = createKnowledgeEvidenceCoverage(exchange.baseExchange.snapshot, question.requirements, exchange.projectId);
-    if (requirements.requirements.some(r => r.status !== 'available' ||
+    const requirements = declaredCompletenessRequirements(exchange, question);
+    if (requirements.some(r => r.status !== 'available' ||
       !items.some(i => i.requirementIds.includes(r.id) && r.evidenceIds.some(id => i.evidenceIds.includes(id))))) invalid();
   }
   const basis = { schemaVersion: 'buildlore.knowledge-completeness-accepted-inventory.v1' as const,
@@ -452,7 +477,7 @@ function index(value: unknown, maximum: number): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value >= maximum) invalid();
   return value;
 }
-export function parseKnowledgeCompletenessProseMapping(value: unknown, exchange: KnowledgeCompletenessExchangeV1,
+export function parseKnowledgeCompletenessProseMapping(value: unknown, exchange: KnowledgeCompletenessExchange,
   accepted: KnowledgeCompletenessAcceptedInventoryV1, proposal: KnowledgeProposalV1): KnowledgeCompletenessProseMappingV1 {
   const r = completenessJson(value);
   keys(r, ['schemaVersion', ...BINDING_KEYS, 'acceptedInventoryDigest', 'proposalDigest', 'author', 'items', 'mappingDigest']);
@@ -485,7 +510,7 @@ export function parseKnowledgeCompletenessProseMapping(value: unknown, exchange:
   return Object.freeze({ ...basis, mappingDigest: verified(r, basis, 'mappingDigest') });
 }
 
-export function parseKnowledgeCompletenessReview(value: unknown, exchange: KnowledgeCompletenessExchangeV1,
+export function parseKnowledgeCompletenessReview(value: unknown, exchange: KnowledgeCompletenessExchange,
   accepted: KnowledgeCompletenessAcceptedInventoryV1, mapping: KnowledgeCompletenessProseMappingV1,
   round: 1 | 2): KnowledgeCompletenessReviewV1 {
   const r = completenessJson(value);

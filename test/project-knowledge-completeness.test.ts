@@ -9,20 +9,20 @@ import { createProjectSecurityService } from '../src/sanitizer/index.js';
 import { writeSecurityPolicy } from './fixtures/security-policy.js';
 import { createKnowledgeCompletenessSessionService, captureKnowledgeCompletenessSession,
   replayKnowledgeCompletenessSession, type KnowledgeCompletenessSessionV1,
-  type KnowledgeCompletenessStateV1 } from '../src/compiler/project-knowledge/completeness-session.js';
+  type KnowledgeCompletenessState } from '../src/compiler/project-knowledge/completeness-session.js';
 import { createKnowledgeProposal } from '../src/compiler/project-knowledge/proposal.js';
 import { COMPLETENESS_CATEGORIES, COMPLETENESS_LIMITS, KnowledgeCompletenessBudgetError, KnowledgeCompletenessInventoryError, repairKnowledgeCompletenessInventoryDraft,
   acceptKnowledgeCompletenessInventory, completenessBinding, completenessInventoryItems, completenessJson,
   completenessRefKey, createKnowledgeCompletenessExchange, parseKnowledgeCompletenessInventory,
   parseKnowledgeCompletenessInventoryReview, parseKnowledgeCompletenessProseMapping,
   parseKnowledgeCompletenessReconciliation, parseKnowledgeCompletenessReview,
-  type KnowledgeCompletenessExchangeV1, type KnowledgeCompletenessInventoryV1,
+  type KnowledgeCompletenessExchange, type KnowledgeCompletenessInventoryV1,
   type KnowledgeCompletenessInventoryReviewV1, type KnowledgeCompletenessAcceptedInventoryV1 } from '../src/compiler/project-knowledge/completeness.js';
 import { fixtureFact, fixtureProposal, fixtureReview, knowledgeFixtureSnapshot, TEST_KNOWLEDGE_ACTOR } from './helpers/project-knowledge-fixture.js';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-async function sessionFixture() {
+async function sessionFixture(large = false) {
   const root = await mkdtemp(join(tmpdir(), 'buildlore-completeness-'));
   roots.push(root);
   await addProject(root, { projectId: 'parcel', displayName: 'Parcel', sourceRepository: 'https://example.test/parcel.git' });
@@ -30,7 +30,17 @@ async function sessionFixture() {
   const security = createProjectSecurityService({ knowledgeRoot: root });
   const fixture = await context();
   const prepare = async (runId?: string) => {
-    const sources = await Promise.all(fixture.exchange.baseExchange.snapshot.sources.map(async source => {
+    const selected = [...fixture.exchange.baseExchange.snapshot.sources];
+    if (large) {
+      const original = selected[0]!;
+      for (let index = 0; index < 12; index += 1) {
+        const content = Array.from({ length: 350 }, (_, line) =>
+          `Selected reference ${String(index)} paragraph ${String(line)}. ${'Local batch manifests retain documented delivery conditions. '.repeat(5)}`).join('\n\n');
+        selected.push({ ...original, sourceId: `large-${String(index)}`, sourceRef: `large-${String(index)}.md`,
+          content, sourceContentDigest: sha256(content) });
+      }
+    }
+    const sources = await Promise.all(selected.map(async source => {
       const result = await security.prepareSource({ projectId: 'parcel', source: source.sourceRef,
         sourceKind: source.format, body: source.content, bodyDigest: sha256(source.content),
         sourceRevisionOrContentSha256: source.sourceContentDigest });
@@ -89,6 +99,37 @@ async function finalizeInput(session: KnowledgeCompletenessSessionV1) {
 }
 
 describe('sanitized completeness session ordering and recovery', () => {
+  it('keeps large role views bounded and reads every whole source through bound cursors', async () => {
+    const { session } = await sessionFixture(true);
+    expect(Buffer.byteLength(JSON.stringify(session.exchange))).toBeGreaterThan(COMPLETENESS_LIMITS.view);
+    for (const role of ['author', 'completeness-reviewer', 'source-reviewer'] as const) {
+      const view = await session.status(role);
+      expect(Buffer.byteLength(JSON.stringify(view))).toBeLessThan(65_536);
+      expect(record(record(view.material.exchange).baseExchange).snapshot).not.toHaveProperty('sources');
+    }
+    const input = { schemaVersion: 'buildlore.knowledge-completeness-material-request.v1', projectId: 'parcel', collection: 'sources', maxBytes: 8192 };
+    const first = await session.inspect(input, session.exchange.exchangeDigest);
+    expect(first.entries.length).toBeGreaterThan(0);
+    const blocked = await session.inspect({ ...input, cursor: first.cursor }, session.exchange.exchangeDigest);
+    expect(blocked.status).toBe('item-too-large');
+    expect(blocked.cursor).toBe(first.cursor);
+    expect(blocked.entries).toEqual([]);
+    const full = await session.inspect({ ...input, cursor: blocked.cursor, maxBytes: blocked.minimumRequiredBytes }, session.exchange.exchangeDigest);
+    expect(full.status).toBe('ready');
+    expect(full.entries).toHaveLength(1);
+    await expect(session.inspect({ ...input, collection: 'evidence', cursor: blocked.cursor }, session.exchange.exchangeDigest)).rejects.toThrow(ProjectKnowledgeError);
+    await expect(session.inspect(input, sha256('other exchange'))).rejects.toThrow('Knowledge inputs no longer match');
+    const sources: unknown[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await session.inspect({ ...input, cursor, maxBytes: 1_048_576 }, session.exchange.exchangeDigest);
+      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(1_048_576);
+      sources.push(...page.entries); cursor = page.cursor;
+    } while (cursor !== null);
+    expect(sources).toEqual(session.exchange.baseExchange.snapshot.sources);
+    await driveInventory(session);
+    expect((await session.status()).phase).toBe('awaiting-proposal');
+  }, 60_000);
   it('commits shadow before author, hides shadow content from author and never mutates on reads', async () => {
     const { session } = await sessionFixture();
     const first = await captureKnowledgeCompletenessSession(session);
@@ -195,7 +236,7 @@ describe('sanitized completeness session ordering and recovery', () => {
 
   it('replays each closed stage from genuinely prepared sources and rejects recomputed contradictory state', async () => {
     const { session, prepare } = await sessionFixture();
-    const snapshots: KnowledgeCompletenessStateV1[] = [(await captureKnowledgeCompletenessSession(session)).state];
+    const snapshots: KnowledgeCompletenessState[] = [(await captureKnowledgeCompletenessSession(session)).state];
     await driveInventory(session); snapshots.push((await captureKnowledgeCompletenessSession(session)).state);
     const accepted = snapshots.at(-1)?.acceptedInventory;
     if (!accepted) throw new Error('Missing accepted fixture.');
@@ -312,7 +353,7 @@ async function context() {
   return { exchange, proposal: fixtureProposal(snapshot), evidenceIds: fixtureFact(snapshot).evidenceIds };
 }
 
-function inventoryInput(exchange: KnowledgeCompletenessExchangeV1, role: KnowledgeCompletenessInventoryV1['role']) {
+function inventoryInput(exchange: KnowledgeCompletenessExchange, role: KnowledgeCompletenessInventoryV1['role']) {
   return { schemaVersion: 'buildlore.knowledge-completeness-inventory.v1' as const, ...completenessBinding(exchange), role,
     actor: role === 'author' ? TEST_KNOWLEDGE_ACTOR : reviewer,
     questions: exchange.authoringQuestions.map(question => ({ questionId: question.id,
@@ -327,7 +368,7 @@ function inventoryInput(exchange: KnowledgeCompletenessExchangeV1, role: Knowled
   };
 }
 
-function reviewInput(exchange: KnowledgeCompletenessExchangeV1, shadow: KnowledgeCompletenessInventoryV1,
+function reviewInput(exchange: KnowledgeCompletenessExchange, shadow: KnowledgeCompletenessInventoryV1,
   author: KnowledgeCompletenessInventoryV1, useShadow = false) {
   return { schemaVersion: 'buildlore.knowledge-completeness-inventory-review.v1' as const, ...completenessBinding(exchange),
     shadowInventoryDigest: shadow.inventoryDigest, authorInventoryDigest: author.inventoryDigest, reviewer,
@@ -349,7 +390,7 @@ async function acceptedFixture() {
   const accepted = acceptKnowledgeCompletenessInventory(c.exchange, shadow, author, review, null);
   return { ...c, shadow, author, review, accepted };
 }
-function mappingInput(exchange: KnowledgeCompletenessExchangeV1, accepted: KnowledgeCompletenessAcceptedInventoryV1,
+function mappingInput(exchange: KnowledgeCompletenessExchange, accepted: KnowledgeCompletenessAcceptedInventoryV1,
   proposalDigest: ReturnType<typeof digest>, mapped = true) {
   return { schemaVersion: 'buildlore.knowledge-completeness-prose-mapping.v1' as const, ...completenessBinding(exchange),
     acceptedInventoryDigest: accepted.acceptedInventoryDigest, proposalDigest, author: accepted.author,

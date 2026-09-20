@@ -13,7 +13,7 @@ export async function activate(f: KnowledgeWorkflowFixture): Promise<void> {
   if (sync.exitCode !== 0) throw new Error('Fixture sync failed.');
   const purpose = await f.json('connected-purpose.json', { schemaVersion: 'buildlore.hierarchical-workflow-purpose-input.v2',
     projectId: f.projectId, generationModel: 'project-knowledge-v1', outputLanguage: 'en' });
-  const started = await f.cli(['compile', 'hierarchy', 'start', '--project', f.projectId, '--purpose', purpose]);
+  const started = await f.cli(['compile', 'hierarchy', 'start', '--allow-legacy-authoring', '--project', f.projectId, '--purpose', purpose]);
   const { approved } = await submitWorkflowFixture(f, started.data);
   const args = approved.data.activationArgs;
   if (!Array.isArray(args) || !args.every((v: unknown) => typeof v === 'string') || (await f.cli(args)).exitCode !== 0) throw new Error('Fixture activation failed.');

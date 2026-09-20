@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/workspace-guide.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "mode",
+    "overall",
+    "checks",
+    "nextActions"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "buildlore.workspace-guide.v1"
+    },
+    "projectId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "enum": [
+        "unknown",
+        "uninitialized",
+        "knowledge",
+        "legacy-hub"
+      ]
+    },
+    "overall": {
+      "enum": [
+        "action_required",
+        "blocked",
+        "ready"
+      ]
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "state",
+          "reasonCode"
+        ],
+        "properties": {
+          "id": {
+            "enum": [
+              "repository",
+              "workspace",
+              "project",
+              "binding",
+              "sources",
+              "approval",
+              "connection",
+              "client",
+              "ai-quality",
+              "embeddings"
+            ]
+          },
+          "state": {
+            "enum": [
+              "complete",
+              "pending",
+              "blocked",
+              "not_checked"
+            ]
+          },
+          "reasonCode": {
+            "type": "string",
+            "pattern": "^[A-Z_]+$"
+          }
+        }
+      }
+    },
+    "nextActions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "location",
+          "instruction",
+          "argv",
+          "skill",
+          "requiredInputs"
+        ],
+        "properties": {
+          "location": {
+            "enum": [
+              "knowledge",
+              "source"
+            ]
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "argv": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "skill": {
+            "enum": [
+              null,
+              "skills/buildlore-authoring/SKILL.md",
+              "skills/buildlore-activation/SKILL.md"
+            ]
+          },
+          "requiredInputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

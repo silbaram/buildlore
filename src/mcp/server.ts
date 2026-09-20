@@ -9,6 +9,7 @@ import { successResult } from '../cli/run-cli.js';
 import { normalizedEnvelope } from '../cli/presentation.js';
 import { isToolName, parseReadTool, toolSchemas, type ToolName } from './requests.js';
 import { withReadCancellation } from '../application/read-cancellation.js';
+import { packageVersion } from '../package-version.js';
 
 export const READER_GUIDANCE = 'Read this project only. Begin with memory(task, progressive=true). ' +
   'For each needed reason, compatibility condition and verification claim, distinguish a listed ID, an inspected excerpt and sufficient support. ' +
@@ -33,7 +34,7 @@ export function createProjectMcpServer(context: ConnectionContext, signal: Abort
 } = {}): { server: Server; settled: () => Promise<void> } {
   const api = options.ports ?? ports;
   const pending = new Set<Promise<CallToolResult>>();
-  const server = new Server({ name: 'buildlore', version: '0.1.0' }, { capabilities: { tools: {} }, instructions: READER_GUIDANCE });
+  const server = new Server({ name: 'buildlore', version: packageVersion() }, { capabilities: { tools: {} }, instructions: READER_GUIDANCE });
   server.setRequestHandler('tools/list', () => ({ tools: Object.entries(toolSchemas).map(([name, schema]) => { const checked = specTypeSchemas.Tool['~standard'].validate({
     name, description: name === 'memory' ? 'Begin a bounded project Wiki read. Use task and progressive=true.'
       : name === 'lookup' ? 'Read missing canonical support. Supply id or ids (1–16, one kind), with expectedGeneration. Batch maxBytes defaults to 32768 (2048–65536); split an oversized batch. Listed IDs alone are not inspected excerpts.'
@@ -60,7 +61,7 @@ export function createProjectMcpServer(context: ConnectionContext, signal: Abort
         const data = read ? read.data : await api.status(context);
         controller.signal.throwIfAborted();
         if (!read && typeof data === 'object' && data !== null && 'readable' in data && data.readable === false) {
-          throw new ConnectionError('pin' in data && data.pin !== 'matched' ? 'KNOWLEDGE_PIN_MISMATCH' :
+          throw new ConnectionError('pin' in data && data.pin !== 'matched' && data.pin !== 'not_applicable' ? 'KNOWLEDGE_PIN_MISMATCH' :
             'approval' in data && data.approval === 'invalid' ? 'KNOWLEDGE_INVALID' : 'APPROVAL_MISSING');
         }
         const envelope = normalizedEnvelope({ ...successResult({ command, projectId: context.projectId }, data),

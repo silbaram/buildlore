@@ -128,7 +128,8 @@ export function createKnowledgeSnapshot(value: unknown, expectedProjectId: strin
   try { extracted = sources.flatMap((s) => extractKnowledgeEvidence(s, projectId,
     input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v6' ||
     input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v7' ||
-    input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v8')).sort((a, b) => compare(a.evidenceId, b.evidenceId)); }
+    input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v8' ||
+    input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v9')).sort((a, b) => compare(a.evidenceId, b.evidenceId)); }
   catch { return invalid(); }
   if (extracted.length > 8192) invalid();
   const basis = {

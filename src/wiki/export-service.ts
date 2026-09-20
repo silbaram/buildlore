@@ -24,6 +24,7 @@ import {
 } from 'node:path';
 import { parseDocument } from 'yaml';
 
+import { hasOnlyWarningSummaries } from '../sanitizer/findings.js';
 import { createLlmWikiCompilerBackend } from '../compiler/backend.js';
 import type { CompilerWikiBackend } from '../compiler/types.js';
 import { serializeCanonicalJson, syncDirectory } from '../knowledge/atomic-file.js';
@@ -503,7 +504,7 @@ async function assertSanitizedFiles(
     }
     const prepared = result.ok ? consumePreparedSource(result.prepared) : null;
     if (!result.ok || result.report.decision !== 'include' ||
-        result.report.outputDigest !== inspectedDigest || result.report.summaries.length > 0 ||
+        result.report.outputDigest !== inspectedDigest || !hasOnlyWarningSummaries(result.report.summaries) ||
         prepared === null || prepared.approvedBody !== inspectedBody ||
         prepared.approvedBodyDigest !== inspectedDigest) {
       return fail('WIKI_SECURITY_DENIED', projectId);

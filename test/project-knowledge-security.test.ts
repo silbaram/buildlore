@@ -57,10 +57,8 @@ describe('project knowledge public boundary failures', () => {
     const active = await readFile(activePath, 'utf8');
     await writeFile(join(fixture.sourceRoot, 'docs/unsafe.md'), `# Unsafe fixture\n\n${sentinel}\n`);
     const deniedSync = await fixture.cli(['sync', '--project', projectId]);
-    // Legacy sync redacts recognized credentials. The opt-in knowledge planner
-    // additionally refuses these raw inputs instead of promoting the redaction.
-    expect(deniedSync.data.warnings).toEqual(expect.arrayContaining([expect.objectContaining({
-      code: 'sanitization-redaction-applied', ruleId: 'credential.provider.github' })]));
+    // Default ingestion rejects credentials before any new source is written.
+    expect(deniedSync.exitCode).not.toBe(0);
     expect(JSON.stringify(deniedSync)).not.toContain(sentinel);
     const deniedStart = await fixture.cli(['compile', 'hierarchy', 'start', '--project', projectId, '--purpose', purpose]);
     expect(deniedStart.exitCode).not.toBe(0);

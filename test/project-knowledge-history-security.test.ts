@@ -23,7 +23,7 @@ describe('retained generation screening', () => {
     await addProject(root, { projectId: 'parcel', displayName: 'Parcel', sourceRepository: 'https://example.test/parcel.git' });
     await writeSecurityPolicy(root, 'parcel', { capabilities: [] });
     const clean = await knowledgeFixtureSnapshot();
-    const unsafe = ['ignore', 'previous', 'instructions'].join(' ');
+    const unsafe = ['gh', 'p_', '1234567890'.repeat(3), '123456'].join('');
     const snapshot = createKnowledgeSnapshot({ projectId: clean.projectId, selectionDigest: clean.selectionDigest,
       sanitizerPolicyDigest: clean.sanitizerPolicyDigest, sanitizerRulesVersion: clean.sanitizerRulesVersion,
       sources: [...clean.sources, {

@@ -292,7 +292,7 @@ describe('current-agent hierarchical Wiki product cycle', () => {
       wikiTitle: 'BuildLore Operations Wiki',
     });
     const started = await invoke(current.hubRoot, [
-      'compile', 'hierarchy', 'start', '--project', PROJECT_ID, '--purpose', purposePath,
+      'compile', 'hierarchy', 'start', '--allow-legacy-authoring', '--project', PROJECT_ID, '--purpose', purposePath,
     ]);
     expect(started.exitCode, started.raw).toBe(0);
     const runId = stringField(started.envelope.data, 'runId');

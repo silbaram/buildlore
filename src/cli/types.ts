@@ -2,9 +2,12 @@ import type { ReadContextMetadata } from '../application/wiki-read-service.js';
 export const CLI_ENVELOPE_SCHEMA_VERSION = 'buildlore.cli-envelope.v1' as const;
 
 export type CliCommandId =
+  | 'workspace.init' | 'workspace.guide' | 'workspace.connect' | 'workspace.check'
   | 'setup' | 'connect' | 'disconnect' | 'connection.status' | 'connection.relocate-hub' | 'doctor'
   | 'check'
   | 'compile'
+  | 'compile.wiki.start' | 'compile.wiki.status' | 'compile.wiki.inspect' | 'compile.wiki.submit'
+  | 'compile.wiki.review' | 'compile.wiki.revise' | 'compile.wiki.finalize' | 'compile.wiki.approve'
   | 'compile.activate'
   | 'compile.apply'
   | 'compile.approve'
@@ -19,6 +22,7 @@ export type CliCommandId =
   | 'compile.hierarchy.completeness.review'
   | 'compile.hierarchy.completeness.source-review'
   | 'compile.hierarchy.completeness.correct'
+  | 'compile.hierarchy.completeness.correct-inventory'
   | 'compile.hierarchy.finalize'
   | 'compile.hierarchy.inspect'
   | 'compile.hierarchy.review'

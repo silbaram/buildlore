@@ -6,21 +6,32 @@ import { createKnowledgeSessionService, requireKnowledgePreparedSessionCore, typ
 import { knowledgeReviewTargets, parseKnowledgeProposal } from './proposal.js';
 import { inspectKnowledgeAuthoringSources, KnowledgeAuthoringInspectionBudgetError,
   parseKnowledgeAuthoringInspectionRequest, type KnowledgeAuthoringInspection } from './authoring-inspection.js';
+import { knowledgeCompletenessExchangeView, isCompletenessMaterialRequest, parseKnowledgeCompletenessMaterialRequest,
+  inspectKnowledgeCompletenessMaterial, completenessMaterialScreeningValue,
+  type KnowledgeCompletenessMaterialInspection } from './completeness-inspection.js';
 import type { KnowledgeAuthoringQuestion } from './authoring-questions.js';
+import { createKnowledgeCompletenessProof } from './completeness-proof.js';
+import { MAX_INVENTORY_CORRECTIONS, completenessCorrectionCause, completenessInventorySourceGap,
+  hasCompletenessRequiredSourceGap, parseKnowledgeCompletenessInventoryCorrection,
+  parseKnowledgeCompletenessInventoryCorrectionReview, requiredInventoryCorrectionTargets,
+  type KnowledgeCompletenessInventoryCorrectionReviewV1, type KnowledgeCompletenessInventoryCorrectionStepV1,
+  type KnowledgeCompletenessInventoryCycleV1 } from './completeness-correction.js';
+import { parseCompletenessReviewSubmission, type CompletenessReviewBinding,
+  type CompletenessReviewSubmissionV1 } from './completeness-review-binding.js';
 import { COMPLETENESS_LIMITS, acceptKnowledgeCompletenessInventory, completenessBinding, completenessJson,
   createKnowledgeCompletenessExchange, parseKnowledgeCompletenessInventory, parseKnowledgeCompletenessInventoryReview,
   parseKnowledgeCompletenessProseMapping, parseKnowledgeCompletenessReconciliation, parseKnowledgeCompletenessReview,
   type CompletenessBinding, type CompletenessProseLocator, type CompletenessRole, type KnowledgeCompletenessAcceptedInventoryV1,
-  type KnowledgeCompletenessExchangeV1, type KnowledgeCompletenessInventoryReconciliationV1,
+  type KnowledgeCompletenessExchange, type KnowledgeCompletenessInventoryReconciliationV1,
   type KnowledgeCompletenessInventoryReviewV1, type KnowledgeCompletenessInventoryV1,
   type KnowledgeCompletenessProseMappingV1, type KnowledgeCompletenessReviewV1 } from './completeness.js';
 
 export type KnowledgeCompletenessPhase = 'awaiting-shadow-inventory' | 'awaiting-author-inventory' |
   'awaiting-inventory-review' | 'awaiting-inventory-reconciliation' | 'awaiting-proposal' |
   'awaiting-initial-reviews' | 'awaiting-correction' | 'awaiting-correction-reviews' | 'review-ready' |
-  'finalized' | 'completeness-failed';
+  'awaiting-inventory-correction' | 'finalized' | 'completeness-failed';
 export type KnowledgeCompletenessAction = 'shadow' | 'inventory' | 'inventory-review' | 'reconcile' |
-  'submit' | 'review' | 'source-review' | 'correct';
+  'submit' | 'review' | 'source-review' | 'correct' | 'correct-inventory';
 export interface KnowledgeCompletenessProseSubmissionV1 {
   readonly schemaVersion: 'buildlore.knowledge-completeness-prose-submission.v1';
   readonly projectId: string;
@@ -49,6 +60,7 @@ export interface KnowledgeCompletenessAttemptV1 {
   readonly sourcePassed: boolean | null;
   readonly reviewOrder: readonly ('completeness' | 'source')[];
   readonly reviewRound: KnowledgeCompletenessReviewRoundV1 | null;
+  readonly reviewSubmissions?: readonly CompletenessReviewSubmissionV1[];
 }
 export interface KnowledgeCompletenessStateV1 extends CompletenessBinding {
   readonly schemaVersion: 'buildlore.knowledge-completeness-state.v1';
@@ -61,11 +73,17 @@ export interface KnowledgeCompletenessStateV1 extends CompletenessBinding {
   readonly acceptedInventory: KnowledgeCompletenessAcceptedInventoryV1 | null;
   readonly attempts: readonly KnowledgeCompletenessAttemptV1[];
   readonly finalized: boolean;
-  readonly terminal: Readonly<{ code: 'inventory-defect' | 'review-exhausted'; round: 0 | 1 | 2 }> | null;
+  readonly terminal: Readonly<{ code: 'inventory-defect' | 'review-exhausted' | 'inventory-correction-exhausted'; round: 0 | 1 | 2 }> | null;
   readonly stateDigest: KnowledgeDigest;
 }
+export interface KnowledgeCompletenessStateV2 extends Omit<KnowledgeCompletenessStateV1, 'schemaVersion'> {
+  readonly schemaVersion: 'buildlore.knowledge-completeness-state.v2';
+  readonly inventoryCorrections: readonly KnowledgeCompletenessInventoryCorrectionStepV1[];
+  readonly inventoryReReview: KnowledgeCompletenessInventoryCorrectionReviewV1 | null;
+}
+export type KnowledgeCompletenessState = KnowledgeCompletenessStateV1 | KnowledgeCompletenessStateV2;
 export interface KnowledgeCompletenessStageViewV1 extends CompletenessBinding {
-  readonly schemaVersion: 'buildlore.knowledge-completeness-stage-view.v1';
+  readonly schemaVersion: 'buildlore.knowledge-completeness-stage-view.v1' | 'buildlore.knowledge-completeness-stage-view.v2';
   readonly phase: KnowledgeCompletenessPhase;
   readonly revision: number;
   readonly role: CompletenessRole | null;
@@ -77,11 +95,13 @@ export interface KnowledgeCompletenessStageViewV1 extends CompletenessBinding {
   readonly disclosureBoundary: 'ordered-disclosure-declared-identities';
   readonly material: Readonly<Record<string, unknown>>;
   readonly stageViewDigest: KnowledgeDigest;
+  readonly inventoryCorrectionCount?: number;
+  readonly inventoryCorrectionLimit?: number;
 }
 export interface KnowledgeCompletenessSessionV1 {
-  readonly exchange: KnowledgeCompletenessExchangeV1;
+  readonly exchange: KnowledgeCompletenessExchange;
   status(role?: CompletenessRole): Promise<KnowledgeCompletenessStageViewV1>;
-  inspect(input: unknown, expectExchange: KnowledgeDigest): Promise<KnowledgeAuthoringInspection>;
+  inspect(input: unknown, expectExchange: KnowledgeDigest): Promise<KnowledgeAuthoringInspection | KnowledgeCompletenessMaterialInspection>;
   submitShadowInventory(input: unknown, expectStage: KnowledgeDigest): Promise<KnowledgeCompletenessStageViewV1>;
   submitAuthorInventory(input: unknown, expectStage: KnowledgeDigest): Promise<KnowledgeCompletenessStageViewV1>;
   submitInventoryReview(input: unknown, expectStage: KnowledgeDigest): Promise<KnowledgeCompletenessStageViewV1>;
@@ -90,11 +110,12 @@ export interface KnowledgeCompletenessSessionV1 {
   submitCompletenessReview(input: unknown, expectStage: KnowledgeDigest): Promise<KnowledgeCompletenessStageViewV1>;
   submitSourceReview(input: unknown, expectStage: KnowledgeDigest): Promise<KnowledgeCompletenessStageViewV1>;
   correctProse(input: unknown, expectStage: KnowledgeDigest): Promise<KnowledgeCompletenessStageViewV1>;
+  correctInventory(input: unknown, expectStage: KnowledgeDigest): Promise<KnowledgeCompletenessStageViewV1>;
   finalize(input: unknown, expectStage: KnowledgeDigest): Promise<KnowledgeGenerationV1>;
 }
-type StateBasis = Omit<KnowledgeCompletenessStateV1, 'stateDigest' | 'phase'>;
+type StateBasis = Omit<KnowledgeCompletenessStateV1, 'stateDigest' | 'phase'> | Omit<KnowledgeCompletenessStateV2, 'stateDigest' | 'phase'>;
 const captures = new WeakMap<KnowledgeCompletenessSessionV1, () => Promise<Readonly<{
-  state: KnowledgeCompletenessStateV1; generation: KnowledgeGenerationV1 | null;
+  state: KnowledgeCompletenessState; generation: KnowledgeGenerationV1 | null;
 }>>>();
 
 function phase(basis: StateBasis): KnowledgeCompletenessPhase {
@@ -103,6 +124,8 @@ function phase(basis: StateBasis): KnowledgeCompletenessPhase {
   if (basis.shadowInventory === null) return 'awaiting-shadow-inventory';
   if (basis.authorInventory === null) return 'awaiting-author-inventory';
   if (basis.inventoryReview === null) return 'awaiting-inventory-review';
+  if (basis.schemaVersion === 'buildlore.knowledge-completeness-state.v2' &&
+    completenessCorrectionCause(inventoryCycle(basis)) !== null) return 'awaiting-inventory-correction';
   if (basis.acceptedInventory === null) return 'awaiting-inventory-reconciliation';
   const attempt = basis.attempts.at(-1);
   if (attempt === undefined) return 'awaiting-proposal';
@@ -111,18 +134,23 @@ function phase(basis: StateBasis): KnowledgeCompletenessPhase {
   if (basis.attempts.length === 1) return 'awaiting-correction';
   return invalid();
 }
-function freezeState(basis: StateBasis): KnowledgeCompletenessStateV1 {
+function freezeState(basis: StateBasis): KnowledgeCompletenessState {
   const value = { ...basis, phase: phase(basis) };
   const result = Object.freeze({ ...value, stateDigest: digest(value) });
   completenessJson(result, COMPLETENESS_LIMITS.run);
   return result;
 }
-function updated(state: KnowledgeCompletenessStateV1, updates: Partial<StateBasis>): KnowledgeCompletenessStateV1 {
+function updated(state: KnowledgeCompletenessState, updates: Partial<Omit<KnowledgeCompletenessStateV2, 'schemaVersion' | 'stateDigest' | 'phase'>>): KnowledgeCompletenessState {
   const { stateDigest, phase: oldPhase, ...basis } = state;
   void stateDigest; void oldPhase;
   return freezeState({ ...basis, ...updates, revision: state.revision + 1 });
 }
-function reviewRound(exchange: KnowledgeCompletenessExchangeV1, accepted: KnowledgeCompletenessAcceptedInventoryV1,
+function inventoryCycle(state: StateBasis): KnowledgeCompletenessInventoryCycleV1 {
+  return Object.freeze({ authorInventory: state.authorInventory ?? invalid(), inventoryReview: state.inventoryReview ?? invalid(),
+    inventoryReReview: state.schemaVersion === 'buildlore.knowledge-completeness-state.v2' ? state.inventoryReReview : null,
+    reconciliation: state.reconciliation, acceptedInventory: state.acceptedInventory, attempts: state.attempts });
+}
+function reviewRound(exchange: KnowledgeCompletenessExchange, accepted: KnowledgeCompletenessAcceptedInventoryV1,
   attempt: KnowledgeCompletenessAttemptV1): KnowledgeCompletenessReviewRoundV1 | null {
   if (attempt.completenessReview === null || attempt.semanticReview === null || attempt.sourcePassed === null) return null;
   const basis = { schemaVersion: 'buildlore.knowledge-completeness-review-round.v1' as const, ...completenessBinding(exchange),
@@ -141,6 +169,7 @@ const AUTHORING_GUIDANCE = Object.freeze([
   "For design and change questions, connect the documented problem, choice, reasons, alternatives and consequences where supported. State which revision introduced, corrected or retained each relevant behavior, distinguishing completed changes from pending work. If a reason, alternative, revision or measurement is not recorded, identify that specific limit instead of supplying a plausible explanation.",
   "For behavioral questions, carry the applicable conditions, defaults, fallback branches, empty or invalid inputs, exceptions, recovery and partial-result behavior into the answer. Explain compatibility obligations and preserved behavior where documented; a high-level summary must not replace these operative details.",
   "Separate a component's responsibility and output from the domain operation it represents, and recorded implementation from actually executed verification. Tie test results to their recorded revision and scope; generated output, a success label or a test definition alone does not prove execution or domain success. Next-work prose should identify what remains, what completed behavior must be preserved and what evidence must be rechecked.",
+  "Before committing either source-first inventory, challenge absolute or unqualified guarantees against the selected sources' detailed limits, failure branches and recovery paths. An overview sentence is not sufficient evidence that a guarantee is unconditional. Put applicable qualifiers and their supporting evidence in the inventory item itself, not only in later prose. Before accepting the inventory union, independently re-open that evidence and check whether a documented condition defeats any proposed guarantee. If the frozen inventory omits a necessary condition, preserve an inventory-defect finding even when corrected prose already explains it; do not repair the frozen list or silently restart. " +
   "Keep each inventory item focused on a distinct substantive proposition together with its necessary qualifiers and evidence. Avoid near-duplicate items within a question and category. Review all seven categories, but use justified not-applicable for irrelevant categories; category presence does not require inventing an item. Every linked requirement must be declared for that question and have at least one matching evidence ID from its current selected source. Prior evidence may supplement an item but cannot alone satisfy a current source requirement. Use inspect coverage to find eligible evidence; choose links based on the actual statement. For coverage inspection, use {\"schemaVersion\":\"buildlore.knowledge-authoring-inspection-request.v1\",\"projectId\":\"<exchange.projectId>\",\"questionId\":\"<question.id>\",\"operation\":\"coverage\",\"limit\":50,\"maxBytes\":65536} with the completeness exchange digest. Inventory validation diagnostics use zero-based question, category, item and requirement indices. Repair only a caller-owned draft using its exact draftDigest and an explicit replacement item, then resubmit against the unchanged stage digest. Accepted inventories remain frozen.",
   "During omission review, compare each required proposition and its qualifiers with the actual mapped claim text, then check the whole question against the selected sources. If a necessary qualifier is absent, judge the item partial or missing even when its identifiers and citations are valid. A review packet, when present, is a read-only join of the frozen items, current prose and evidence, not a coverage verdict; it cannot replace checking for inventory defects."
 ]);
@@ -148,7 +177,7 @@ const AUTHORING_GUIDANCE = Object.freeze([
 // Internal, derived convenience view only. Never persisted or used to decide a
 // verdict. Stop assembling it at the cap and retain the ordinary role material.
 const REVIEW_PACKET_BYTES = 262_144;
-function reviewPacket(exchange: KnowledgeCompletenessExchangeV1, accepted: KnowledgeCompletenessAcceptedInventoryV1,
+function reviewPacket(exchange: KnowledgeCompletenessExchange, accepted: KnowledgeCompletenessAcceptedInventoryV1,
   proposal: KnowledgeProposalV1, mapping: KnowledgeCompletenessProseMappingV1) {
   const mappings = new Map(mapping.items.map(item => [item.itemId, item]));
   const records = new Map([...exchange.baseExchange.previousRecords, ...proposal.facts].map(fact => [fact.id, fact]));
@@ -207,24 +236,28 @@ function reviewPacket(exchange: KnowledgeCompletenessExchangeV1, accepted: Knowl
 }
 
 export type KnowledgeCompletenessPrepareInput = Omit<Parameters<ReturnType<typeof createKnowledgeSessionService>['prepare']>[0],
-  'authoringQuestions' | 'rendererVersion'> & Readonly<{ authoringQuestions: readonly KnowledgeAuthoringQuestion[]; runId?: string }>;
+  'authoringQuestions' | 'rendererVersion'> & Readonly<{ authoringQuestions: readonly KnowledgeAuthoringQuestion[]; runId?: string;
+    proofPolicy?: 'persisted-v1' | 'legacy-v1'; inventoryPolicy?: 'completeness-v1' | 'completeness-v2' }>;
 export function createKnowledgeCompletenessSessionService(options: Readonly<{ knowledgeRoot: string }>): Readonly<{
   prepare(input: KnowledgeCompletenessPrepareInput): Promise<KnowledgeCompletenessSessionV1>;
 }> {
   const service = createKnowledgeSessionService(options);
   return Object.freeze({ async prepare(input: KnowledgeCompletenessPrepareInput): Promise<KnowledgeCompletenessSessionV1> {
-    const { authoringQuestions, runId, ...baseInput } = input;
+    const { authoringQuestions, runId, proofPolicy, inventoryPolicy, ...baseInput } = input;
     return await wrapKnowledgeCompletenessSession(await service.prepare({ ...baseInput, rendererVersion: 'knowledge-markdown-v2' }),
-      authoringQuestions, runId ?? `run-${randomBytes(32).toString('hex')}`);
+      authoringQuestions, runId ?? `run-${randomBytes(32).toString('hex')}`, proofPolicy, inventoryPolicy);
   } });
 }
 
 /** @internal A caller-created base session cannot supply the required capability. */
 export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1, questions: unknown,
-  runId: string): Promise<KnowledgeCompletenessSessionV1> {
+  runId: string, proofPolicy: 'persisted-v1' | 'legacy-v1' = 'persisted-v1',
+  inventoryPolicy: 'completeness-v1' | 'completeness-v2' = 'completeness-v1'): Promise<KnowledgeCompletenessSessionV1> {
+  choice(proofPolicy, ['persisted-v1', 'legacy-v1']);
+  if (inventoryPolicy === 'completeness-v2' && proofPolicy !== 'persisted-v1') invalid();
   const core = requireKnowledgePreparedSessionCore(base);
   if (base.exchange.authoringQuestions !== undefined) invalid();
-  const exchange = createKnowledgeCompletenessExchange(base.exchange, questions, runId);
+  const exchange = createKnowledgeCompletenessExchange(base.exchange, questions, runId, inventoryPolicy);
   // Only exact, parsed generated identity fields are projected as their hash
   // components for screening. Original bytes remain in the bound artifact;
   // prose, arbitrary identifiers and all other metadata receive the full scan.
@@ -241,7 +274,10 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
   }
   const screen = (value: unknown): Promise<void> => core.screen(screeningValue(value));
   await screen(exchange);
-  let state = freezeState({ schemaVersion: 'buildlore.knowledge-completeness-state.v1', ...completenessBinding(exchange), revision: 0,
+  const stateVersion = inventoryPolicy === 'completeness-v2'
+    ? { schemaVersion: 'buildlore.knowledge-completeness-state.v2' as const, inventoryCorrections: Object.freeze([]), inventoryReReview: null }
+    : { schemaVersion: 'buildlore.knowledge-completeness-state.v1' as const };
+  let state = freezeState({ ...stateVersion, ...completenessBinding(exchange), revision: 0,
     shadowInventory: null, authorInventory: null, inventoryReview: null, reconciliation: null, acceptedInventory: null,
     attempts: Object.freeze([]), finalized: false, terminal: null });
   let generation: KnowledgeGenerationV1 | null = null;
@@ -256,8 +292,19 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
     }
     const material: Record<string, unknown> = {};
     if (role !== null) {
-      material.exchange = exchange;
-      if (role !== 'source-reviewer') material.authoringGuidance = AUTHORING_GUIDANCE;
+      material.exchange = knowledgeCompletenessExchangeView(exchange);
+      if (role !== 'source-reviewer') material.authoringGuidance = exchange.policyVersion === 'completeness-v1' ? AUTHORING_GUIDANCE :
+        [...AUTHORING_GUIDANCE.map(text => text.replace('do not repair the frozen list or silently restart.',
+          'use the explicit inventory correction stage after both reviews; do not silently restart.')), 'For completeness-v2, accepted inventories stay frozen within a cycle. A recorded inventory defect opens correct-inventory, at most twice per run. Preserve all earlier reviews and the original blind shadow. Correct or remove unsupported prose explicitly, retain supported required content, and independently review the entire corrected union plus every resolution before writing new prose.'];
+      if (state.schemaVersion === 'buildlore.knowledge-completeness-state.v2' && role !== 'source-reviewer') {
+        material.inventoryCorrection = state.inventoryCorrections.at(-1)?.correction ?? null;
+        material.inventoryReReview = state.inventoryReReview;
+        if (state.phase === 'awaiting-inventory-correction') {
+          const cycle = inventoryCycle(state);
+          material.inventoryCorrectionCause = completenessCorrectionCause(cycle);
+          material.requiredCorrectionTargets = requiredInventoryCorrectionTargets(cycle, cycle.authorInventory);
+        }
+      }
       if (role === 'completeness-reviewer') {
         material.shadowInventory = state.shadowInventory;
         if (state.authorInventory !== null) material.authorInventory = state.authorInventory;
@@ -273,6 +320,9 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
       if (current !== undefined) {
         material.proposal = current.submission.proposal;
         if (role !== 'source-reviewer') material.mapping = current.submission.mapping;
+        if (state.schemaVersion === 'buildlore.knowledge-completeness-state.v2' && role !== 'author') {
+          material.reviewSubmissionBinding = reviewBinding(role === 'source-reviewer' ? 'source' : 'completeness', state, current);
+        }
         if (role === 'source-reviewer') material.reviewTargets = knowledgeReviewTargets(current.submission.proposal);
         if (role === 'completeness-reviewer') material.completenessReview = current.completenessReview;
         if (role === 'source-reviewer') material.semanticReview = current.semanticReview;
@@ -294,10 +344,15 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
         if (pendingReviewRoles.includes('source-reviewer')) nextActions.push('source-review');
         break;
       case 'awaiting-correction': nextActions.push('correct'); break;
+      case 'awaiting-inventory-correction': nextActions.push('correct-inventory'); break;
       case 'review-ready': nextActions.push('finalize'); break;
       case 'finalized': case 'completeness-failed': break;
     }
-    const basis = { schemaVersion: 'buildlore.knowledge-completeness-stage-view.v1' as const, ...completenessBinding(exchange),
+    const version = state.schemaVersion === 'buildlore.knowledge-completeness-state.v2'
+      ? { schemaVersion: 'buildlore.knowledge-completeness-stage-view.v2' as const,
+        inventoryCorrectionCount: state.inventoryCorrections.length, inventoryCorrectionLimit: MAX_INVENTORY_CORRECTIONS }
+      : { schemaVersion: 'buildlore.knowledge-completeness-stage-view.v1' as const };
+    const basis = { ...version, ...completenessBinding(exchange),
       phase: state.phase, revision: state.revision, role, correctionCount: state.attempts.length > 1 ? 1 as const : 0 as const,
       pendingReviewRoles: Object.freeze(pendingReviewRoles), nextActions: Object.freeze(nextActions), stateDigest: state.stateDigest,
       terminal: state.terminal, disclosureBoundary: 'ordered-disclosure-declared-identities' as const, material: Object.freeze(material) };
@@ -314,11 +369,23 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
     }
     return result;
   }
+  function reviewBinding(kind: 'source' | 'completeness', state: KnowledgeCompletenessState,
+    attempt: KnowledgeCompletenessAttemptV1): CompletenessReviewBinding {
+    return { kind, inventoryCorrectionDigest: state.schemaVersion === 'buildlore.knowledge-completeness-state.v2'
+      ? state.inventoryCorrections.at(-1)?.correction.correctionDigest ?? null : null,
+    acceptedInventoryDigest: state.acceptedInventory?.acceptedInventoryDigest ?? invalid(),
+    proposalDigest: attempt.submission.proposal.proposalDigest, mappingDigest: attempt.submission.mapping.mappingDigest };
+  }
+  function correctionTerminal(cycle: KnowledgeCompletenessInventoryCycleV1, round: 0 | 1 | 2): KnowledgeCompletenessStateV1['terminal'] {
+    if (state.schemaVersion !== 'buildlore.knowledge-completeness-state.v2' ||
+      hasCompletenessRequiredSourceGap(exchange) || completenessInventorySourceGap(cycle)) return { code: 'inventory-defect', round };
+    return state.inventoryCorrections.length >= MAX_INVENTORY_CORRECTIONS ? { code: 'inventory-correction-exhausted', round } : null;
+  }
   async function status(role?: CompletenessRole): Promise<KnowledgeCompletenessStageViewV1> {
     const selected = role === undefined ? null : choice(role, ['author', 'completeness-reviewer', 'source-reviewer']);
     const result = view(selected); await screen(result); return result;
   }
-  async function commit(next: KnowledgeCompletenessStateV1, action?: () => Promise<void>): Promise<void> {
+  async function commit(next: KnowledgeCompletenessState, action?: () => Promise<void>): Promise<void> {
     // A transition must not commit before discovering that its resulting role
     // projection exceeds the closed view budget.
     for (const role of [null, 'author', 'completeness-reviewer', 'source-reviewer'] as const) view(role, next);
@@ -350,18 +417,31 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
         case 'inventory-review': {
           requirePhase('awaiting-inventory-review');
           const shadow = state.shadowInventory ?? invalid(), author = state.authorInventory ?? invalid();
-          const inventoryReview = parseKnowledgeCompletenessInventoryReview(input, exchange, shadow, author);
+          const step = state.schemaVersion === 'buildlore.knowledge-completeness-state.v2' ? state.inventoryCorrections.at(-1) : undefined;
+          const inventoryReReview = step === undefined ? null : parseKnowledgeCompletenessInventoryCorrectionReview(input, exchange, shadow, step);
+          const inventoryReview = inventoryReReview?.review ?? parseKnowledgeCompletenessInventoryReview(input, exchange, shadow, author);
+          const cycle: KnowledgeCompletenessInventoryCycleV1 = { authorInventory: author, inventoryReview, inventoryReReview,
+            reconciliation: null, acceptedInventory: null, attempts: [] };
           let acceptedInventory: KnowledgeCompletenessAcceptedInventoryV1 | null = null;
-          let terminal: KnowledgeCompletenessStateV1['terminal'] = inventoryReview.decision === 'unresolved'
-            ? { code: 'inventory-defect', round: 0 } : null;
-          if (inventoryReview.decision === 'accepted') {
+          let terminal = completenessCorrectionCause(cycle) !== null ? correctionTerminal(cycle, 0) : null;
+          if (inventoryReview.decision === 'accepted' && completenessCorrectionCause(cycle) === null) {
             try { acceptedInventory = acceptKnowledgeCompletenessInventory(exchange, shadow, author, inventoryReview, null); }
             catch (error) {
               if (!(error instanceof ProjectKnowledgeError) || error.code !== 'KNOWLEDGE_INVALID') throw error;
               terminal = { code: 'inventory-defect', round: 0 };
             }
           }
-          await commit(updated(state, { inventoryReview, acceptedInventory, terminal })); break;
+          await commit(updated(state, { inventoryReview, acceptedInventory, terminal,
+            ...(state.schemaVersion === 'buildlore.knowledge-completeness-state.v2' ? { inventoryReReview } : {}) })); break;
+        }
+        case 'correct-inventory': {
+          requirePhase('awaiting-inventory-correction');
+          if (state.schemaVersion !== 'buildlore.knowledge-completeness-state.v2' || state.inventoryCorrections.length >= MAX_INVENTORY_CORRECTIONS) invalid();
+          const previous = inventoryCycle(state);
+          const correction = parseKnowledgeCompletenessInventoryCorrection(input, exchange, state.shadowInventory ?? invalid(), previous);
+          await commit(updated(state, { inventoryCorrections: Object.freeze([...state.inventoryCorrections, Object.freeze({ previous, correction })]),
+            authorInventory: correction.authorInventory, inventoryReview: null, inventoryReReview: null,
+            reconciliation: null, acceptedInventory: null, attempts: Object.freeze([]), terminal: null })); break;
         }
         case 'reconcile': {
           requirePhase('awaiting-inventory-reconciliation');
@@ -390,26 +470,31 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
           const submission: KnowledgeCompletenessProseSubmissionV1 = Object.freeze({ schemaVersion: 'buildlore.knowledge-completeness-prose-submission.v1',
             projectId: exchange.projectId, runId, proposal, mapping, attempt, correctionOfReviewRoundDigest: previousRound?.reviewRoundDigest ?? null });
           const nextAttempt: KnowledgeCompletenessAttemptV1 = Object.freeze({ submission, completenessReview: null, semanticReview: null,
-            sourcePassed: null, reviewOrder: Object.freeze([]), reviewRound: null });
-          const coverage = exchange.authoringQuestions.map(q => ({ id: q.id, requirements: q.requirements,
+            sourcePassed: null, reviewOrder: Object.freeze([]), reviewRound: null,
+            ...(state.schemaVersion === 'buildlore.knowledge-completeness-state.v2' ? { reviewSubmissions: Object.freeze([]) } : {}) });
+          // The legacy coverage check needs declared source requirements. Profile
+          // questions without them remain bound by the inventory, mapping and reviews.
+          const coverage = exchange.authoringQuestions.filter(q => q.requirements.length > 0).map(q => ({ id: q.id, requirements: q.requirements,
             claimIds: [...new Set(accepted.requiredItems.flatMap((item, i) => item.questionId === q.id
               ? mapping.items[i]?.locators.map(l => l.claimId) ?? [] : []))].sort() }));
           await commit(updated(state, { attempts: Object.freeze([...state.attempts, nextAttempt]) }), async () => {
-            await base.submit(proposal, base.exchange.exchangeDigest, coverage);
+            await base.submit(proposal, base.exchange.exchangeDigest, coverage.length > 0 ? coverage : undefined);
           }); break;
         }
         case 'review': case 'source-review': {
           requirePhase('awaiting-initial-reviews', 'awaiting-correction-reviews');
           const accepted = state.acceptedInventory ?? invalid(), current = state.attempts.at(-1) ?? invalid();
+          const v2 = state.schemaVersion === 'buildlore.knowledge-completeness-state.v2';
+          const reviewInput = v2 ? completenessJson(input, 2_097_152).review : input;
           let next: KnowledgeCompletenessAttemptV1;
           if (action === 'review') {
             if (current.completenessReview !== null) invalid();
-            const completenessReview = parseKnowledgeCompletenessReview(input, exchange, accepted, current.submission.mapping, current.submission.attempt);
+            const completenessReview = parseKnowledgeCompletenessReview(reviewInput, exchange, accepted, current.submission.mapping, current.submission.attempt);
             next = { ...current, completenessReview, reviewOrder: Object.freeze([...current.reviewOrder, 'completeness']) };
           } else {
             if (current.semanticReview !== null) invalid();
             completenessJson(input, COMPLETENESS_LIMITS.prose);
-            const assessment = await core.assessReview(input, current.submission.proposal);
+            const assessment = await core.assessReview(reviewInput, current.submission.proposal);
             if (assessment.review.reviewer.sessionId === accepted.reviewer.sessionId ||
               (current.submission.attempt === 2 && digest(assessment.review.reviewer) !== digest(state.attempts[0]?.semanticReview?.reviewer))) {
               throw new ProjectKnowledgeError('KNOWLEDGE_REVIEW_REQUIRED');
@@ -417,9 +502,16 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
             next = { ...current, semanticReview: assessment.review, sourcePassed: assessment.passed,
               reviewOrder: Object.freeze([...current.reviewOrder, 'source']) };
           }
+          if (v2) {
+            const submitted = parseCompletenessReviewSubmission(input, exchange,
+              reviewBinding(action === 'review' ? 'completeness' : 'source', state, current),
+              (action === 'review' ? next.completenessReview : next.semanticReview) ?? invalid());
+            next = { ...next, reviewSubmissions: Object.freeze([...(current.reviewSubmissions ?? []), submitted]) };
+          }
           next = Object.freeze({ ...next, reviewRound: reviewRound(exchange, accepted, next) });
-          const terminal: KnowledgeCompletenessStateV1['terminal'] = next.completenessReview?.inventoryFindings.length
-            ? { code: 'inventory-defect', round: current.submission.attempt }
+          const inventoryDefect = Boolean(next.completenessReview?.inventoryFindings.length) && (!v2 || next.reviewRound !== null);
+          const terminal: KnowledgeCompletenessStateV1['terminal'] = inventoryDefect
+            ? correctionTerminal({ ...inventoryCycle(state), attempts: [...state.attempts.slice(0, -1), next] }, current.submission.attempt)
             : next.reviewRound !== null && current.submission.attempt === 2 &&
               (!next.reviewRound.completenessPassed || !next.reviewRound.sourcePassed)
               ? { code: 'review-exhausted', round: 2 } : null;
@@ -430,8 +522,15 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
     } finally { busy = false; }
   }
   const session: KnowledgeCompletenessSessionV1 = Object.freeze({ exchange, status,
-    async inspect(input: unknown, expectExchange: KnowledgeDigest): Promise<KnowledgeAuthoringInspection> {
+    async inspect(input: unknown, expectExchange: KnowledgeDigest): Promise<KnowledgeAuthoringInspection | KnowledgeCompletenessMaterialInspection> {
       if (expectExchange !== exchange.exchangeDigest) throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
+      if (isCompletenessMaterialRequest(input)) {
+        const request = parseKnowledgeCompletenessMaterialRequest(input, exchange.projectId);
+        const result = inspectKnowledgeCompletenessMaterial(exchange, request);
+        await screen(completenessMaterialScreeningValue(request));
+        await screen(result);
+        return result;
+      }
       const request = parseKnowledgeAuthoringInspectionRequest(input, exchange.projectId);
       const cursor = request.cursor?.split('-');
       const screenRequest = (): Promise<void> => screen({ ...request, cursor: cursor === undefined ? null : {
@@ -454,6 +553,7 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
     submitCompletenessReview: (input: unknown, expect: KnowledgeDigest) => mutate('review', input, expect),
     submitSourceReview: (input: unknown, expect: KnowledgeDigest) => mutate('source-review', input, expect),
     correctProse: (input: unknown, expect: KnowledgeDigest) => mutate('correct', input, expect),
+    correctInventory: (input: unknown, expect: KnowledgeDigest) => mutate('correct-inventory', input, expect),
     async finalize(input: unknown, expectStage: KnowledgeDigest): Promise<KnowledgeGenerationV1> {
       if (busy || hash(expectStage) !== view('author').stageViewDigest) throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
       busy = true;
@@ -468,7 +568,8 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
           r.reviewViewDigest !== expectStage) invalid();
         await screen(r);
         await commit(updated(state, { finalized: true }), async () => {
-          generation = await base.finalize(current.semanticReview, current.submission.proposal.proposalDigest);
+          generation = await base.finalize(current.semanticReview, current.submission.proposal.proposalDigest,
+            proofPolicy === 'legacy-v1' ? undefined : createKnowledgeCompletenessProof(exchange, state));
         });
         return generation ?? invalid();
       } finally { busy = false; }
@@ -480,35 +581,50 @@ export async function wrapKnowledgeCompletenessSession(base: KnowledgeSessionV1,
 
 /** @internal The confined persistence owner can archive full state; role views remain separate. */
 export async function captureKnowledgeCompletenessSession(session: KnowledgeCompletenessSessionV1): Promise<Readonly<{
-  state: KnowledgeCompletenessStateV1; generation: KnowledgeGenerationV1 | null;
+  state: KnowledgeCompletenessState; generation: KnowledgeGenerationV1 | null;
 }>> { return await (captures.get(session) ?? invalid())(); }
 
 /** @internal Reconstruct every stage using an actually prepared session, never just saved hashes. */
 export async function replayKnowledgeCompletenessSession(session: KnowledgeCompletenessSessionV1, value: unknown): Promise<void> {
   const input = completenessJson(value, COMPLETENESS_LIMITS.run);
+  const v2 = session.exchange.policyVersion === 'completeness-v2';
   keys(input, ['schemaVersion', 'projectId', 'runId', 'exchangeDigest', 'baseExchangeDigest', 'snapshotDigest', 'baselineGenerationDigest',
     'questionsDigest', 'revision', 'phase', 'shadowInventory', 'authorInventory', 'inventoryReview', 'reconciliation', 'acceptedInventory',
-    'attempts', 'finalized', 'terminal', 'stateDigest']);
-  if (input.schemaVersion !== 'buildlore.knowledge-completeness-state.v1' ||
+    'attempts', 'finalized', 'terminal', 'stateDigest', ...(v2 ? ['inventoryCorrections', 'inventoryReReview'] : [])]);
+  if (input.schemaVersion !== (v2 ? 'buildlore.knowledge-completeness-state.v2' : 'buildlore.knowledge-completeness-state.v1') ||
     input.exchangeDigest !== session.exchange.exchangeDigest || input.runId !== session.exchange.runId) throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
   const stage = async (role: CompletenessRole): Promise<KnowledgeDigest> => (await session.status(role)).stageViewDigest;
   if (input.shadowInventory !== null) await session.submitShadowInventory(input.shadowInventory, await stage('completeness-reviewer'));
-  if (input.authorInventory !== null) await session.submitAuthorInventory(input.authorInventory, await stage('author'));
-  if (input.inventoryReview !== null) await session.submitInventoryReview(input.inventoryReview, await stage('completeness-reviewer'));
-  if (input.reconciliation !== null) await session.reconcileInventory(input.reconciliation, await stage('author'));
-  for (const [index, raw] of list(input.attempts, 2).entries()) {
-    const a = record(raw);
-    keys(a, ['submission', 'completenessReview', 'semanticReview', 'sourcePassed', 'reviewOrder', 'reviewRound']);
-    if (index === 0) await session.submitProse(a.submission, await stage('author'));
-    else await session.correctProse(a.submission, await stage('author'));
-    const order = list(a.reviewOrder, 2).map(v => choice(v, ['completeness', 'source']));
-    if (new Set(order).size !== order.length || order.includes('completeness') !== (a.completenessReview !== null) ||
-      order.includes('source') !== (a.semanticReview !== null)) invalid();
-    for (const role of order) {
-      if (role === 'completeness') await session.submitCompletenessReview(a.completenessReview, await stage('completeness-reviewer'));
-      else await session.submitSourceReview(a.semanticReview, await stage('source-reviewer'));
+  async function replayCycle(cycle: Readonly<Record<string, unknown>>, first: boolean): Promise<void> {
+    if (first && cycle.authorInventory !== null) await session.submitAuthorInventory(cycle.authorInventory, await stage('author'));
+    if (cycle.inventoryReview !== null) await session.submitInventoryReview(v2 && cycle.inventoryReReview !== null
+      ? cycle.inventoryReReview : cycle.inventoryReview, await stage('completeness-reviewer'));
+    if (cycle.reconciliation !== null) await session.reconcileInventory(cycle.reconciliation, await stage('author'));
+    for (const [index, raw] of list(cycle.attempts, 2).entries()) {
+      const a = record(raw);
+      keys(a, ['submission', 'completenessReview', 'semanticReview', 'sourcePassed', 'reviewOrder', 'reviewRound', ...(v2 ? ['reviewSubmissions'] : [])]);
+      if (index === 0) await session.submitProse(a.submission, await stage('author'));
+      else await session.correctProse(a.submission, await stage('author'));
+      const order = list(a.reviewOrder, 2).map(v => choice(v, ['completeness', 'source']));
+      if (new Set(order).size !== order.length || order.includes('completeness') !== (a.completenessReview !== null) ||
+        order.includes('source') !== (a.semanticReview !== null)) invalid();
+      const submissions = v2 ? list(a.reviewSubmissions, 2) : [];
+      if (v2 && submissions.length !== order.length) invalid();
+      for (const [index, role] of order.entries()) {
+        if (role === 'completeness') await session.submitCompletenessReview(v2 ? submissions[index] : a.completenessReview, await stage('completeness-reviewer'));
+        else await session.submitSourceReview(v2 ? submissions[index] : a.semanticReview, await stage('source-reviewer'));
+      }
     }
   }
+  const corrections = v2 ? list(input.inventoryCorrections, MAX_INVENTORY_CORRECTIONS) : [];
+  for (const [index, raw] of corrections.entries()) {
+    const step = record(raw); keys(step, ['previous', 'correction']);
+    const previous = record(step.previous);
+    keys(previous, ['authorInventory', 'inventoryReview', 'inventoryReReview', 'reconciliation', 'acceptedInventory', 'attempts']);
+    await replayCycle(previous, index === 0);
+    await session.correctInventory(step.correction, await stage('author'));
+  }
+  await replayCycle(input, corrections.length === 0);
   if (input.finalized === true) {
     const captured = await captureKnowledgeCompletenessSession(session);
     const round = captured.state.attempts.at(-1)?.reviewRound ?? invalid(), expected = await stage('author');

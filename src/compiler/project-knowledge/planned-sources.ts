@@ -24,6 +24,7 @@ export async function preparePlannedKnowledgeSession(input: Readonly<{
   jsonKnowledgeAdapters?: readonly RegisteredJsonKnowledgeAdapterV1[];
   outputLanguage?: string;
   rendererVersion?: KnowledgeRendererVersion;
+  authoringMode?: 'wiki-v1';
   authoringQuestions?: readonly KnowledgeAuthoringQuestion[];
 }>): Promise<Readonly<{ plan: SessionCompilePlanV1; session: KnowledgeSessionV1 }>> {
   const compiler = createSessionCompilePlanner({ knowledgeRoot: input.knowledgeRoot, hubRoot: input.hubRoot, rejectCredentialFindings: true,
@@ -60,6 +61,7 @@ export async function preparePlannedKnowledgeSession(input: Readonly<{
     ...(input.previousGenerations === undefined ? {} : { previousGenerations: input.previousGenerations }),
     ...(input.previousHistory === undefined ? {} : { previousHistory: input.previousHistory }),
     ...(input.outputLanguage === undefined ? {} : { outputLanguage: input.outputLanguage }),
+    ...(input.authoringMode === undefined ? {} : { authoringMode: input.authoringMode }),
     ...(input.rendererVersion === undefined ? {} : { rendererVersion: input.rendererVersion }),
     ...(input.authoringQuestions === undefined ? {} : { authoringQuestions: input.authoringQuestions }),
   });
@@ -68,9 +70,10 @@ export async function preparePlannedKnowledgeSession(input: Readonly<{
 
 /** Explicit v4 admission reuses the selected-source and verified-history path. */
 export async function preparePlannedKnowledgeCompletenessSession(input: Omit<Parameters<typeof preparePlannedKnowledgeSession>[0],
-  'rendererVersion' | 'authoringQuestions'> & Readonly<{ runId: string; authoringQuestions: readonly KnowledgeAuthoringQuestion[] }>):
+  'rendererVersion' | 'authoringQuestions'> & Readonly<{ runId: string; authoringQuestions: readonly KnowledgeAuthoringQuestion[];
+    proofPolicy?: 'persisted-v1' | 'legacy-v1'; inventoryPolicy?: 'completeness-v1' | 'completeness-v2' }>):
   Promise<Readonly<{ plan: SessionCompilePlanV1; session: KnowledgeCompletenessSessionV1 }>> {
-  const { runId, authoringQuestions, ...baseInput } = input;
+  const { runId, authoringQuestions, proofPolicy, inventoryPolicy, ...baseInput } = input;
   const { plan, session } = await preparePlannedKnowledgeSession({ ...baseInput, rendererVersion: 'knowledge-markdown-v2' });
-  return Object.freeze({ plan, session: await wrapKnowledgeCompletenessSession(session, authoringQuestions, runId) });
+  return Object.freeze({ plan, session: await wrapKnowledgeCompletenessSession(session, authoringQuestions, runId, proofPolicy, inventoryPolicy) });
 }

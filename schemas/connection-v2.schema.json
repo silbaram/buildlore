@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.dev/schemas/connection-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "knowledgeRepository",
+    "knowledgeRepositoryDigest",
+    "projectId",
+    "mode"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "buildlore.connection.v2"
+    },
+    "knowledgeRepository": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+      "description": "Credential-free portable Git repository locator; validated by the BuildLore repository-locator contract. Exact UTF-8 identity; no URL alias inference."
+    },
+    "knowledgeRepositoryDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "not": {
+        "enum": [
+          "knowledge",
+          "manifest",
+          "projects",
+          "shared"
+        ]
+      }
+    },
+    "mode": {
+      "const": "knowledge"
+    }
+  }
+}

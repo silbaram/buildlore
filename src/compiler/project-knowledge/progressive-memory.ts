@@ -16,7 +16,7 @@ interface Oversized extends Position {
   readonly cursor: string; readonly requiredBytes: number; readonly exceedsMaximum: boolean;
 }
 export interface KnowledgeProgressiveMemoryV1 extends Omit<Full, 'schemaVersion' | 'pages' | 'evidenceContext'> {
-  readonly schemaVersion: 'buildlore.knowledge-progressive-memory.v1';
+  readonly schemaVersion: 'buildlore.knowledge-progressive-memory.v1' | 'buildlore.knowledge-progressive-memory.v2';
   readonly requestDigest: KnowledgeDigest;
   readonly selectionStrategy: 'lexical-claim-v1' | 'lexical-claim-v2';
   readonly units: readonly Unit[];
@@ -121,8 +121,8 @@ export function knowledgeProgressiveMemory(generation: KnowledgeGenerationV1,
     const { facts, evidence, sources, evidenceContext } = selectMemoryReferences(full, factAliases);
     const { pages, memoryDigest: oldDigest, ...base } = full;
     void pages;
-    const basis = { ...base, schemaVersion: 'buildlore.knowledge-progressive-memory.v1' as const,
-      instructions: INSTRUCTIONS, requestDigest: digest({ task, maxBytes: limit, cursor: cursor ?? null }),
+    const basis = { ...base, schemaVersion: generation.wikiProof === undefined ? 'buildlore.knowledge-progressive-memory.v1' as const : 'buildlore.knowledge-progressive-memory.v2' as const,
+      instructions: generation.wikiProof === undefined ? INSTRUCTIONS : full.instructions, requestDigest: digest({ task, maxBytes: limit, cursor: cursor ?? null }),
       selectionStrategy, units: Object.freeze(units), facts, evidence,
       sources, evidenceContext,
       coverage: Object.freeze({ isSelective: true as const, partial: selected.length < totalClaims, totalClaims,

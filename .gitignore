@@ -7,6 +7,9 @@
 # Keep these files in the local workspace or project knowledge repository, not in Git.
 plans/
 
+# User knowledge checkout is separate from product source tracking.
+/knowledge/
+
 # BuildLore hub-local project bindings (never commit machine paths)
 /.buildlore/local-projects.json
 /.buildlore/local-projects.json.lock

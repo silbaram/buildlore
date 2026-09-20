@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.dev/schemas/read-connections-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "hubs",
+    "bindings"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "buildlore.read-connections.v2"
+    },
+    "hubs": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "knowledgeRepository",
+              "knowledgeRepositoryDigest",
+              "hubRoot"
+            ],
+            "properties": {
+              "knowledgeRepository": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                "description": "Credential-free portable Git repository locator; validated by the BuildLore repository-locator contract. Exact UTF-8 identity; no URL alias inference."
+              },
+              "knowledgeRepositoryDigest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "hubRoot": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                "description": "Canonical absolute PC-local path; no symlink components. Runtime validates platform-specific absolute path semantics."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "knowledgeRepository",
+              "knowledgeRepositoryDigest",
+              "hubRoot",
+              "mode"
+            ],
+            "properties": {
+              "knowledgeRepository": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                "description": "Credential-free portable Git repository locator; validated by the BuildLore repository-locator contract. Exact UTF-8 identity; no URL alias inference."
+              },
+              "knowledgeRepositoryDigest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "hubRoot": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                "description": "Canonical absolute PC-local path; no symlink components. Runtime validates platform-specific absolute path semantics."
+              },
+              "mode": {
+                "const": "knowledge"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceRoot",
+          "sourceRepositoryDigest",
+          "knowledgeRepositoryDigest",
+          "projectId",
+          "connectionDigest",
+          "sourceIdentity"
+        ],
+        "properties": {
+          "sourceRoot": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+            "description": "Canonical absolute PC-local path; no symlink components. Runtime validates platform-specific absolute path semantics."
+          },
+          "sourceRepositoryDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "knowledgeRepositoryDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "not": {
+              "enum": [
+                "knowledge",
+                "manifest",
+                "projects",
+                "shared"
+              ]
+            }
+          },
+          "connectionDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "sourceIdentity": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "device",
+              "inode",
+              "gitCommonDir"
+            ],
+            "properties": {
+              "device": {
+                "type": "string",
+                "pattern": "^[0-9]+$"
+              },
+              "inode": {
+                "type": "string",
+                "pattern": "^[0-9]+$"
+              },
+              "gitCommonDir": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                "description": "Canonical absolute PC-local path; no symlink components. Runtime validates platform-specific absolute path semantics."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

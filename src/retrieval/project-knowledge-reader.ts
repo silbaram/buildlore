@@ -1,3 +1,5 @@
+import { knowledgeWikiAssessment, knowledgeWikiReadMetadata } from '../compiler/project-knowledge/wiki-contracts.js';
+import { knowledgeWikiRoot } from '../compiler/project-knowledge/wiki-projection.js';
 import { knowledgeReaderLookupBatch, validateLookupBatch, type KnowledgeReaderLookupBatchV1, type LookupBatchOptions } from '../compiler/project-knowledge/lookup-batch.js';
 import { measureRead, type ReadObserver } from './read-observer.js';
 import { assertReadActive } from '../application/read-cancellation.js';
@@ -28,7 +30,9 @@ import type { KnowledgeDigest, KnowledgeGenerationV1, KnowledgePageV1,
   KnowledgeRecordV1, KnowledgeEvidenceV1 } from '../knowledge/project-knowledge/types.js';
 
 export interface KnowledgeWikiPageView {
-  readonly schemaVersion: 'buildlore.project-knowledge-wiki-page.v1';
+  readonly schemaVersion: 'buildlore.project-knowledge-wiki-page.v1' | 'buildlore.project-knowledge-wiki-page.v2';
+  readonly knowledgeReview?: NonNullable<ReturnType<typeof knowledgeWikiReadMetadata>['knowledgeReview']>;
+  readonly reviewFindings?: ReturnType<typeof knowledgeWikiAssessment>;
   readonly projectId: string;
   readonly generationDigest: KnowledgeDigest;
   readonly pageId: string;
@@ -101,7 +105,7 @@ function createReader(knowledgeRoot: string, options: CreateKnowledgeWikiReaderO
     const result = await security.prepareSource({ projectId, source, sourceKind: 'wiki',
       body, bodyDigest: sha256(body), sourceRevisionOrContentSha256: sha256(body) });
     const approved = result.ok ? consumePreparedSource(result.prepared) : null;
-    if (!approved || approved.approvedBody !== body || approved.policyDigest !== policyDigest || approved.untrustedData) invalid();
+    if (!approved || approved.approvedBody !== body || approved.policyDigest !== policyDigest) invalid();
   };
   const load = async (projectId: string) => {
     if (selected && selected.projectId !== projectId) invalid();
@@ -149,7 +153,9 @@ function createReader(knowledgeRoot: string, options: CreateKnowledgeWikiReaderO
     const ids = new Set(claims.flatMap((c) => c.factIds));
     const facts = generation.records.filter((f) => ids.has(f.id));
     const evidenceIds = new Set(facts.flatMap((f) => f.evidenceIds));
-    return { schemaVersion: 'buildlore.project-knowledge-wiki-page.v1', projectId: generation.projectId,
+    return { schemaVersion: generation.wikiProof === undefined ? 'buildlore.project-knowledge-wiki-page.v1' : 'buildlore.project-knowledge-wiki-page.v2',
+      ...knowledgeWikiReadMetadata(generation),
+      ...(generation.wikiProof === undefined ? {} : { reviewFindings: knowledgeWikiAssessment(generation) }), projectId: generation.projectId,
       generationDigest: generation.generationDigest, pageId, role: page.role, title: page.title,
       markdown: renderKnowledgeFiles(generation).find((f) => f.path === `${page.role}.md`)?.body ?? invalid(),
       claims, facts, evidence: generation.evidence.filter((e) => evidenceIds.has(e.evidenceId)), egress: 'none' };
@@ -214,10 +220,11 @@ function createReader(knowledgeRoot: string, options: CreateKnowledgeWikiReaderO
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) invalid();
       const mappings = loaded.extension.pageMappings;
       const cursorFor = (offset: number) => `knowledge-${digest({ projectId, generationDigest: loaded.generation.generationDigest, offset }).slice(7)}`;
-      const start = options.cursor === undefined ? 0 : [1, 2].find((offset) => cursorFor(offset) === options.cursor) ?? invalid();
-      const end = Math.min(start + limit, 3);
-      return { schemaVersion: 'buildlore.project-knowledge-wiki-list.v1', projectId,
-        generationDigest: loaded.generation.generationDigest, cursor: end < 3 ? cursorFor(end) : null, total: 3,
+      const start = options.cursor === undefined ? 0 : Array.from({ length: mappings.length - 1 }, (_, i) => i + 1).find((offset) => cursorFor(offset) === options.cursor) ?? invalid();
+      const end = Math.min(start + limit, mappings.length);
+      return { schemaVersion: loaded.generation.wikiProof === undefined ? 'buildlore.project-knowledge-wiki-list.v1' : 'buildlore.project-knowledge-wiki-list.v2',
+        ...knowledgeWikiReadMetadata(loaded.generation), projectId,
+        generationDigest: loaded.generation.generationDigest, cursor: end < mappings.length ? cursorFor(end) : null, total: mappings.length,
         pages: mappings.slice(start, end).map((mapping) => ({ pageId: mapping.pageId, role: mapping.role,
           path: `wiki/buildlore-hierarchy/${mapping.role}.md`,
           title: loaded.generation.pages.find((p) => p.role === mapping.role)?.title ?? invalid() })), egress: 'none' };
@@ -233,7 +240,8 @@ function createReader(knowledgeRoot: string, options: CreateKnowledgeWikiReaderO
     async citations(projectId, pageRef) {
       const page = await reader.read(projectId, pageRef);
       if (!page) return null;
-      return { schemaVersion: 'buildlore.project-knowledge-wiki-citations.v1', projectId,
+      return { schemaVersion: page.knowledgeReview === undefined ? 'buildlore.project-knowledge-wiki-citations.v1' : 'buildlore.project-knowledge-wiki-citations.v2',
+        ...(page.knowledgeReview === undefined ? {} : { knowledgeReview: page.knowledgeReview, reviewFindings: page.reviewFindings }), projectId,
         generationDigest: page.generationDigest, pageId: page.pageId, role: page.role,
         claims: page.claims, facts: page.facts, evidence: page.evidence, egress: 'none' };
     },
@@ -270,7 +278,8 @@ function createReader(knowledgeRoot: string, options: CreateKnowledgeWikiReaderO
           current.projection.projectionDigest !== loaded.publication.projection.projectionDigest ||
           (await readSecurityPolicy(knowledgeRoot, projectId)).digest !== loaded.policy.digest) invalid();
       }
-      const basis = { ...result, schemaVersion: 'buildlore.project-knowledge-search.v2',
+      const basis = { ...result, schemaVersion: loaded.generation.wikiProof === undefined ? 'buildlore.project-knowledge-search.v2' : 'buildlore.project-knowledge-search.v3',
+        ...knowledgeWikiReadMetadata(loaded.generation),
         semanticRelevancePolicy: mode === 'semantic' || mode === 'hybrid' ? KNOWLEDGE_SEMANTIC_RELEVANCE_V2 : null,
         supportScope: 'matched-section' as const,
         requestedMode: mode, generationDigest: loaded.generation.generationDigest,
@@ -287,8 +296,8 @@ function createReader(knowledgeRoot: string, options: CreateKnowledgeWikiReaderO
           // The hierarchy's overview contains reviewed child summaries. Expose
           // their original pages and fact state instead of pretending the text
           // is a claim in the named overview Markdown.
-          const inheritedClaims = mapping.role === 'overview' && hit.locator.sectionId === 'knowledge-0'
-            ? loaded.generation.pages.filter((p) => p.role !== 'overview').map((child) => {
+          const inheritedClaims = mapping.role === knowledgeWikiRoot(loaded.generation) && hit.locator.sectionId === 'knowledge-0'
+            ? loaded.generation.pages.filter((p) => p.role !== knowledgeWikiRoot(loaded.generation)).map((child) => {
             const childMapping = loaded.extension.pageMappings.find((m) => m.role === child.role) ?? invalid();
             const claim = child.sections[0]?.claims[0] ?? invalid();
             const facts = loaded.generation.records.filter((fact) => claim.factIds.includes(fact.id));
