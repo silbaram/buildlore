@@ -114,6 +114,38 @@ Direct workspaces track knowledge commits, generations and approval history. The
 
 Developer verification: `npm run verify:installed-workspace` installs the tarball into a temporary knowledge repository and executes authoring, approval, activation, a publication commit and two-project MCP reads. On Linux it hides the product source and blocks writes/network for MCP. It uses deterministic protocol fixtures, not a paid AI quality evaluation.
 
+### Register directories instead of individual files
+
+Prefer one declaration per selected directory and document kind. These examples
+run in the knowledge checkout and refer to folders in the bound source project:
+
+```sh
+npx --no buildlore source add --project my-project --id docs --kind markdown --path docs --json
+npx --no buildlore source add --project my-project --id code --kind code --path src --json
+npx --no buildlore source add --project my-project --id checks --kind code --path test --json
+npx --no buildlore source add --project my-project --id readme --kind markdown --path README.md --json
+```
+
+Choose only folders relevant to the project; `src` and `test` are code examples,
+not mandatory selections. New directories include subdirectories by default and
+store `recursive: true`. New matching files are collected on the next sync without
+editing `sources.json`. For a mixed folder, add a declaration for each selected
+kind (`markdown`, `text`, `code`, or `json`). Use `--no-recursive` for direct files
+only, or a file path for a specific document. `--recursive` remains supported;
+combining both recursion flags is an error.
+
+Code filenames such as `tokens.ts` and `source-secret-masking.test.ts` are allowed.
+Credential storage paths and actual credential values in paths remain blocked;
+the complete file content still passes through the sanitizer.
+
+Existing directory declarations keep their original scope when re-added without
+an option. Existing manifests with an omitted `recursive` still mean direct files
+only; sync does not rewrite them. Conflicting changes to an existing declaration
+ID are rejected. Avoid overlapping file/folder declarations. Converting existing
+file selections to a folder expands scope and changes source identities; preserve
+custom JSON metadata and preview with `source list` and `sync --dry-run` before
+applying. Approved Wiki content is updated through a separate authoring workflow.
+
 ### Restore on another PC or in a fresh clone
 
 A local `.tgz` installation records a file path in npm metadata. A Git clone followed by `npm ci` is insufficient when that original tarball path is unavailable. **Deliver the same tarball separately**, then reinstall from its new location:
@@ -324,6 +356,36 @@ LF. Keep top-level fields in this order: `projectId`, `schemaVersion`,
 `pathType`; a directory declaration may add `recursive` last. Sort `sources` by its
 unique ASCII `id`. BuildLore rejects a semantically equivalent file if its field
 order, declaration order, indentation, or newline bytes are not canonical.
+
+#### Long Markdown, text, and code files
+
+`sync` keeps long generic sources in full. It checks and sanitizes the entire
+selected document, then saves deterministic fragments below the compiler's
+100,000 UTF-16-unit limit and the Wiki input byte limit. Headings, paragraphs,
+and line boundaries are preferred; oversized lines are split without breaking
+Unicode characters. Continued ordinary code fences are reopened in each fragment.
+
+Fragments use `buildlore.source.v4` with the original source identity, sequence,
+payload offsets, full-content digest, and original line/column mappings. The
+payloads concatenate to the normalized, sanitized original; generated fence
+wrappers are excluded. Short documents and existing v1/v2/v3 sources remain
+readable. The raw-file selection limit remains 8 MiB; aggregate, evidence-count,
+and inspection-response limits still apply.
+
+After updating BuildLore in the knowledge checkout, run:
+
+```sh
+npx --no buildlore sync --project my-project --dry-run
+npx --no buildlore sync --project my-project
+```
+
+The preview includes `remove` entries for obsolete fragments of a selected
+source. Apply writes replacements before removing those fragments. If a sync
+is interrupted, rerun it; compilation rejects incomplete or mixed fragment sets.
+Resync replaces previously truncated inputs, but leaves approved Wiki generations
+unchanged. Start a new `compile wiki` run to include the recovered tail, then use
+the existing review, approval, activation, and MCP reading workflow. JSON and
+Plan2Agent-specific source contracts keep their existing limits and behavior.
 
 #### Generic JSON and JSON knowledge adapters
 

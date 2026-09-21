@@ -16,6 +16,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
+import { runCli } from '../src/cli/run-cli.js';
 import { createSourceCollectionAdapter } from '../src/projector/collection-adapters.js';
 import {
   createSourceManagement,
@@ -84,6 +85,96 @@ afterEach(async () => {
 });
 
 describe('general source management', () => {
+  it('syncs credential-related code filenames but still blocks credential content before writes', async () => {
+    const current = await fixture();
+    for (const name of ['tokens.ts', 'source-secret-masking.test.ts']) {
+      await writeFile(join(current.sourceRoot, 'docs', name), 'export const tokens = 3;\n');
+    }
+    const service = createSourceManagement({ hubRoot: current.hubRoot });
+    await service.add({ id: 'code', kind: 'code', path: 'docs', projectId: 'alpha' });
+    const sync = createProjectSyncService();
+    await sync.sync({ hubRoot: current.hubRoot, projectId: 'alpha', dryRun: false });
+    const sources = join(current.hubRoot, 'knowledge/projects/alpha/sources');
+    const readSources = async () => Promise.all((await readdir(sources)).sort().map(async name =>
+      [name, await readFile(join(sources, name), 'utf8')]));
+    const before = await readSources();
+    const value = ['gh', 'p_', 'A1b2C3d4E5f6G7h8J9k0', 'LmNoPq'].join('');
+    await writeFile(join(current.sourceRoot, 'docs/tokens.ts'), `export const value = '${value}';\n`);
+    await expect(sync.sync({ hubRoot: current.hubRoot, projectId: 'alpha', dryRun: false }))
+      .rejects.toMatchObject({ code: 'SYNC_SANITIZATION_FAILED' });
+    expect(await readSources()).toEqual(before);
+    expect(JSON.stringify(before).includes(value)).toBe(false);
+  }, 30_000);
+
+  it('registers a directory once and syncs existing and newly added nested code', async () => {
+    const current = await fixture();
+    const service = createSourceManagement({ hubRoot: current.hubRoot });
+    await mkdir(join(current.sourceRoot, 'docs/nested'));
+    await writeFile(join(current.sourceRoot, 'docs/nested/helper.ts'), 'export const helper = 1;\n');
+    await writeFile(join(current.sourceRoot, 'outside.ts'), 'export const outside = 1;\n');
+    const result = await service.add({ id: 'code', kind: 'code', path: 'docs', projectId: 'alpha' });
+    expect(result.declarations).toEqual([expect.objectContaining({
+      id: 'code', path: 'docs', pathType: 'directory', recursive: true,
+    })]);
+    const manifestPath = join(current.sourceRoot, '.buildlore/sources.json');
+    const before = await readFile(manifestPath, 'utf8');
+    const sync = createProjectSyncService();
+    await sync.sync({ hubRoot: current.hubRoot, projectId: 'alpha', dryRun: false });
+    await writeFile(join(current.sourceRoot, 'docs/nested/later.ts'), 'export const later = 2;\n');
+    const changes = await service.diff('alpha');
+    expect(changes.records.map(r => [r.sourceRef, r.status])).toEqual([
+      ['docs/nested/helper.ts', 'unchanged'], ['docs/nested/later.ts', 'added'],
+      ['docs/tool.ts', 'unchanged'],
+    ]);
+    await sync.sync({ hubRoot: current.hubRoot, projectId: 'alpha', dryRun: false });
+    expect((await service.diff('alpha')).records.every(r => r.status === 'unchanged')).toBe(true);
+    expect(await readFile(manifestPath, 'utf8')).toBe(before);
+  }, 30_000);
+
+  it.each([undefined, false, true])('preserves existing directory recursion %s on re-registration', async recursive => {
+    const current = await fixture();
+    const service = createSourceManagement({ hubRoot: current.hubRoot });
+    const manifestPath = join(current.sourceRoot, '.buildlore/sources.json');
+    const manifest = parseSourceCollectionManifestV2({
+      projectId: 'alpha', schemaVersion: 'buildlore.sources.v2',
+      sourceRepository: 'https://example.test/alpha.git', sources: [{
+        adapterId: 'buildlore.generic', adapterVersion: 1, id: 'docs', kind: 'markdown',
+        path: 'docs', pathType: 'directory', ...(recursive === undefined ? {} : { recursive }),
+      }],
+    });
+    const before = serializeCanonicalJson(manifest);
+    await writeFile(manifestPath, before);
+    const input = { id: 'docs', kind: 'markdown' as const, path: 'docs', projectId: 'alpha' };
+    await expect(service.add(input)).resolves.toMatchObject({ outcome: 'unchanged' });
+    await expect(service.add({ ...input, recursive: recursive === true }))
+      .resolves.toMatchObject({ outcome: 'unchanged' });
+    await expect(service.add({ ...input, recursive: recursive !== true }))
+      .rejects.toMatchObject({ code: 'SOURCE_DECLARATION_CONFLICT' });
+    expect(await readFile(manifestPath, 'utf8')).toBe(before);
+  }, 30_000);
+
+  it('honors non-recursive CLI selection and still accepts individual files', async () => {
+    const current = await fixture();
+    await mkdir(join(current.sourceRoot, 'docs/nested'));
+    await writeFile(join(current.sourceRoot, 'docs/nested/guide.md'), '# Nested\n');
+    const run = async (args: string[]) => {
+      let output = '';
+      const exitCode = await runCli(args, { stdout: v => { output += v; }, stderr: v => { output += v; } },
+        { cwd: current.hubRoot });
+      expect(exitCode, output).toBe(0);
+    };
+    await run(['source', 'add', '--project', 'alpha', '--id', 'docs', '--kind', 'markdown',
+      '--path', 'docs', '--no-recursive', '--json']);
+    const service = createSourceManagement({ hubRoot: current.hubRoot });
+    expect((await service.diff('alpha')).records.map(r => r.sourceRef))
+      .toEqual(['docs/guide.md', 'docs/other.md']);
+    expect((await service.list('alpha')).declarations[0]).toMatchObject({ recursive: false });
+    await run(['source', 'add', '--project', 'alpha', '--id', 'nested', '--kind', 'markdown',
+      '--path', 'docs/nested/guide.md', '--json']);
+    expect((await service.diff('alpha')).records.map(r => r.sourceRef))
+      .toContain('docs/nested/guide.md');
+  }, 30_000);
+
   it('adds, lists, diffs, and normalizes generic sources deterministically', async () => {
     const current = await fixture();
     const service = createSourceManagement({ hubRoot: current.hubRoot });

@@ -43,6 +43,7 @@ export async function preparePlannedKnowledgeSession(input: Readonly<{
     if (!result.ok || result.report.outputDigest !== planned.sanitizedContentDigest ||
         result.report.policyDigest !== plan.policyDigest) invalid();
     const source: KnowledgeSourceV1 = {
+      ...(planned.chunk === undefined ? {} : { chunk: planned.chunk, originMappings: planned.originMappings ?? [] }),
       sourceId: planned.sourceId, sourceRef: planned.sourceRef,
       sourceContentDigest: planned.originalContentDigest,
       // The checkout HEAD is metadata, not proof of the working source or tests.

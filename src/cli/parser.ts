@@ -115,7 +115,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     'source.add',
     ['--project', '--id', '--kind', '--path'],
     ['--project', '--id', '--kind', '--path'],
-    ['--recursive'],
+    ['--recursive', '--no-recursive'],
     {},
     '--project',
   ),
@@ -728,6 +728,9 @@ function validateSourceOptions(
     return;
   }
   if (operation !== 'source.add') return;
+  if (values['--recursive'] === true && values['--no-recursive'] === true) {
+    throw new CliUsageError('CLI_OPTION_CONFLICT');
+  }
   const id = values['--id'];
   const kind = values['--kind'];
   const path = values['--path'];

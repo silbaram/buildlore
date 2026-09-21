@@ -275,7 +275,8 @@ describe('selected source collection adapters', () => {
     });
     expect(candidate?.sourceUri).toMatch(/^buildlore\+source:\//u);
     expect(candidate?.target).toMatch(/^markdown--[a-f0-9]{64}\.md$/u);
-    expect(candidate?.canonicalDocument.truncated).toBe(true);
+    expect(candidate?.canonicalDocument.truncated).toBeUndefined();
+    expect(candidate?.canonicalDocument.buildlore.chunk).toMatchObject({ index: 1, count: 2 });
     expect(candidate?.canonicalDocument.buildlore.contentHash).toMatch(/^sha256:/u);
     const serialized = JSON.stringify(first);
     expect(serialized).not.toContain(current.sourceRoot);

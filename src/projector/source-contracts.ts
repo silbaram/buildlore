@@ -1,3 +1,4 @@
+import { hasProtectedCredentialPath } from './source-path-policy.js';
 import { posix, win32 } from 'node:path';
 
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
@@ -193,8 +194,6 @@ const EVIDENCE_KINDS = new Set<SourceEvidenceKind>([
 ]);
 const SAFE_SOURCE_URI_PATTERN = /^[\u0020-\u007e]{1,4096}$/u;
 const WINDOWS_DRIVE_PREFIX_PATTERN = /^[A-Za-z]:/u;
-const CREDENTIAL_PATH_PATTERN =
-  /(?:^|[/_.-])(?:api[-_]?key|authorization|bearer|credentials?|password|private[-_]?key|refresh[-_]?token|secrets?|tokens?|access[-_]?token)(?:$|[/_.-])/iu;
 
 function fail(message: string): never {
   throw new ProjectionError('PROJECTION_ARTIFACT_INVALID', message);
@@ -282,7 +281,7 @@ export function validatePortableSourceRef(value: unknown): string {
     segments[0] === 'wiki' ||
     segments[0] === 'export' ||
     segments[0] === 'exports' ||
-    CREDENTIAL_PATH_PATTERN.test(value) ||
+    hasProtectedCredentialPath(value) ||
     hasUnsafeCharacter(value)
   ) return fail('Source reference is invalid.');
   return value;

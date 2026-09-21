@@ -1,3 +1,5 @@
+import type { SourceChunk } from '../../projector/types.js';
+import type { SourceRangeMappingV1 } from '../../projector/source-contracts.js';
 /** Language-neutral contracts. Construction alone does not grant persistence authority. */
 export type KnowledgeDigest = `sha256:${string}`;
 export type KnowledgeClassification = 'observed' | 'declared' | 'inferred';
@@ -8,6 +10,8 @@ export type KnowledgePageRole = string;
 export type KnowledgeRendererVersion = 'knowledge-markdown-v1' | 'knowledge-markdown-v2' | 'knowledge-markdown-v3';
 
 export interface KnowledgeSourceV1 {
+  readonly chunk?: SourceChunk;
+  readonly originMappings?: readonly SourceRangeMappingV1[];
   readonly sourceId: string;
   readonly sourceRef: string;
   readonly sourceContentDigest: KnowledgeDigest;
@@ -19,13 +23,13 @@ export interface KnowledgeSourceV1 {
   readonly format: 'markdown' | 'json';
   readonly content: string;
   /** Projector-provided JSON origin of an exact sanitized projected line. */
-  readonly origins?: readonly KnowledgeSourceOriginV1[];
+  readonly origins?: readonly (KnowledgeSourceOriginV1 & { readonly jsonPointer: string })[];
 }
 
 export interface KnowledgeSourceOriginV1 {
   readonly projectedLine: number;
   readonly sourceRef: string;
-  readonly jsonPointer: string;
+  readonly jsonPointer?: string;
   readonly range: Readonly<{ startLine: number; startColumn: number; endLine: number; endColumn: number }>;
 }
 

@@ -87,10 +87,12 @@ export {
   SOURCE_DOCUMENT_SCHEMA_VERSION,
   SOURCE_DOCUMENT_V2_SCHEMA_VERSION,
   SOURCE_DOCUMENT_V3_SCHEMA_VERSION,
+  SOURCE_DOCUMENT_V4_SCHEMA_VERSION,
   MAX_SOURCE_ORIGIN_MAPPINGS,
   type BuildLoreSourceMetadata,
   type CreateSourceDocumentInput,
   type SourceDocument,
+  type SourceChunk,
   type SourceType,
 } from './types.js';
 export {

@@ -83,7 +83,9 @@ export function knowledgeReaderPacket(generation: KnowledgeGenerationV1): Knowle
   ]);
   const evidenceRegistry: Record<string, PacketEvidence> = {};
   for (const item of items) evidenceRegistry[evidenceAliases.get(item.evidenceId) ?? invalid()] = Object.freeze([
-    item.evidenceId, sourceAliases.get(item.sourceRef) ?? invalid(), item.locator.kind === 'lines' ? Object.freeze(['lines', item.locator.start, item.locator.end] as const)
+    item.evidenceId, sourceAliases.get(item.sourceRef) ?? invalid(), item.locator.kind === 'lines' ? Object.freeze(['lines',
+      item.origin !== undefined && item.origin.jsonPointer === undefined ? item.origin.range.startLine : item.locator.start,
+      item.origin !== undefined && item.origin.jsonPointer === undefined ? item.origin.range.endLine : item.locator.end] as const)
       : Object.freeze(['json-pointer', item.locator.pointer] as const), cost('evidence', item.evidenceId),
   ]);
   return Object.freeze({ schemaVersion: generation.wikiProof === undefined ? 'buildlore.knowledge-reader-packet.v1' : 'buildlore.knowledge-reader-packet.v2',

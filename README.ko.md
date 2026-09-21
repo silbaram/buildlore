@@ -112,6 +112,37 @@ npx --no buildlore workspace check --project my-project --client codex
 
 개발 검증: `npm run verify:installed-workspace`는 만든 패키지를 임시 지식 저장소에 로컬 설치해 Wiki 작성·승인·활성화·게시 커밋과 두 프로젝트 MCP 조회를 실행합니다. Linux에서는 제품 소스를 숨기고 MCP의 쓰기·네트워크를 막습니다. 고정 데이터로 프로토콜을 검증하며 유료 AI의 작성 품질 평가를 의미하지 않습니다.
 
+### 파일 목록 대신 디렉터리로 등록하기
+
+선택한 디렉터리와 문서 종류마다 한 항목을 등록하는 방식을 권장합니다.
+아래 명령은 지식 저장소에서 실행하며, 경로는 연결된 원문 프로젝트 기준입니다.
+
+```sh
+npx --no buildlore source add --project my-project --id docs --kind markdown --path docs --json
+npx --no buildlore source add --project my-project --id code --kind code --path src --json
+npx --no buildlore source add --project my-project --id checks --kind code --path test --json
+npx --no buildlore source add --project my-project --id readme --kind markdown --path README.md --json
+```
+
+프로젝트 목적에 필요한 폴더만 선택합니다. `src`, `test`는 코드 프로젝트의 예시이며
+필수 구조가 아닙니다. 새 디렉터리는 기본으로 하위 폴더까지 포함하고
+`recursive: true`로 저장합니다. 이후 지원되는 파일을 추가하면 `sources.json`을
+고치지 않아도 다음 동기화에 포함됩니다. 종류가 섞인 폴더는 필요한 종류별로
+등록합니다(`markdown`, `text`, `code`, `json`). 현재 폴더의 파일만 읽으려면
+`--no-recursive`를 사용하고, 특정 문서만 필요하면 파일 경로로 등록합니다.
+`--recursive`도 계속 지원하며 두 옵션을 함께 지정하면 오류입니다.
+
+`tokens.ts`, `source-secret-masking.test.ts` 같은 일반 코드 파일명은 허용합니다.
+자격증명 저장용 경로와 실제 자격증명 값이 포함된 경로는 계속 차단하며, 파일 내용
+전체에 대한 자격증명 검사도 유지합니다.
+
+기존 디렉터리를 옵션 없이 다시 등록하면 기존 수집 범위를 유지합니다. 기존 설정에서
+`recursive`가 생략된 경우는 여전히 현재 폴더만 의미하며 동기화가 설정을 바꾸지
+않습니다. 같은 ID에 다른 설정을 등록하면 충돌로 거부합니다. 파일과 폴더의 중복
+선택은 피하세요. 개별 파일 목록을 폴더로 바꾸면 수집 범위와 source 식별자가
+달라집니다. JSON 추출 설정 등 사용자 메타데이터를 보존하고 `source list`와
+`sync --dry-run`으로 확인한 뒤 적용하세요. 승인 Wiki 반영은 별도의 작성 절차입니다.
+
 ### 새 PC 또는 새 복제본에서 복원
 
 로컬 `.tgz` 설치는 파일 경로를 npm 메타데이터에 저장합니다. Git clone만 하고 `npm ci`를 실행해도 원래 `.tgz` 경로가 없으면 설치되지 않습니다. **동일한 배포 파일을 별도로 전달**하고 전달받은 경로로 다시 설치하세요.

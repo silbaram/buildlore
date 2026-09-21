@@ -24,7 +24,7 @@ Connected source reads may omit --project. read/lookup/citations require --expec
   buildlore project bind --project <project-id> --source-root <absolute-path> [--json]
   buildlore project list [--json]
   buildlore project show --project <project-id> [--json]
-  buildlore source add --project <project-id> --id <declaration-id> --kind markdown|text|code|json --path <relative-path> [--recursive] [--json]
+  buildlore source add --project <project-id> --id <declaration-id> --kind markdown|text|code|json --path <relative-directory-or-file> [--recursive|--no-recursive] [--json]
   buildlore source list --project <project-id> [--json]
   buildlore source diff --project <project-id> [--json]
   buildlore wiki list --project <project-id> [--cursor <opaque-cursor>] [--limit <1-100>] [--json]
@@ -79,6 +79,14 @@ Connected source reads may omit --project. read/lookup/citations require --expec
 Common options:
   --json      Emit one buildlore.cli-envelope.v1 JSON object instead of human-readable text
   -h, --help  Show this help message
+
+Source registration:
+  Prefer one declaration per selected directory and kind, rather than enumerating files.
+  New directories include subdirectories by default; --no-recursive selects only direct files.
+  Existing declarations retain their scope when re-added without a recursion option.
+  Files remain supported for individual documents. New matching files in a selected directory
+  are included on the next sync without editing the manifest. Preview with sync --dry-run.
+  Example: buildlore source add --project my-project --id docs --kind markdown --path docs
 
 Provider requirements:
   None         init, project, source, sync, wiki, export, check, index status, lexical/graph search, compile plan/apply/candidates/approve/activate/hierarchy

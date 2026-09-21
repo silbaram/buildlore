@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { link, lstat, open, realpath, rename, unlink } from 'node:fs/promises';
+import { link, lstat, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative } from 'node:path';
 
 import { syncDirectory } from '../knowledge/atomic-file.js';
 import { generatedSourceFilenameKind } from '../sanitizer/index.js';
 import { ProjectionError } from './errors.js';
+import type { SourceChunk } from './types.js';
 import type {
   SourceDescriptor,
   SourceJsonOriginMappingV1,
@@ -32,6 +33,7 @@ export function isCollectableProjectSourceKind(
 
 export interface ProjectSourceInput {
   readonly body: string;
+  readonly chunk?: SourceChunk;
   readonly descriptor?: SourceDescriptor;
   readonly ingestedAt: string;
   readonly originMappings?: readonly SourceRangeMappingV1[];
@@ -61,6 +63,16 @@ export interface ProjectSourceWriter {
     markdown: string,
     snapshot: ProjectSourceTargetSnapshot,
   ): Promise<ProjectionWriteStatus>;
+}
+
+export interface RetiredSourceChunk {
+  readonly input: ProjectSourceInput;
+  readonly snapshot: ProjectSourceTargetSnapshot;
+}
+
+export interface ChunkProjectSourceWriter extends ProjectSourceWriter {
+  retiredChunks(parent: ProjectSourceInput, retainedTargets: ReadonlySet<string>): Promise<readonly RetiredSourceChunk[]>;
+  remove(chunk: RetiredSourceChunk): Promise<void>;
 }
 
 export interface ProjectSourceWriterFactory {
@@ -261,6 +273,7 @@ export function renderExpectedProjectSource(input: ProjectSourceInput, projectId
   const producer = projectSourceProducer(input);
   return renderSourceDocument(createSourceDocument({
     body: input.body,
+    ...(input.chunk === undefined ? {} : { chunk: input.chunk }),
     ...(input.descriptor === undefined ? {} : { descriptor: input.descriptor }),
     ingestedAt: input.ingestedAt,
     ...(input.originMappings === undefined ? {} : { originMappings: input.originMappings }),
@@ -328,9 +341,67 @@ async function assertTargetIdentity(
 export async function createProjectSourceWriter(
   workspace: string,
   projectId: string,
-): Promise<ProjectSourceWriter> {
+): Promise<ChunkProjectSourceWriter> {
   const sources = await createSourcesDirectory(workspace);
+  const chunkIndex = new Map<ProjectSourceKind, readonly RetiredSourceChunk[]>();
   return {
+    async retiredChunks(parent, retainedTargets): Promise<readonly RetiredSourceChunk[]> {
+      if (parent.producer !== 'buildlore' || !['markdown', 'text', 'code'].includes(parent.sourceKind)) return [];
+      await assertDirectoryIdentity(sources);
+      const owned = (parts: readonly RetiredSourceChunk[]): readonly RetiredSourceChunk[] =>
+        parts.filter((part) => part.input.chunk?.parentSource === parent.sourceUri && !retainedTargets.has(part.input.target));
+      const cached = chunkIndex.get(parent.sourceKind);
+      if (cached !== undefined) return owned(cached);
+      const result: RetiredSourceChunk[] = [];
+      for (const target of (await readdir(sources.path)).sort()) {
+        if (generatedSourceFilenameKind(target) !== parent.sourceKind) continue;
+        const path = join(sources.path, target);
+        let handle;
+        try {
+          handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+          const status = await handle.stat();
+          if (!status.isFile() || status.size > MAX_TARGET_BYTES) {
+            fail('PROJECTION_PATH_UNSAFE', 'A source fragment target is unsafe.');
+          }
+          const document = parseSourceDocument(await handle.readFile('utf8'));
+          if (document.buildlore.chunk === undefined) continue;
+          const input: ProjectSourceInput = { ...parent, body: document.body,
+            chunk: document.buildlore.chunk, descriptor: document.buildlore.descriptor!,
+            originMappings: document.buildlore.originMappings!, ingestedAt: document.ingestedAt,
+            sourceRevision: document.buildlore.sourceRevision, sourceUri: document.source,
+            target, title: document.title };
+          const existing = await readExistingTarget(sources, input, projectId);
+          if (existing === null || existing.identity.dev !== status.dev || existing.identity.ino !== status.ino) {
+            fail('PROJECTION_ARTIFACT_CHANGED', 'A source fragment changed during planning.');
+          }
+          result.push({ input, snapshot: { contentDigest: existing.digest, writeStatus: 'update' } });
+        } catch (error) {
+          if (error instanceof ProjectionError) throw error;
+          fail('PROJECTION_SOURCE_COLLISION', 'A source fragment could not be inspected safely.');
+        } finally {
+          await handle?.close();
+        }
+      }
+      await assertDirectoryIdentity(sources);
+      chunkIndex.set(parent.sourceKind, result);
+      return owned(result);
+    },
+
+    async remove(chunk): Promise<void> {
+      if (chunk.input.chunk === undefined) {
+        fail('PROJECTION_SOURCE_COLLISION', 'Only owned source fragments may be removed.');
+      }
+      const existing = await readExistingTarget(sources, chunk.input, projectId);
+      if (existing === null || existing.digest !== chunk.snapshot.contentDigest) {
+        fail('PROJECTION_ARTIFACT_CHANGED', 'A source fragment changed after planning.');
+      }
+      const path = join(sources.path, chunk.input.target);
+      await assertTargetIdentity(path, existing.identity);
+      await unlink(path);
+      await refreshDirectoryIdentity(sources);
+      await syncDirectory(sources.path);
+    },
+
     async assertUnchanged(input, snapshot): Promise<void> {
       const current = await readExistingTarget(sources, input, projectId);
       if ((current?.digest ?? null) !== snapshot.contentDigest) {

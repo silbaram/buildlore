@@ -244,6 +244,8 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/anchor" }
         },
+        "chunk": { "$ref": "source-document-v4.schema.json#/properties/buildlore/properties/chunk" },
+        "originMappings": { "type": "array", "maxItems": 128, "items": { "$ref": "source-document-v4.schema.json#/$defs/rangeMapping" } },
         "compilerSourceContentDigest": { "$ref": "#/$defs/digest" },
         "compilerSourceId": {
           "type": "string",

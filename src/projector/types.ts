@@ -7,13 +7,28 @@ import type {
 export const SOURCE_DOCUMENT_SCHEMA_VERSION = 'buildlore.source.v1' as const;
 export const SOURCE_DOCUMENT_V2_SCHEMA_VERSION = 'buildlore.source.v2' as const;
 export const SOURCE_DOCUMENT_V3_SCHEMA_VERSION = 'buildlore.source.v3' as const;
+export const SOURCE_DOCUMENT_V4_SCHEMA_VERSION = 'buildlore.source.v4' as const;
 export const MAX_SOURCE_BODY_CHARS = 100_000;
 export const MAX_SOURCE_ORIGIN_MAPPINGS = 128;
 
 export type SourceType = 'file' | 'image' | 'pdf' | 'transcript' | 'web';
 
+/** Offsets and lengths count Unicode scalars; end is exclusive. */
+export interface SourceChunk {
+  readonly schemaVersion: 'buildlore.source-chunk.v1';
+  readonly parentSource: string;
+  readonly index: number;
+  readonly count: number;
+  readonly start: number;
+  readonly end: number;
+  readonly totalChars: number;
+  readonly fullContentHash: `sha256:${string}`;
+  readonly payloadStart: number;
+}
+
 export interface BuildLoreSourceMetadata {
   readonly contentHash: `sha256:${string}`;
+  readonly chunk?: SourceChunk;
   readonly producer: string;
   readonly projectId: string;
   readonly descriptor?: SourceDescriptor;
@@ -22,7 +37,8 @@ export interface BuildLoreSourceMetadata {
   readonly schemaVersion:
     | typeof SOURCE_DOCUMENT_SCHEMA_VERSION
     | typeof SOURCE_DOCUMENT_V2_SCHEMA_VERSION
-    | typeof SOURCE_DOCUMENT_V3_SCHEMA_VERSION;
+    | typeof SOURCE_DOCUMENT_V3_SCHEMA_VERSION
+    | typeof SOURCE_DOCUMENT_V4_SCHEMA_VERSION;
   readonly sourceKind: string;
   readonly sourceRevision: `sha256:${string}`;
 }
@@ -35,7 +51,8 @@ export interface SourceDocument {
   readonly schemaVersion:
     | typeof SOURCE_DOCUMENT_SCHEMA_VERSION
     | typeof SOURCE_DOCUMENT_V2_SCHEMA_VERSION
-    | typeof SOURCE_DOCUMENT_V3_SCHEMA_VERSION;
+    | typeof SOURCE_DOCUMENT_V3_SCHEMA_VERSION
+    | typeof SOURCE_DOCUMENT_V4_SCHEMA_VERSION;
   readonly source: string;
   readonly sourceType?: SourceType;
   readonly title: string;
@@ -44,6 +61,7 @@ export interface SourceDocument {
 
 export interface CreateSourceDocumentInput {
   readonly body: string;
+  readonly chunk?: SourceChunk;
   readonly descriptor?: SourceDescriptor;
   readonly ingestedAt: string;
   readonly originMappings?: readonly SourceRangeMappingV1[];

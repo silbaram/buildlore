@@ -1,4 +1,6 @@
 import type { BoundSourceRetrievalMeaningV1 } from '../../projector/source-contracts.js';
+import type { SourceRangeMappingV1 } from '../../projector/source-contracts.js';
+import type { SourceChunk } from '../../projector/types.js';
 
 export const SESSION_COMPILE_PLAN_SCHEMA_VERSION = 'buildlore.compile-plan.v5' as const;
 export const SESSION_COMPILE_PROPOSAL_SCHEMA_VERSION = 'buildlore.compile-proposal.v1' as const;
@@ -52,6 +54,8 @@ export interface SessionCitationAnchor {
 }
 
 export interface SessionPlannedSource {
+  readonly chunk?: SourceChunk;
+  readonly originMappings?: readonly SourceRangeMappingV1[];
   readonly citationAnchors: readonly SessionCitationAnchor[];
   readonly compilerSourceContentDigest: SessionSha256Digest;
   readonly compilerSourceId: string;

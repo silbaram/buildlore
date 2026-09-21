@@ -14,6 +14,14 @@ function expectUsageError(args: readonly string[], code: string): void {
 }
 
 describe('CLI argument parser', () => {
+  it('accepts explicit directory depth and rejects conflicting recursion flags', () => {
+    const args = ['source', 'add', '--project', 'alpha', '--id', 'docs',
+      '--kind', 'markdown', '--path', 'docs'];
+    expect(parseCliArguments([...args, '--no-recursive'])).toMatchObject({
+      command: 'source.add', options: { '--no-recursive': true },
+    });
+    expectUsageError([...args, '--recursive', '--no-recursive'], 'CLI_OPTION_CONFLICT');
+  });
   it('requires explicit reading modes and generation-bound typed lookups', () => {
     expect(parseCliArguments(['wiki', 'packet', '--project', 'alpha', '--json'])).toMatchObject({ command: 'wiki.packet' });
     expectUsageError(['wiki', 'packet'], 'CLI_OPTION_MISSING');

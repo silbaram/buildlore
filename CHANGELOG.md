@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Prefer directory source registration in setup guidance and authoring instructions.
+  New directories include subdirectories by default; `--no-recursive` limits depth.
+  Existing declarations retain their scope when re-added without a recursion option.
+- Allow ordinary code filenames such as `tokens.ts` across selection and provenance
+  validation while preserving credential-directory, credential-value and content checks.
+
+- Preserve long Markdown, text, and code with bounded source fragments, original
+  positions, and complete-input security checks. Resync retires obsolete fragments
+  and recovers interrupted writes without changing approved Wiki history.
+- Carry every source fragment through Wiki authoring and MCP evidence reads;
+  reject incomplete fragment sets and preserve original citation locations.
+
 - Connect a registered project and configure its owned Codex MCP entry from the
   knowledge checkout with `workspace connect --project <id> --client codex --apply`.
 - Inspect installation, client settings and actual generation-bound MCP search/read

@@ -8,7 +8,7 @@ export type KnowledgeEvidenceContentKind = 'heading' | 'json-value' | 'text';
 /** Surface kind, not semantic support or proof of implementation. Original bytes are unchanged. */
 export function knowledgeEvidenceContentKind(evidence: KnowledgeEvidenceV1): KnowledgeEvidenceContentKind {
   if (/^#{1,6}[ \t]+[^\r\n]*$/u.test(evidence.excerpt)) return 'heading';
-  if (evidence.origin !== undefined || evidence.locator.kind === 'json-pointer') {
+  if (evidence.origin?.jsonPointer !== undefined || evidence.locator.kind === 'json-pointer') {
     try { parseJsonStrict(evidence.excerpt); return 'json-value'; } catch { /* Adapter summaries may be prose. */ }
   }
   return 'text';

@@ -109,7 +109,7 @@ export interface ProjectSyncPlanEntrySummary {
   readonly sourceRef: string | null;
   readonly sourceRevision: `sha256:${string}` | null;
   readonly target: string | null;
-  readonly writeStatus: 'create' | 'unchanged' | 'update' | null;
+  readonly writeStatus: 'create' | 'remove' | 'unchanged' | 'update' | null;
 }
 
 export interface ProjectSyncPlanSummary {
@@ -122,7 +122,7 @@ export interface ProjectSyncWriteSummary {
   readonly sourceKind: 'code' | 'execution' | 'json' | 'markdown' | 'planning' | 'text';
   readonly sourceRevision: `sha256:${string}`;
   readonly target: string;
-  readonly writeStatus: 'create' | 'unchanged' | 'update';
+  readonly writeStatus: 'create' | 'remove' | 'unchanged' | 'update';
 }
 
 export interface ProjectSyncCompatibilityWarning {

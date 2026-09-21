@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.local/schemas/source-document-v4.schema.json",
+  "title": "BuildLore SourceDocument v4 (lossless fragment)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "title",
+    "source",
+    "ingestedAt",
+    "body",
+    "buildlore"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "buildlore.source.v4"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\uD800-\\uDFFF]+$"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[\\u0020-\\u007e]+$",
+      "x-buildlore-equals": "buildlore.descriptor.sourceUri"
+    },
+    "ingestedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sourceType": {
+      "enum": [
+        "web",
+        "file",
+        "image",
+        "pdf",
+        "transcript"
+      ]
+    },
+    "originalChars": false,
+    "truncated": false,
+    "body": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100000,
+      "pattern": "^(?![\\s\\S]*[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f\\uD800-\\uDFFF])(?=[\\s\\S]*\\S)[\\s\\S]*\\n$",
+      "x-buildlore-contentHash": "buildlore.contentHash",
+      "x-buildlore-maxUtf16Units": 100000
+    },
+    "buildlore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "sourceKind",
+        "producer",
+        "projectId",
+        "sourceRevision",
+        "contentHash",
+        "descriptor",
+        "originMappings",
+        "chunk"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.source.v4"
+        },
+        "sourceKind": {
+          "enum": [
+            "markdown",
+            "text",
+            "code"
+          ],
+          "x-buildlore-equals": "descriptor.kind"
+        },
+        "producer": {
+          "const": "buildlore"
+        },
+        "projectId": {
+          "allOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            },
+            {
+              "not": {
+                "enum": [
+                  "knowledge",
+                  "manifest",
+                  "projects",
+                  "shared"
+                ]
+              }
+            }
+          ],
+          "x-buildlore-equals": "descriptor.projectId"
+        },
+        "sourceRevision": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "x-buildlore-equals": "descriptor.sourceRevision"
+        },
+        "contentHash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "x-buildlore-digestOf": "body"
+        },
+        "descriptor": {
+          "$ref": "source-descriptor.schema.json"
+        },
+        "originMappings": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/rangeMapping"
+          },
+          "x-buildlore-boundedBy": "body",
+          "x-buildlore-canonicalRanges": "strictly-ordered-non-overlapping"
+        },
+        "chunk": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "parentSource",
+            "fullContentHash",
+            "index",
+            "count",
+            "start",
+            "end",
+            "totalChars",
+            "payloadStart"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "buildlore.source-chunk.v1"
+            },
+            "parentSource": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "fullContentHash": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4096
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 4096
+            },
+            "start": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16777216
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16777216
+            },
+            "totalChars": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16777216
+            },
+            "payloadStart": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16777216
+            }
+          },
+          "description": "Zero-based Unicode scalar offsets in the entire sanitized normalized projected source, with end exclusive. payloadStart locates the exact payload in this body. Ordered payloads must cover totalChars and match fullContentHash."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endColumn",
+        "endLine",
+        "startColumn",
+        "startLine"
+      ],
+      "x-buildlore-orderedRange": true,
+      "properties": {
+        "endColumn": {
+          "description": "One-based boundary measured in Unicode scalar values.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "endLine": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "startColumn": {
+          "description": "One-based boundary measured in Unicode scalar values.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "startLine": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "rangeMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical",
+        "origin"
+      ],
+      "x-buildlore-equalLineSpan": [
+        "canonical",
+        "origin"
+      ],
+      "properties": {
+        "canonical": {
+          "$ref": "#/$defs/range"
+        },
+        "origin": {
+          "$ref": "#/$defs/range"
+        }
+      }
+    }
+  }
+}
