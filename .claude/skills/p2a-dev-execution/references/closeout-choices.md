@@ -6,6 +6,8 @@ Read only when handling a closeout choice or an explicit review/retrospective/re
 
 Review is read-only. Inspect the diff, code, tests, and current verification evidence; run targeted non-mutating diagnostics only when needed to investigate a finding, not a full suite merely because review was selected. Report findings without changing code or run state unless the user requested fixes. An explicit “review and fix” request already provides that authority.
 
+When a saved review is requested, prefer a CLI-provided report path. Otherwise use `<artifact-root>/evidence/<iteration-id>/<run-id>/report.md` for an owning run, or `<artifact-root>/iterations/<iteration-id>/notes/<topic>.md` without a run. Use relative links and optional adjacent attachments; preserve earlier referenced reports with an unused numeric suffix. Do not create a run, a top-level topic folder, or multiple final/latest summaries just to save the review.
+
 For an authorized correction in an open iteration, fill the returned `p2a execute remediate` placeholders with the owning completed task and concrete finding. The linked run preserves reviewed evidence and returns through normal verification; do not substitute maintenance. A clean review reports its result and stops without a close prompt or repeated menu. Leave the iteration open unless the user explicitly requested close.
 
 ## Retrospective

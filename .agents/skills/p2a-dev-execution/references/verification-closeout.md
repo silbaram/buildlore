@@ -2,6 +2,8 @@
 
 Read this reference when the implementation outcome is ready for executable verification and run closeout.
 
+Before discarding a task-owned temporary environment, preserve necessary logs, reproduction commands and non-reproducible evidence in `<artifact-root>/evidence/<iteration-id>/<run-id>/`, unless the CLI supplies another path. Keep referenced evidence intact and avoid duplicating canonical reports. A supplementary report should identify its target and result even after run GC. Remove only the exact temporary directories this task created and no longer needs; retain resumable work. Do not sweep `.plan2agent/tmp`, historical artifacts, or other owners' environments.
+
 ## Executed verification
 
 Use configured or explicit commands and record their real exit codes. With no flags, the CLI runs only the test/lint/typecheck commands actually configured for the project:

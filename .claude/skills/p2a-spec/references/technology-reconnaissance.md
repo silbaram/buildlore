@@ -19,3 +19,5 @@ Use `evidence` for source metadata and `reference_reconnaissance` for decision m
 - `open_questions`: unresolved reference trade-offs that block approval when material.
 
 Feature Radar artifacts use the same model. Local Markdown/JSON files become `LOCAL-n`; material URLs become `WEB-n`. Recommendations begin as `context` until Gate B explicitly marks them selected, rejected, or deferred. Radar output is evidence, never approval by itself.
+
+If a separate readable research note is needed for an active iteration, save `iterations/<iteration-id>/notes/<topic>.md` under the artifact root, with optional `<topic>/` attachments and relative links. Use lowercase kebab-case and an unused numeric suffix for another report. Keep source metadata in the canonical spec; do not duplicate it into additional summary JSON or create topic/date folders at the artifact root. Preserve CLI-provided Gate/Radar paths when no iteration exists.

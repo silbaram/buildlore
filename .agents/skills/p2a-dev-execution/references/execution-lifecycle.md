@@ -65,6 +65,10 @@ Use `p2a execute resume` for an existing open run. Resume, verify, checkpoint, a
 
 ## Implement
 
+Use CLI-provided evidence paths first. Additional run reports belong in `<artifact-root>/evidence/<iteration-id>/<run-id>/report.md`, with optional `logs/` and `attachments/`; maintenance uses `maintenance`. Do not add topic/date folders at the artifact root. Keep one run across ordinary corrections and use unused attempt filenames such as `logs/test-02.log` to preserve earlier evidence.
+
+Create temporary installs, source copies and package archives with unique task-owned directories under `.plan2agent/tmp/` inside the permitted workspace, or reuse an existing tool's OS-temp lifecycle. When copying sources, exclude the destination and `.plan2agent` to avoid recursive copies, and omit unneeded `.git`, `node_modules`, and build output. Temporary paths must not be the sole source of completion evidence.
+
 Before editing, inventory the source baseline and unrelated user changes. If pre-existing untracked files make `--collect-git` ambiguous, record the inventory and pass exact task-owned `--changed-file` values at finish.
 
 The current owner implements Direct and ordinary single-owner Planned work. Spawn `p2a-implementer` only when an independently confined owner materially helps Orchestrated/batch work or explicit context isolation. A spawned implementer edits only its scope and may run local checks, but lifecycle verification and finish remain with the owner.
