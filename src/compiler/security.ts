@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { assertCompleteSourceChunks } from '../projector/source-chunks.js';
+import type { SourceDocument } from '../projector/types.js';
 import { constants as fsConstants, type BigIntStats, type Dirent } from 'node:fs';
 import { lstat, open, opendir, realpath } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative } from 'node:path';
@@ -261,6 +263,7 @@ async function providerInputs(
   const paths = [...sourcePaths, ...generatedPaths];
   if (paths.length > MAX_PROVIDER_INPUT_FILES) return denied();
   const inputs: ProviderInput[] = [];
+  const sourceDocuments: SourceDocument[] = [];
   let totalBytes = 0;
   for (const path of paths) {
     const body = await readRegularUtf8(path, workspace);
@@ -275,6 +278,7 @@ async function providerInputs(
         return denied();
       }
       const sourceKind = document.buildlore.sourceKind;
+      sourceDocuments.push(document);
       if (!isStoredSourceKind(sourceKind) ||
           document.buildlore.projectId !== request.projectId ||
           basename(path) !== `${sourceKind}--${sha256(document.source).slice('sha256:'.length)}.md`) {
@@ -348,6 +352,7 @@ async function providerInputs(
       sourceRevisionOrContentSha256: contentDigest,
     });
   }
+  try { assertCompleteSourceChunks(sourceDocuments); } catch { return denied(); }
   const text = requestText(request);
   if (text !== null) {
     const contentDigest = sha256(text);

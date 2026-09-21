@@ -706,7 +706,6 @@
       "required": [
         "projectedLine",
         "sourceRef",
-        "jsonPointer",
         "range"
       ],
       "properties": {
@@ -817,7 +816,16 @@
           "type": "array",
           "maxItems": 8192,
           "items": {
-            "$ref": "#/$defs/origin"
+            "allOf": [
+              {
+                "$ref": "#/$defs/origin"
+              },
+              {
+                "required": [
+                  "jsonPointer"
+                ]
+              }
+            ]
           }
         },
         "format": {
@@ -831,7 +839,25 @@
           "minLength": 1,
           "maxLength": 262144,
           "x-buildlore-maxUtf8Bytes": 262144
+        },
+        "chunk": {
+          "$ref": "source-document-v4.schema.json#/properties/buildlore/properties/chunk"
+        },
+        "originMappings": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "source-document-v4.schema.json#/$defs/rangeMapping"
+          }
         }
+      },
+      "dependentRequired": {
+        "chunk": [
+          "originMappings"
+        ],
+        "originMappings": [
+          "chunk"
+        ]
       }
     },
     "evidence": {

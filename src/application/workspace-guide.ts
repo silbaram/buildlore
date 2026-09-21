@@ -98,11 +98,11 @@ export async function workspaceGuide(directory: string, selectedProject?: string
   try {
     const profile = await resolveRegisteredProfileBinding(root, projectId, { registrations: [p2aRunJsonKnowledgeAdapter()] });
     const manifest = await readSourceCollectionManifest(binding.checkout, projectId, { sourceAdapterRegistry: profile.sourceAdapters });
-    if (manifest.manifest.sources.length === 0) return stop('sources', 'pending', 'SOURCE_DECLARATIONS_REQUIRED', action('Add documents from the bound source checkout.', ['source', 'add', '--project', projectId, '--id', '<source-id>', '--kind', 'markdown', '--path', '<relative-source-path>'], ['source-id', 'relative-source-path']));
+    if (manifest.manifest.sources.length === 0) return stop('sources', 'pending', 'SOURCE_DECLARATIONS_REQUIRED', action('Register a selected directory and document kind from the bound source checkout; include subdirectories without listing individual files. Use file paths only for specifically selected documents.', ['source', 'add', '--project', projectId, '--id', '<source-id>', '--kind', '<source-kind>', '--path', '<relative-source-directory>', '--recursive'], ['source-id', 'source-kind', 'relative-source-directory']));
     mark('sources', 'complete', 'SOURCE_DECLARATIONS_VALID');
   } catch (error) {
     const missing = typeof error === 'object' && error !== null && 'code' in error && error.code === 'SOURCE_MANIFEST_REQUIRED';
-    return stop('sources', missing ? 'pending' : 'blocked', missing ? 'SOURCE_DECLARATIONS_REQUIRED' : 'SOURCE_DECLARATIONS_INVALID', action('First restore or prepare the matching source .buildlore/sources.json and check this project’s profile-binding.json. Do not overwrite corrupt declarations. After repairing them, add the selected documents.', ['source', 'add', '--project', projectId, '--id', '<source-id>', '--kind', 'markdown', '--path', '<relative-source-path>'], ['source-id', 'relative-source-path']));
+    return stop('sources', missing ? 'pending' : 'blocked', missing ? 'SOURCE_DECLARATIONS_REQUIRED' : 'SOURCE_DECLARATIONS_INVALID', action('First restore or prepare the matching source .buildlore/sources.json and check this project’s profile-binding.json. Do not overwrite corrupt declarations. After repairing them, register a selected directory and document kind with subdirectories; retain individual file selections where needed.', ['source', 'add', '--project', projectId, '--id', '<source-id>', '--kind', '<source-kind>', '--path', '<relative-source-directory>', '--recursive'], ['source-id', 'source-kind', 'relative-source-directory']));
   }
   try {
     const session = await openKnowledgeReadSession(root, projectId, { hubRoot: root });

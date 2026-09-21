@@ -6,6 +6,8 @@ import { workspaceGuide } from '../src/application/workspace-guide.js';
 import { initializeKnowledgeWorkspace } from '../src/knowledge/knowledge-workspace.js';
 import { connectProject } from '../src/connection/service.js';
 import { runCli } from '../src/cli/run-cli.js';
+import { serializeCanonicalJson } from '../src/knowledge/atomic-file.js';
+import { parseSourceCollectionManifestV2 } from '../src/projector/source-manifest.js';
 import { createKnowledgeWorkflowFixture } from './helpers/project-knowledge-workflow.js';
 import { activate, git } from './helpers/connected-fixture.js';
 const roots: string[] = [];
@@ -63,8 +65,21 @@ describe('workspace setup guide', () => {
       expect(guide.checks.find(c => c.id === 'approval')?.reasonCode).toBe('APPROVAL_REQUIRED');
       expect(JSON.stringify(guide)).not.toContain(f.sourceRoot);
       const manifest = join(f.sourceRoot, '.buildlore/sources.json');
-      const sourceManifest = await readFile(manifest); await rm(manifest);
-      expect((await workspaceGuide(f.hubRoot, f.projectId)).checks.find(c => c.id === 'sources')?.state).toBe('pending');
+      const sourceManifest = await readFile(manifest);
+      const parsed = parseSourceCollectionManifestV2(JSON.parse(sourceManifest.toString()) as unknown);
+      const empty = serializeCanonicalJson({ ...parsed, sources: [] });
+      await writeFile(manifest, empty);
+      const emptyGuide = await workspaceGuide(f.hubRoot, f.projectId);
+      expect(emptyGuide.nextActions[0]).toMatchObject({
+        argv: ['source', 'add', '--project', f.projectId, '--id', '<source-id>',
+          '--kind', '<source-kind>', '--path', '<relative-source-directory>', '--recursive'],
+        requiredInputs: ['source-id', 'source-kind', 'relative-source-directory'],
+      });
+      expect(await readFile(manifest, 'utf8')).toBe(empty);
+      await rm(manifest);
+      const missingGuide = await workspaceGuide(f.hubRoot, f.projectId);
+      expect(missingGuide.checks.find(c => c.id === 'sources')?.state).toBe('pending');
+      expect(missingGuide.nextActions[0]?.argv).toEqual(emptyGuide.nextActions[0]?.argv);
       await writeFile(manifest, '{broken');
       expect((await workspaceGuide(f.hubRoot, f.projectId)).checks.find(c => c.id === 'sources')?.state).toBe('blocked');
       await writeFile(join(f.hubRoot, '.buildlore/local-projects.json'), '{broken');

@@ -4,6 +4,7 @@ import { containsSecretRedaction } from '../sanitizer/redaction-marker.js';
 import { parseDocument } from 'yaml';
 
 import { SourceDocumentError, type SourceDocumentErrorCode } from './errors.js';
+import { parseSourceChunk } from './source-chunk-contract.js';
 import {
   parseSourceDescriptor,
   validateJsonPointer,
@@ -20,6 +21,7 @@ import {
   SOURCE_DOCUMENT_SCHEMA_VERSION,
   SOURCE_DOCUMENT_V2_SCHEMA_VERSION,
   SOURCE_DOCUMENT_V3_SCHEMA_VERSION,
+  SOURCE_DOCUMENT_V4_SCHEMA_VERSION,
   type BuildLoreSourceMetadata,
   type CreateSourceDocumentInput,
   type SourceDocument,
@@ -112,7 +114,7 @@ function sha256(value: string): `sha256:${string}` {
 }
 
 export function normalizeSourceBody(value: string): string {
-  const normalized = value.replace(/\r\n?/gu, '\n').replace(/\n+$/u, '');
+  const normalized = trimTerminalNewlines(value.replace(/\r\n?/gu, '\n'));
   if (containsUnsafeCharacter(normalized, true)) {
     return invalid('SOURCE_BODY_INVALID', 'Source body contains an unsafe character.');
   }
@@ -120,6 +122,12 @@ export function normalizeSourceBody(value: string): string {
     return invalid('SOURCE_BODY_INVALID', 'Source body must contain readable content.');
   }
   return normalized;
+}
+
+function trimTerminalNewlines(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '\n') end -= 1;
+  return value.slice(0, end);
 }
 
 function canonicalBody(value: string): {
@@ -132,8 +140,7 @@ function canonicalBody(value: string): {
   if (originalChars <= MAX_SOURCE_BODY_CHARS) {
     return { body: `${payload}\n`, originalChars, truncated: false };
   }
-  const utf8Stable = sliceUnicodeScalars(payload, MAX_SOURCE_BODY_CHARS)
-    .replace(/\n+$/u, '');
+  const utf8Stable = trimTerminalNewlines(sliceUnicodeScalars(payload, MAX_SOURCE_BODY_CHARS));
   return { body: `${utf8Stable}\n`, originalChars, truncated: true };
 }
 
@@ -145,8 +152,8 @@ function sourceType(value: unknown): SourceType | undefined {
   return value as SourceType;
 }
 
-function parseRangeMappings(value: unknown): readonly SourceRangeMappingV1[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_SOURCE_ORIGIN_MAPPINGS) {
+function parseRangeMappings(value: unknown, allowEmpty = false): readonly SourceRangeMappingV1[] {
+  if (!Array.isArray(value) || (!allowEmpty && value.length < 1) || value.length > MAX_SOURCE_ORIGIN_MAPPINGS) {
     return invalid('SOURCE_DOCUMENT_INVALID', 'Source origin mappings are invalid.');
   }
   let previousEndLine = 0;
@@ -347,7 +354,9 @@ function parseBuildLore(
     'contentHash', 'producer', 'projectId', 'schemaVersion', 'sourceKind', 'sourceRevision',
   ];
   requireExactKeys(record,
-    schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION
+    schemaVersion === SOURCE_DOCUMENT_V4_SCHEMA_VERSION
+      ? [...commonKeys, 'descriptor', 'originMappings', 'chunk']
+      : schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION
       ? [...commonKeys, 'descriptor', 'originMappings']
       : schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION
         ? [...commonKeys, 'descriptor', 'jsonOrigins']
@@ -364,19 +373,20 @@ function parseBuildLore(
   let jsonOrigins: readonly SourceJsonOriginMappingV1[] | undefined;
   if (
     schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION ||
-    schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION
+    schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION ||
+    schemaVersion === SOURCE_DOCUMENT_V4_SCHEMA_VERSION
   ) {
     try {
       descriptor = parseSourceDescriptor(record.descriptor);
     } catch {
       return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor is invalid.');
     }
-    if (schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION) {
+    if (schemaVersion !== SOURCE_DOCUMENT_V3_SCHEMA_VERSION) {
       if (descriptor.schemaVersion !== 'buildlore.source-descriptor.v1') {
         return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor version is invalid.');
       }
       originMappings = assertRangeMappingsWithinBody(
-        parseRangeMappings(record.originMappings),
+        parseRangeMappings(record.originMappings, schemaVersion === SOURCE_DOCUMENT_V4_SCHEMA_VERSION),
         body,
       );
     } else {
@@ -394,6 +404,8 @@ function parseBuildLore(
   }
   return {
     contentHash,
+    ...(schemaVersion === SOURCE_DOCUMENT_V4_SCHEMA_VERSION
+      ? { chunk: parseSourceChunk(record.chunk, body, descriptor?.sourceUri ?? '') } : {}),
     ...(descriptor === undefined ? {} : { descriptor }),
     ...(originMappings === undefined ? {} : { originMappings }),
     ...(jsonOrigins === undefined ? {} : { jsonOrigins }),
@@ -437,7 +449,8 @@ export function validateSourceDocument(value: unknown): SourceDocument {
   if (
     record.schemaVersion !== SOURCE_DOCUMENT_SCHEMA_VERSION &&
     record.schemaVersion !== SOURCE_DOCUMENT_V2_SCHEMA_VERSION &&
-    record.schemaVersion !== SOURCE_DOCUMENT_V3_SCHEMA_VERSION
+    record.schemaVersion !== SOURCE_DOCUMENT_V3_SCHEMA_VERSION &&
+    record.schemaVersion !== SOURCE_DOCUMENT_V4_SCHEMA_VERSION
   ) {
     return invalid('SOURCE_SCHEMA_UNSUPPORTED', 'SourceDocument schema is unsupported.');
   }
@@ -447,19 +460,27 @@ export function validateSourceDocument(value: unknown): SourceDocument {
     unicodeScalarLength(body) < 2 ||
     body.includes('\r') ||
     !body.endsWith('\n') ||
-    body.endsWith('\n\n') ||
+    (schemaVersion !== SOURCE_DOCUMENT_V4_SCHEMA_VERSION && body.endsWith('\n\n')) ||
     containsUnsafeCharacter(body, true) ||
     body.trim().length === 0
   ) {
     return invalid('SOURCE_BODY_INVALID', 'Source body is not canonical.');
   }
   const truncation = validateTruncation(record, unicodeScalarLength(body.slice(0, -1)));
+  if (schemaVersion === SOURCE_DOCUMENT_V4_SCHEMA_VERSION &&
+      (record.truncated !== undefined || body.length > MAX_SOURCE_BODY_CHARS)) {
+    return invalid('SOURCE_DOCUMENT_INVALID', 'Source chunks must fit the compiler limit without truncation.');
+  }
   const parsedSourceType = sourceType(record.sourceType);
   const source = requireString(record.source, 'source', { max: 4096 });
   const buildlore = parseBuildLore(record.buildlore, body, schemaVersion);
+  if (source.startsWith('buildlore+source:') && source.split('/').length === 8 && buildlore.chunk === undefined) {
+    return invalid('SOURCE_DOCUMENT_INVALID', 'A source part requires fragment metadata.');
+  }
   if (
     schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION ||
-    schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION
+    schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION ||
+    schemaVersion === SOURCE_DOCUMENT_V4_SCHEMA_VERSION
   ) {
     const descriptor = buildlore.descriptor;
     if (
@@ -472,6 +493,10 @@ export function validateSourceDocument(value: unknown): SourceDocument {
         descriptor.schemaVersion === 'buildlore.source-descriptor.v2' &&
         descriptor.projectionRevision !== buildlore.sourceRevision)
     ) return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor binding is invalid.');
+  }
+  if (schemaVersion === SOURCE_DOCUMENT_V4_SCHEMA_VERSION &&
+      (buildlore.producer !== 'buildlore' || !['code', 'markdown', 'text'].includes(buildlore.sourceKind))) {
+    return invalid('SOURCE_DOCUMENT_INVALID', 'Source chunk kind is unsupported.');
   }
   return {
     body,
@@ -487,7 +512,8 @@ export function validateSourceDocument(value: unknown): SourceDocument {
 }
 
 export function createSourceDocument(input: CreateSourceDocumentInput): SourceDocument {
-  const canonical = canonicalBody(input.body);
+  const canonical = input.chunk === undefined ? canonicalBody(input.body)
+    : { body: input.body, originalChars: unicodeScalarLength(input.body), truncated: false };
   // Redacted lines cannot retain exact-value source mappings. Keep mappings for
   // untouched lines; never shift original coordinates to make a masked value fit.
   const maskedLines = new Set(canonical.body.split('\n').flatMap((line, index) =>
@@ -525,14 +551,16 @@ export function createSourceDocument(input: CreateSourceDocumentInput): SourceDo
       return invalid('SOURCE_DOCUMENT_INVALID', 'Source descriptor is invalid.');
     }
   }
-  const schemaVersion = descriptor === undefined
+  const schemaVersion = input.chunk !== undefined ? SOURCE_DOCUMENT_V4_SCHEMA_VERSION : descriptor === undefined
     ? SOURCE_DOCUMENT_SCHEMA_VERSION
     : descriptor.schemaVersion === 'buildlore.source-descriptor.v2'
       ? SOURCE_DOCUMENT_V3_SCHEMA_VERSION
       : SOURCE_DOCUMENT_V2_SCHEMA_VERSION;
   const originMappings = input.originMappings === undefined
     ? undefined
-    : parseRangeMappings(fitRangeMappings(input.originMappings, canonical.body, canonical.truncated).flatMap(safeRanges));
+    : input.chunk === undefined
+      ? parseRangeMappings(fitRangeMappings(input.originMappings, canonical.body, canonical.truncated).flatMap(safeRanges))
+      : parseRangeMappings(input.originMappings.flatMap(safeRanges), true);
   const jsonOrigins = input.jsonOrigins === undefined
     ? undefined
     : assertJsonOriginsWithinBody(parseJsonOrigins(parseJsonOrigins(input.jsonOrigins).filter(unmasked)), canonical.body);
@@ -551,6 +579,7 @@ export function createSourceDocument(input: CreateSourceDocumentInput): SourceDo
     body: canonical.body,
     buildlore: {
       contentHash: sha256(canonical.body),
+      ...(input.chunk === undefined ? {} : { chunk: input.chunk }),
       producer: input.producer,
       projectId: input.projectId,
       ...(descriptor === undefined ? {} : { descriptor }),
@@ -597,11 +626,15 @@ export function renderSourceDocument(value: SourceDocument): string {
     `  sourceRevision: ${quoted(document.buildlore.sourceRevision)}`,
     `  contentHash: ${quoted(document.buildlore.contentHash)}`,
   );
-  if (document.schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION) {
+  if (document.schemaVersion === SOURCE_DOCUMENT_V2_SCHEMA_VERSION ||
+      document.schemaVersion === SOURCE_DOCUMENT_V4_SCHEMA_VERSION) {
     lines.push(
       `  descriptor: ${JSON.stringify(document.buildlore.descriptor)}`,
       `  originMappings: ${JSON.stringify(document.buildlore.originMappings)}`,
     );
+    if (document.buildlore.chunk !== undefined) {
+      lines.push(`  chunk: ${JSON.stringify(document.buildlore.chunk)}`);
+    }
   } else if (document.schemaVersion === SOURCE_DOCUMENT_V3_SCHEMA_VERSION) {
     lines.push(
       `  descriptor: ${JSON.stringify(document.buildlore.descriptor)}`,

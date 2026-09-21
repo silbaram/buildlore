@@ -36,7 +36,9 @@ function renderPageV2(generation: KnowledgeGenerationV1, page: KnowledgePageV1):
     }), '', '## Source evidence', '', ...evidenceIds.map(id => {
       const e = generation.evidence.find(item => item.evidenceId === id);
       if (!e) return invalid();
-      const location = e.origin?.jsonPointer ?? (e.locator.kind === 'json-pointer' ? e.locator.pointer : `lines ${String(e.locator.start)}-${String(e.locator.end)}`);
+      const location = e.origin?.jsonPointer ?? (e.origin !== undefined
+        ? `lines ${String(e.origin.range.startLine)}-${String(e.origin.range.endLine)}`
+        : e.locator.kind === 'json-pointer' ? e.locator.pointer : `lines ${String(e.locator.start)}-${String(e.locator.end)}`);
       return `- cite: [evidence:${id}]; kind: ${knowledgeEvidenceContentKind(e)}; ` +
         `source: ${label(e.origin?.sourceRef ?? e.sourceRef)}; location: ${label(JSON.stringify(location))}; ` +
         `source revision: ${label(e.sourceRevision ?? 'unknown')}; code revision: ${label(e.codeRevision ?? 'unknown')}; ` +

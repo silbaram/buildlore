@@ -1,13 +1,15 @@
 import { parseJsonWithLocationsStrict } from '../strict-json.js';
 import { serializeCanonicalJson } from '../atomic-file.js';
 import { containsSecretRedaction } from '../../sanitizer/redaction-marker.js';
+import { parseSourceChunk, sourceChunkPayload } from '../../projector/source-chunk-contract.js';
+import { sourceChunkIdentity } from '../../projector/source-identity.js';
 import { validateSourceOriginRange, validateJsonPointer } from '../../projector/source-contracts.js';
 import { boundedJson, choice, compare, digest, hash, identifier, invalid, keys, list,
   nullableText, portablePath, project, record, sha256, text } from './guards.js';
 import type { KnowledgeEvidenceV1, KnowledgeLocatorV1, KnowledgeSnapshotV1,
   KnowledgeSourceV1, KnowledgeSourceOriginV1 } from './types.js';
 
-function origins(value: unknown, content: string): readonly KnowledgeSourceOriginV1[] {
+function origins(value: unknown, content: string): NonNullable<KnowledgeSourceV1['origins']> {
   const lines = content.split('\n');
   const result = list(value, 8192).map((item) => {
     const origin = record(item);
@@ -17,24 +19,48 @@ function origins(value: unknown, content: string): readonly KnowledgeSourceOrigi
         (lines[origin.projectedLine - 1] ?? '').trim() === '') invalid();
     try {
       return Object.freeze({ projectedLine: origin.projectedLine, sourceRef: portablePath(origin.sourceRef),
-        jsonPointer: validateJsonPointer(origin.jsonPointer), range: validateSourceOriginRange(origin.range) });
+        jsonPointer: validateJsonPointer(origin.jsonPointer),
+        range: validateSourceOriginRange(origin.range) });
     } catch { return invalid(); }
   }).sort((a, b) => a.projectedLine - b.projectedLine);
   if (new Set(result.map((o) => o.projectedLine)).size !== result.length) invalid();
   return Object.freeze(result);
 }
 
-function parseSource(value: unknown): KnowledgeSourceV1 {
+function parseSource(value: unknown, projectId: string): KnowledgeSourceV1 {
   const input = record(value);
   keys(input, ['sourceId', 'sourceRef', 'sourceContentDigest', 'sourceRevision', 'codeRevision',
     'tracked', 'format', 'content', ...(Object.hasOwn(input, 'origins') ? ['origins'] : []),
+    ...(Object.hasOwn(input, 'chunk') ? ['chunk', 'originMappings'] : []),
     ...(Object.hasOwn(input, 'repositoryRevision') ? ['repositoryRevision'] : [])]);
   if (input.tracked !== null && typeof input.tracked !== 'boolean') invalid();
   const content = text(input.content, 262_144);
   if (input.origins !== undefined && input.format !== 'markdown') invalid();
+  let fragment: Pick<KnowledgeSourceV1, 'chunk' | 'originMappings'> = {};
+  if (input.chunk !== undefined) {
+    if (input.format !== 'markdown') invalid();
+    try {
+      const raw = record(input.chunk);
+      const chunk = parseSourceChunk(raw, content, sourceChunkIdentity(String(raw.parentSource), Number(raw.index)));
+      const parent = chunk.parentSource.split('/');
+      if (decodeURIComponent(parent[2] ?? '') !== projectId || decodeURIComponent(parent[5] ?? '') !== input.sourceRef) invalid();
+      let endLine = 0;
+      const lines = content.split('\n');
+      const originMappings = list(input.originMappings, 128).map((value) => {
+        const mapping = record(value); keys(mapping, ['canonical', 'origin']);
+        const canonical = validateSourceOriginRange(mapping.canonical), origin = validateSourceOriginRange(mapping.origin);
+        if (canonical.startLine <= endLine || canonical.endLine - canonical.startLine !== origin.endLine - origin.startLine ||
+            canonical.endLine > lines.length || canonical.endColumn > Array.from(lines[canonical.endLine - 1] ?? '').length + 1) invalid();
+        endLine = canonical.endLine;
+        return Object.freeze({ canonical, origin });
+      });
+      fragment = { chunk, originMappings: Object.freeze(originMappings) };
+    } catch { return invalid(); }
+  }
   if (input.repositoryRevision !== undefined && input.repositoryRevision !== null &&
       (typeof input.repositoryRevision !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(input.repositoryRevision))) invalid();
   return Object.freeze({
+    ...fragment,
     sourceId: identifier(input.sourceId), sourceRef: portablePath(input.sourceRef),
     sourceContentDigest: hash(input.sourceContentDigest),
     sourceRevision: nullableText(input.sourceRevision), codeRevision: nullableText(input.codeRevision),
@@ -98,8 +124,13 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
   const result: KnowledgeEvidenceV1[] = [];
   let start = 0;
   const originByLine = new Map(source.origins?.map((o) => [o.projectedLine, o]));
+  const chunk = source.chunk;
+  const prefix = chunk === undefined ? '' : Array.from(source.content).slice(0, chunk.payloadStart).join('');
+  const firstPayloadLine = prefix.split('\n').length;
+  const payload = chunk === undefined ? source.content : sourceChunkPayload(source.content, chunk);
+  const lastPayloadLine = firstPayloadLine + payload.replace(/\n$/u, '').split('\n').length - 1;
   while (start < lines.length) {
-    if ((lines[start] ?? '').trim() === '' ||
+    if (start + 1 < firstPayloadLine || start + 1 > lastPayloadLine || (lines[start] ?? '').trim() === '' ||
         (excludeRedacted && containsSecretRedaction(lines[start] ?? ''))) { start += 1; continue; }
     const origin = originByLine.get(start + 1);
     if (origin !== undefined) {
@@ -109,9 +140,18 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
       continue;
     }
     let end = start + 1;
-    while (end < lines.length && (lines[end] ?? '').trim() !== '' && !originByLine.has(end + 1) &&
+    while (end < lines.length && end < lastPayloadLine && (lines[end] ?? '').trim() !== '' && !originByLine.has(end + 1) &&
       !(excludeRedacted && containsSecretRedaction(lines[end] ?? ''))) end += 1;
-    result.push(evidence(source, { kind: 'lines', start: start + 1, end }, lines.slice(start, end).join('\n'), projectId));
+    const mapping = source.originMappings?.find((item) =>
+      item.canonical.startLine <= start + 1 && item.canonical.endLine >= end);
+    const rangeOrigin: KnowledgeSourceOriginV1 | undefined = mapping === undefined ? undefined : {
+      projectedLine: start + 1, sourceRef: source.sourceRef,
+      range: { startLine: start + 1 + mapping.origin.startLine - mapping.canonical.startLine,
+        endLine: end + mapping.origin.startLine - mapping.canonical.startLine,
+        startColumn: start + 1 === mapping.canonical.startLine ? mapping.origin.startColumn : 1,
+        endColumn: end === mapping.canonical.endLine ? mapping.origin.endColumn : Array.from(lines[end - 1] ?? '').length + 1 },
+    };
+    result.push(evidence(source, { kind: 'lines', start: start + 1, end }, lines.slice(start, end).join('\n'), projectId, rangeOrigin));
     start = end;
   }
   return Object.freeze(result);
@@ -120,9 +160,28 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
 export function createKnowledgeSnapshot(value: unknown, expectedProjectId: string): KnowledgeSnapshotV1 {
   const input = record(boundedJson(value));
   keys(input, ['projectId', 'selectionDigest', 'sanitizerPolicyDigest', 'sanitizerRulesVersion', 'sources']);
-  const sources = list(input.sources, 2048).map(parseSource).sort((a, b) => compare(a.sourceId, b.sourceId));
-  if (sources.length === 0 || new Set(sources.map((s) => s.sourceId)).size !== sources.length ||
-      new Set(sources.map((s) => s.sourceRef)).size !== sources.length) invalid();
+  const sources = list(input.sources, 2048).map(value => parseSource(value, expectedProjectId)).sort((a, b) => compare(a.sourceId, b.sourceId));
+  if (sources.length === 0 || new Set(sources.map((s) => s.sourceId)).size !== sources.length) invalid();
+  const groups = new Map<string, KnowledgeSourceV1[]>();
+  for (const source of sources) {
+    const group = groups.get(source.sourceRef) ?? []; group.push(source); groups.set(source.sourceRef, group);
+  }
+  for (const group of groups.values()) {
+    if (group.length === 1 && group[0]?.chunk === undefined) continue;
+    group.sort((a, b) => (a.chunk?.index ?? 0) - (b.chunk?.index ?? 0));
+    const first = group[0]!, chunk = first.chunk;
+    if (chunk === undefined || group.length !== chunk.count) invalid();
+    let end = 0;
+    const payloads: string[] = [];
+    for (const [index, source] of group.entries()) {
+      const current = source.chunk;
+      if (current === undefined || current.parentSource !== chunk.parentSource || current.index !== index + 1 ||
+          current.count !== chunk.count || current.start !== end || current.totalChars !== chunk.totalChars ||
+          current.fullContentHash !== chunk.fullContentHash || source.sourceContentDigest !== first.sourceContentDigest) invalid();
+      payloads.push(sourceChunkPayload(source.content, current)); end = current.end;
+    }
+    if (end !== chunk.totalChars || sha256(payloads.join('')) !== chunk.fullContentHash) invalid();
+  }
   let extracted: readonly KnowledgeEvidenceV1[];
   const projectId = project(input.projectId, expectedProjectId);
   try { extracted = sources.flatMap((s) => extractKnowledgeEvidence(s, projectId,

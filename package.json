@@ -89,7 +89,8 @@
     "./schemas/workspace-publish-result.schema.json": "./schemas/workspace-publish-result.schema.json",
     "./schemas/workspace-guide.schema.json": "./schemas/workspace-guide.schema.json",
     "./schemas/project-wiki.schema.json": "./schemas/project-wiki.schema.json",
-    "./schemas/workspace-setup.schema.json": "./schemas/workspace-setup.schema.json"
+    "./schemas/workspace-setup.schema.json": "./schemas/workspace-setup.schema.json",
+    "./schemas/source-document-v4.schema.json": "./schemas/source-document-v4.schema.json"
   },
   "files": [
     "dist",

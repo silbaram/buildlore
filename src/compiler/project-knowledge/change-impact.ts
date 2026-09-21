@@ -181,9 +181,11 @@ function differences(a: KnowledgeChangeEvidenceIdentity, b: KnowledgeChangeEvide
 type StructuralStage = Exclude<KnowledgeChangeMatchBasis, 'exact-evidence-id' | 'none'>;
 function structuralKeys(e: KnowledgeEvidenceV1): readonly (readonly [StructuralStage, string])[] {
   return [
-    ...(e.origin === undefined ? [] : [['origin-json-pointer', JSON.stringify([e.origin.sourceRef, e.origin.jsonPointer])] as const]),
+    ...(e.origin?.jsonPointer === undefined ? [] : [['origin-json-pointer', JSON.stringify([e.origin.sourceRef, e.origin.jsonPointer])] as const]),
     e.locator.kind === 'json-pointer' ? ['source-json-pointer', JSON.stringify([e.sourceRef, e.locator.pointer])] as const
-      : ['source-line-locator', JSON.stringify([e.sourceRef, e.locator.start, e.locator.end])] as const,
+      : ['source-line-locator', JSON.stringify(e.origin !== undefined && e.origin.jsonPointer === undefined
+        ? [e.origin.sourceRef, e.origin.range.startLine, e.origin.range.endLine]
+        : [e.sourceRef, e.locator.start, e.locator.end])] as const,
   ];
 }
 

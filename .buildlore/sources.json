@@ -1,0 +1,142 @@
+{
+  "projectId": "buildlore",
+  "schemaVersion": "buildlore.sources.v2",
+  "sourceRepository": "https://github.com/silbaram/buildlore.git",
+  "sources": [
+    {
+      "adapterId": "buildlore.generic",
+      "adapterVersion": 1,
+      "id": "agent-guide",
+      "kind": "markdown",
+      "path": "AGENTS.md",
+      "pathType": "file"
+    },
+    {
+      "adapterId": "buildlore.json",
+      "adapterVersion": 1,
+      "id": "package-manifest",
+      "kind": "json",
+      "metadata": {
+        "namespace": "buildlore.json",
+        "schemaVersion": "buildlore.json-metadata.v1",
+        "values": {
+          "profileRequired": true,
+          "profiles": [
+            {
+              "id": "buildlore-package-summary",
+              "match": {
+                "equals": "buildlore",
+                "pointer": "/name"
+              },
+              "required": [
+                "/description",
+                "/name",
+                "/version"
+              ],
+              "schemaVersion": "buildlore.json-extraction-profile.v1",
+              "sections": [
+                {
+                  "pointer": "/description",
+                  "title": "Description"
+                },
+                {
+                  "pointer": "/version",
+                  "title": "Version"
+                },
+                {
+                  "pointer": "/type",
+                  "title": "Module type"
+                },
+                {
+                  "pointer": "/bin",
+                  "title": "Command entry points"
+                },
+                {
+                  "pointer": "/scripts",
+                  "title": "Scripts"
+                },
+                {
+                  "pointer": "/dependencies",
+                  "title": "Runtime dependencies"
+                },
+                {
+                  "pointer": "/devDependencies",
+                  "title": "Development dependencies"
+                }
+              ],
+              "title": {
+                "pointer": "/name"
+              }
+            }
+          ]
+        }
+      },
+      "path": "package.json",
+      "pathType": "file"
+    },
+    {
+      "adapterId": "buildlore.generic",
+      "adapterVersion": 1,
+      "id": "product-readme",
+      "kind": "markdown",
+      "path": "README.md",
+      "pathType": "file"
+    },
+    {
+      "adapterId": "buildlore.generic",
+      "adapterVersion": 1,
+      "id": "project-code",
+      "kind": "code",
+      "path": "src",
+      "pathType": "directory",
+      "recursive": true
+    },
+    {
+      "adapterId": "buildlore.json",
+      "adapterVersion": 1,
+      "id": "project-schemas",
+      "kind": "json",
+      "metadata": {
+        "namespace": "buildlore.json",
+        "schemaVersion": "buildlore.json-metadata.v1",
+        "values": {
+          "profileRequired": true,
+          "profiles": [
+            {
+              "id": "json-schema-summary",
+              "include": [
+                "/$id",
+                "/$schema",
+                "/required",
+                "/title"
+              ],
+              "match": {
+                "equals": "https://json-schema.org/draft/2020-12/schema",
+                "pointer": "/$schema"
+              },
+              "required": [
+                "/$id",
+                "/$schema"
+              ],
+              "schemaVersion": "buildlore.json-extraction-profile.v1",
+              "title": {
+                "pointer": "/$id"
+              }
+            }
+          ]
+        }
+      },
+      "path": "schemas",
+      "pathType": "directory",
+      "recursive": true
+    },
+    {
+      "adapterId": "buildlore.generic",
+      "adapterVersion": 1,
+      "id": "workflow-guide",
+      "kind": "markdown",
+      "path": "PLAN2AGENT.md",
+      "pathType": "file"
+    }
+  ]
+}

@@ -23,6 +23,7 @@ import {
   type SelectedSourceFile,
 } from './source-manifest.js';
 import { createSourceDocument, normalizeSourceBody } from './source-document.js';
+import { splitProjectSource } from './source-chunks.js';
 import { unicodeScalarLength } from './text-units.js';
 import { createCollectionSourceIdentity } from './source-identity.js';
 import type { SourceDocument } from './types.js';
@@ -250,11 +251,15 @@ export async function projectSelectedGenericSource(
   projectSourceProducer(candidate);
   let canonicalDocument: SourceDocument;
   try {
+    // This in-memory preview grants no persistence authority. The full candidate
+    // remains intact and sync re-partitions only the security-approved body.
+    const preview = splitProjectSource(candidate)[0]!;
     canonicalDocument = createSourceDocument({
-      body: candidate.body,
-      descriptor: candidate.descriptor,
+      body: preview.body,
+      descriptor: preview.descriptor!,
+      ...(preview.chunk === undefined ? {} : { chunk: preview.chunk }),
       ingestedAt: candidate.ingestedAt,
-      originMappings: candidate.originMappings,
+      originMappings: preview.originMappings!,
       producer: candidate.producer,
       projectId: input.projectId,
       source: candidate.sourceUri,
@@ -272,8 +277,10 @@ export async function projectSelectedGenericSource(
       ...canonicalDocument,
       buildlore: Object.freeze({ ...canonicalDocument.buildlore }),
     }),
-    originMappings: canonicalDocument.buildlore.originMappings ?? candidate.originMappings,
-    rangeMappings: canonicalDocument.buildlore.originMappings ?? candidate.rangeMappings,
+    // The bounded document is a preview. Persistence sanitizes and partitions
+    // the full body, so its provenance must still cover the entire original.
+    originMappings: candidate.originMappings,
+    rangeMappings: candidate.rangeMappings,
   });
 }
 

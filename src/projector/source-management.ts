@@ -111,6 +111,7 @@ export interface SourceAddInput {
   readonly kind: GenericSourceKind | 'json';
   readonly path: string;
   readonly projectId: string;
+  /** New directories default to recursive; existing declarations keep their scope. */
   readonly recursive?: boolean;
 }
 
@@ -787,6 +788,14 @@ export function createSourceManagement(
             'Recursive source declaration requires a directory.',
           );
         }
+        const existing = current.sources.find((entry) => entry.id === input.id);
+        let recursive = input.recursive;
+        if (pathType === 'directory') {
+          recursive ??= existing?.pathType === 'directory' ? existing.recursive : true;
+          // An omitted legacy value means false. Keep its original byte form on re-add.
+          if (recursive === false && existing?.pathType === 'directory' &&
+              existing.recursive === undefined) recursive = undefined;
+        }
         const declaration = {
           adapterId: input.kind === 'json' ? JSON_SOURCE_ADAPTER_ID : GENERIC_SOURCE_ADAPTER_ID,
           adapterVersion: 1,
@@ -794,9 +803,8 @@ export function createSourceManagement(
           kind: input.kind,
           path: sourceRef,
           pathType,
-          ...(pathType === 'directory' && input.recursive === true ? { recursive: true } : {}),
+          ...(pathType === 'directory' && recursive !== undefined ? { recursive } : {}),
         } as const;
-        const existing = current.sources.find((entry) => entry.id === input.id);
         if (existing !== undefined &&
             serializeCanonicalJson(existing) !== serializeCanonicalJson(declaration)) {
           throw new SourceManagementError(

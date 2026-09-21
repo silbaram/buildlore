@@ -54,10 +54,12 @@ import {
 import { p2aArtifactRootRefs } from './p2a-source-adapter.js';
 import {
   createProjectSourceWriter,
+  renderExpectedProjectSource,
   isCollectableProjectSourceKind,
   type ProjectSourceInput,
   type ProjectSourceTargetSnapshot,
-  type ProjectSourceWriter,
+  type ChunkProjectSourceWriter,
+  type RetiredSourceChunk,
 } from './project-source-writer.js';
 import {
   readSourceCollectionManifest,
@@ -65,7 +67,7 @@ import {
   type LoadedSourceCollectionManifest,
   type SourceSelectionInventory,
 } from './source-manifest.js';
-import { createSourceDocument, renderSourceDocument } from './source-document.js';
+import { splitProjectSource } from './source-chunks.js';
 import {
   createSourceRevisionReader,
   type SourceRevisionReader,
@@ -122,6 +124,8 @@ export interface HubSyncFailurePort {
 export interface HubSyncHooks {
   readonly afterPlan?: () => Promise<void> | void;
   readonly beforeFirstWrite?: () => Promise<void> | void;
+  /** @internal Verification seam for interrupted source persistence. */
+  readonly afterSourceWrite?: () => Promise<void> | void;
 }
 
 export interface HubSyncOptions {
@@ -146,7 +150,8 @@ interface PreparedCandidate {
 }
 
 interface SanitizedCandidate extends PreparedCandidate {
-  readonly snapshot: ProjectSourceTargetSnapshot;
+  readonly parts: readonly Readonly<{ input: ProjectSourceInput; snapshot: ProjectSourceTargetSnapshot }>[];
+  readonly retired: readonly RetiredSourceChunk[];
 }
 
 interface RejectedCandidate {
@@ -743,7 +748,7 @@ async function assertInputsUnchanged(
   planned: PlannedState,
   revisionReader: SourceRevisionReader,
   prepared: readonly SanitizedCandidate[],
-  writer: ProjectSourceWriter,
+  writer: ChunkProjectSourceWriter,
   failure: HubSyncFailurePort,
   jsonKnowledgeAdapters: readonly RegisteredJsonKnowledgeAdapterV1[] = [],
 ): Promise<void> {
@@ -780,7 +785,9 @@ async function assertInputsUnchanged(
       serializeCanonicalJson(inventory) !== serializeCanonicalJson(planned.inventory) ||
       policy.digest !== planned.policyDigest || profile.bindingDigest !== planned.profile.bindingDigest
     ) failure.fail('SYNC_INPUT_DRIFT', 'drift');
-    for (const item of prepared) await writer.assertUnchanged(item.input, item.snapshot);
+    for (const item of prepared) {
+      for (const part of [...item.parts, ...item.retired]) await writer.assertUnchanged(part.input, part.snapshot);
+    }
   } catch (cause) {
     if (cause instanceof Error && cause.name === 'ProjectSyncError') throw cause;
     failure.fail('SYNC_INPUT_DRIFT', 'drift', { cause });
@@ -801,18 +808,24 @@ function collectionEntries(
   inventory: SourceSelectionInventory,
   failure: HubSyncFailurePort,
 ): readonly ProjectSyncPlanEntrySummary[] {
-  const entries: ProjectSyncPlanEntrySummary[] = prepared.map((item) => Object.freeze({
-    decision: 'include' as const,
-    reasonCode: item.candidate.documentKind === 'p2a-planning'
-      ? 'selected_p2a_planning'
-      : `selected_${item.candidate.documentKind}`,
-    security: item.report,
-    sourceKind: item.candidate.sourceKind,
-    sourceRef: item.candidate.sourceRef,
-    sourceRevision: item.candidate.sourceRevision,
-    target: item.candidate.target,
-    writeStatus: item.snapshot.writeStatus,
-  }));
+  const entries: ProjectSyncPlanEntrySummary[] = prepared.flatMap((item) => [
+    ...item.parts.map((part) => Object.freeze({
+      decision: 'include' as const,
+      reasonCode: item.candidate.documentKind === 'p2a-planning'
+        ? 'selected_p2a_planning'
+        : `selected_${item.candidate.documentKind}`,
+      security: item.report,
+      sourceKind: item.candidate.sourceKind,
+      sourceRef: item.candidate.sourceRef,
+      sourceRevision: item.candidate.sourceRevision,
+      target: part.input.target,
+      writeStatus: part.snapshot.writeStatus,
+    })),
+    ...item.retired.map((part) => Object.freeze({ decision: 'include' as const,
+      reasonCode: 'retired_source_chunk', security: item.report, sourceKind: item.sourceKind,
+      sourceRef: item.candidate.sourceRef, sourceRevision: part.input.sourceRevision,
+      target: part.input.target, writeStatus: 'remove' as const })),
+  ]);
   for (const entry of adapterEntries) {
     if (entry.decision === 'include') continue;
     if (!['blocked', 'error', 'exclude', 'quarantine'].includes(entry.decision)) continue;
@@ -964,13 +977,16 @@ export async function runHubProjectSync(
   }
   const prepared: SanitizedCandidate[] = [];
   for (const item of preparedWithoutSnapshots) {
-    let snapshot;
     try {
-      snapshot = await writer.inspect(item.input);
+      const parts = [];
+      for (const part of splitProjectSource(item.input)) {
+        parts.push({ input: part, snapshot: await writer.inspect(part) });
+      }
+      const retired = await writer.retiredChunks(item.input, new Set(parts.map((part) => part.input.target)));
+      prepared.push(Object.freeze({ ...item, parts, retired }));
     } catch (cause) {
       return failure.fail('SYNC_TARGET_COLLISION', 'write', { cause });
     }
-    prepared.push(Object.freeze({ ...item, snapshot }));
   }
   const entries = collectionEntries(prepared, collection.entries, planned.inventory, failure);
   if (entries.some((entry) =>
@@ -1044,7 +1060,8 @@ export async function runHubProjectSync(
       ...common,
       appliedCount: 0,
       dryRun: true,
-      remainingCount: prepared.filter((item) => item.snapshot.writeStatus !== 'unchanged').length +
+      remainingCount: prepared.reduce((count, item) => count + item.retired.length +
+        item.parts.filter((part) => part.snapshot.writeStatus !== 'unchanged').length, 0) +
         execution.entries.filter((entry) => entry.decision === 'include' &&
           entry.writeStatus !== 'unchanged').length,
       writes: Object.freeze([]),
@@ -1129,33 +1146,27 @@ export async function runHubProjectSync(
         body: body.approvedBody,
         title: title.approvedBody,
       });
-      const markdown = renderSourceDocument(createSourceDocument({
-        body: approvedInput.body,
-        ...(approvedInput.descriptor === undefined
-          ? {}
-          : { descriptor: approvedInput.descriptor }),
-        ingestedAt: approvedInput.ingestedAt,
-        ...(approvedInput.originMappings === undefined
-          ? {}
-          : { originMappings: approvedInput.originMappings }),
-        ...(approvedInput.jsonOrigins === undefined
-          ? {}
-          : { jsonOrigins: approvedInput.jsonOrigins }),
-        producer: item.candidate.producer,
-        projectId: input.projectId,
-        source: approvedInput.sourceUri,
-        sourceKind: approvedInput.sourceKind,
-        sourceRevision: approvedInput.sourceRevision,
-        sourceType: 'file',
-        title: approvedInput.title,
-      }));
-      const writeStatus = await writer.write(approvedInput, markdown, item.snapshot);
-      writes.push(Object.freeze({
-        sourceKind: approvedInput.sourceKind,
-        sourceRevision: approvedInput.sourceRevision,
-        target: approvedInput.target,
-        writeStatus,
-      }));
+      const approvedParts = splitProjectSource(approvedInput);
+      if (serializeCanonicalJson(approvedParts) !== serializeCanonicalJson(item.parts.map((part) => part.input))) {
+        failure.fail('SYNC_SANITIZATION_FAILED', 'sanitization');
+      }
+      for (const [index, part] of approvedParts.entries()) {
+        const snapshot = item.parts[index]?.snapshot;
+        if (snapshot === undefined) return failure.fail('SYNC_INPUT_DRIFT', 'drift');
+        const markdown = renderExpectedProjectSource(part, input.projectId);
+        const writeStatus = await writer.write(part, markdown, snapshot);
+        writes.push(Object.freeze({ sourceKind: part.sourceKind,
+          sourceRevision: part.sourceRevision, target: part.target, writeStatus }));
+        await options.hooks?.afterSourceWrite?.();
+      }
+      // New parts are durable before retiring old ones. A retry discovers stale
+      // siblings even if the first part was already replaced by a shorter source.
+      for (const retired of item.retired) {
+        await writer.remove(retired);
+        writes.push(Object.freeze({ sourceKind: retired.input.sourceKind,
+          sourceRevision: retired.input.sourceRevision, target: retired.input.target,
+          writeStatus: 'remove' }));
+      }
     } catch (cause) {
       if (cause instanceof Error && cause.name === 'ProjectSyncError') throw cause;
       return failure.fail('SYNC_APPLY_FAILED', 'write', {

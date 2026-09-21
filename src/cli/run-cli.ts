@@ -770,6 +770,7 @@ async function executeCommand(
         path: requiredStringOption(command, '--path'),
         projectId,
         ...(command.options['--recursive'] === true ? { recursive: true } : {}),
+        ...(command.options['--no-recursive'] === true ? { recursive: false } : {}),
       });
     }
     case 'source.list': {

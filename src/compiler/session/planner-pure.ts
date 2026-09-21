@@ -56,11 +56,18 @@ export function createSessionCitationAnchors(input: {
       : mapping.origin.startLine + canonicalLine - mapping.canonical.startLine);
     const originalFile = jsonOrigin?.origin.sourceRef ?? input.sourceRef;
     const originalRange = jsonOrigin?.origin.range;
+    const originalText = originalLines[originalLine - 1];
+    const mappedQuote = mapping === undefined || originalText === undefined ? originalText
+      : Array.from(originalText).slice(
+          canonicalLine === mapping.canonical.startLine ? mapping.origin.startColumn - 1 : 0,
+          canonicalLine === mapping.canonical.endLine ? mapping.origin.endColumn - 1 : undefined,
+        ).join('');
     if (
       quote === undefined ||
       quote.trim().length === 0 ||
       quote.length > SESSION_COMPILE_LIMITS.maxQuoteCodeUnits ||
-      (jsonOrigin === undefined && originalLines[originalLine - 1] !== quote)
+      (input.originMappings !== undefined && mapping === undefined && jsonOrigin === undefined) ||
+      (jsonOrigin === undefined && originalText !== quote && mappedQuote !== quote)
     ) continue;
     const quoteDigest = sessionSha256(quote);
     anchors.push(Object.freeze({

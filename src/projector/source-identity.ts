@@ -54,6 +54,10 @@ function collectionIdentityParts(
   source: string,
 ): readonly [string, string, string, string, string] | null {
   const segments = source.split('/');
+  if (segments.length === 8 && segments[6] === 'part' &&
+      /^[2-9]$|^[1-9][0-9]{1,3}$/u.test(segments[7] ?? '')) {
+    segments.splice(6);
+  }
   if (segments.length !== 6 || segments[0] !== 'buildlore+source:') return null;
   const decoded = segments.slice(1).map(decodeCanonicalSegment);
   if (decoded.some((value) => value === null)) return null;
@@ -107,6 +111,7 @@ export function validateCollectionSourceIdentity(
   input: CollectionSourceIdentityInput,
   source: string,
 ): string | null {
+  if (source.split('/').length !== 6) return null;
   const parts = validatedCollectionIdentityParts(input, source);
   if (parts === null) return null;
   const [, , , declarationId, sourceRef] = parts;
@@ -121,7 +126,16 @@ export function validateCollectionSourceIdentityBinding(
   input: CollectionSourceIdentityBinding,
   source: string,
 ): string | null {
-  return validatedCollectionIdentityParts(input, source)?.join('\n') ?? null;
+  const parts = validatedCollectionIdentityParts(input, source);
+  return parts === null ? null : [...parts, ...source.split('/').slice(6)].join('\n');
+}
+
+export function sourceChunkIdentity(parentSource: string, index: number): string {
+  if (parentSource.split('/').length !== 6 || collectionIdentityParts(parentSource) === null ||
+      !Number.isSafeInteger(index) || index < 1 || index > 4096) {
+    throw new ProjectionError('PROJECTION_ARTIFACT_INVALID', 'Source chunk identity is invalid.');
+  }
+  return index === 1 ? parentSource : `${parentSource}/part/${String(index)}`;
 }
 
 function canonicalPlanningArtifact(

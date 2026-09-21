@@ -12,6 +12,7 @@ import {
 } from '../knowledge/local-project-registry.js';
 import { decodeUtf8Strict, parseJsonStrict } from '../knowledge/strict-json.js';
 import { validateProjectId, validateRepositoryLocator } from '../knowledge/validation.js';
+import { CODE_SOURCE_EXTENSION_PATTERN, hasProtectedCredentialPath } from './source-path-policy.js';
 import {
   SourceSelectionError,
   type SourceSelectionErrorCode,
@@ -54,13 +55,8 @@ const SOURCE_DECLARATION_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const WINDOWS_DRIVE_PREFIX_PATTERN = /^[A-Za-z]:/u;
 const MARKDOWN_EXTENSION_PATTERN = /\.(?:md|markdown)$/u;
 const TEXT_EXTENSION_PATTERN = /\.(?:text|txt)$/u;
-const CODE_EXTENSION_PATTERN = /\.(?:bash|c|cc|cjs|cpp|cs|css|cxx|fish|go|h|hpp|htm|html|java|js|jsx|kt|kts|less|mjs|php|py|rb|rs|sass|scala|scss|sh|sql|svelte|swift|ts|tsx|vue|xml|zsh)$/u;
 const JSON_EXTENSION_PATTERN = /\.json$/u;
 const P2A_PLANNING_EXTENSION_PATTERN = /\.(?:json|jsonl|md|markdown)$/u;
-const CREDENTIAL_PATH_PATTERN =
-  /(?:^|[/_.-])(?:api[-_]?key|authorization|bearer|credentials?|password|private[-_]?key|refresh[-_]?token|secrets?|tokens?|access[-_]?token)(?:$|[/_.-])/iu;
-const CREDENTIAL_VALUE_PATH_PATTERN =
-  /(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,255}|npm_[A-Za-z0-9]{20,255}|sk-ant-[A-Za-z0-9_-]{20,255}|sk-[A-Za-z0-9_-]{20,255}|AIza[A-Za-z0-9_-]{32,64})/u;
 
 export type SourceDocumentKind = 'code' | 'json' | 'markdown' | 'p2a-planning' | 'text';
 
@@ -293,8 +289,7 @@ export function validateSourceSelectionPath(value: unknown): string {
     generatedRoot === 'export' ||
     generatedRoot === 'exports' ||
     hasUnsafeCharacter(path) ||
-    CREDENTIAL_PATH_PATTERN.test(path) ||
-    CREDENTIAL_VALUE_PATH_PATTERN.test(path)
+    hasProtectedCredentialPath(path)
   ) {
     return fail('SOURCE_MANIFEST_INVALID', 'path', 'Source declaration path is unsafe.');
   }
@@ -751,7 +746,7 @@ function isExecutionSelectionPath(sourceRef: string): boolean {
 function matchesDocumentKind(documentKind: SourceDocumentKind, sourceRef: string): boolean {
   switch (documentKind) {
     case 'code':
-      return CODE_EXTENSION_PATTERN.test(sourceRef);
+      return CODE_SOURCE_EXTENSION_PATTERN.test(sourceRef);
     case 'markdown':
       return MARKDOWN_EXTENSION_PATTERN.test(sourceRef);
     case 'text':

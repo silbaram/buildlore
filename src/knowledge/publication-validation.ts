@@ -102,6 +102,8 @@ export function createPublicationBlobPolicy(
           if (identity === null) return false;
           const descriptor = document.buildlore.descriptor;
           const decoded = { ...document, source: identity, buildlore: { ...document.buildlore,
+            ...(document.buildlore.chunk === undefined ? {} : { chunk: { ...document.buildlore.chunk,
+              parentSource: identity.split('\n').slice(0, 5).join('\n') } }),
             ...(descriptor === undefined ? {} : { descriptor: { ...descriptor, sourceUri: identity } }) } };
           await screenRetainedKnowledgeValue(decoded, async scanBody => {
             const scanDigest = sha256(scanBody);

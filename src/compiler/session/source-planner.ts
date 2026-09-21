@@ -28,7 +28,8 @@ import {
   parseSourceDocument,
   renderSourceDocument,
 } from '../../projector/source-document.js';
-import { isCollectableProjectSourceKind } from '../../projector/project-source-writer.js';
+import { isCollectableProjectSourceKind, type ProjectSourceInput } from '../../projector/project-source-writer.js';
+import { splitProjectSource } from '../../projector/source-chunks.js';
 import type { BuildLoreSourceMetadata } from '../../projector/types.js';
 import { sourceRetrievalMeaningFromDescriptor } from '../../projector/source-contracts.js';
 import {
@@ -182,19 +183,20 @@ function sourceSelectionDigest(
   });
 }
 
-function plannedSourceId(candidate: CollectionCandidate, sanitizedBody: string): string {
+function plannedSourceId(candidate: CollectionCandidate & ProjectSourceInput, sanitizedBody: string): string {
   return 'source-' + digestSessionValue({
     projectId: candidate.projectId,
     revision: candidate.sourceRevision,
     sanitizedContentDigest: sessionSha256(sanitizedBody),
     sourceKind: candidate.sourceKind,
     sourceRef: candidate.sourceRef,
+    ...(candidate.chunk === undefined ? {} : { chunk: candidate.chunk }),
   }).slice('sha256:'.length);
 }
 
 async function assertStoredSource(
   workspace: string,
-  candidate: CollectionCandidate,
+  candidate: ProjectSourceInput,
   approvedTitle: string,
   approvedBody: string,
   projectId: string,
@@ -219,6 +221,7 @@ async function assertStoredSource(
   try {
     expected = createSourceDocument({
       body: approvedBody,
+      ...(candidate.chunk === undefined ? {} : { chunk: candidate.chunk }),
       ...(candidate.descriptor === undefined ? {} : { descriptor: candidate.descriptor }),
       ingestedAt: document.ingestedAt,
       ...(candidate.originMappings === undefined
@@ -227,7 +230,7 @@ async function assertStoredSource(
       ...(candidate.jsonOrigins === undefined
         ? {}
         : { jsonOrigins: candidate.jsonOrigins }),
-      producer: candidate.producer,
+      producer: candidate.producer ?? 'p2a',
       projectId,
       source: candidate.sourceUri,
       sourceKind: candidate.sourceKind,
@@ -341,48 +344,57 @@ async function buildPlannedSources(input: {
       if (await sanitizeCandidateText(candidate, metadata, candidate.sourceKind, input.security,
         input.policy, input.projectId) !== metadata) return denied(input.projectId);
     }
-    const storedSource = await assertStoredSource(
-      input.workspace,
-      candidate,
-      approvedTitle,
-      approvedBody,
-      input.projectId,
-    );
-    input.onPhase?.('source-stored-verified');
-    const originalBody = decodeUtf8Strict(await readSelectedSourceBytes(input.checkout, file));
-    if (input.rejectCredentialFindings === true) {
-      await sanitizeCandidateText(candidate, originalBody, candidate.sourceKind, input.security, input.policy, input.projectId, true);
-    }
-    input.onPhase?.('source-original-read');
-    const id = plannedSourceId(candidate, storedSource.body);
-    result.push(Object.freeze({
-      citationAnchors: createSessionCitationAnchors({
-        originalBody,
-        ...(storedSource.buildlore.originMappings === undefined
-          ? {}
-          : { originMappings: storedSource.buildlore.originMappings }),
-        ...(storedSource.buildlore.jsonOrigins === undefined
-          ? {}
-          : { jsonOrigins: storedSource.buildlore.jsonOrigins }),
+    let originalBody: string | undefined;
+    for (const part of splitProjectSource({ ...candidate, body: approvedBody, title: approvedTitle })) {
+      const partCandidate = { ...candidate, ...part };
+      const storedSource = await assertStoredSource(
+        input.workspace,
+        partCandidate,
+        approvedTitle,
+        part.body,
+        input.projectId,
+      );
+      input.onPhase?.('source-stored-verified');
+      if (originalBody === undefined) {
+        originalBody = decodeUtf8Strict(await readSelectedSourceBytes(input.checkout, file));
+        if (input.rejectCredentialFindings === true) {
+          await sanitizeCandidateText(candidate, originalBody, candidate.sourceKind, input.security, input.policy, input.projectId, true);
+        }
+        input.onPhase?.('source-original-read');
+      }
+      const id = plannedSourceId(partCandidate, storedSource.body);
+      result.push(Object.freeze({
+        ...(part.chunk === undefined ? {} : { chunk: part.chunk, originMappings: storedSource.buildlore.originMappings ?? [] }),
+        citationAnchors: createSessionCitationAnchors({
+          originalBody,
+          ...(storedSource.buildlore.originMappings === undefined
+            ? {}
+            : { originMappings: storedSource.buildlore.originMappings }),
+          ...(storedSource.buildlore.jsonOrigins === undefined
+            ? {}
+            : { jsonOrigins: storedSource.buildlore.jsonOrigins }),
+          sanitizedBody: storedSource.body,
+          sourceId: id,
+          sourceRef: candidate.sourceRef,
+        }),
+        compilerSourceContentDigest: storedSource.contentDigest,
+        compilerSourceId: compilerSourceId(partCandidate, input.projectId),
+        originalContentDigest: candidate.contentDigest,
+        revision: candidate.sourceRevision,
+        retrievalMeaning: candidate.retrievalMeaning ??
+          sourceRetrievalMeaningFromDescriptor(candidate.descriptor),
         sanitizedBody: storedSource.body,
+        sanitizedContentDigest: sessionSha256(storedSource.body),
         sourceId: id,
+        sourceKind: candidate.sourceKind,
         sourceRef: candidate.sourceRef,
-      }),
-      compilerSourceContentDigest: storedSource.contentDigest,
-      compilerSourceId: compilerSourceId(candidate, input.projectId),
-      originalContentDigest: candidate.contentDigest,
-      revision: candidate.sourceRevision,
-      retrievalMeaning: candidate.retrievalMeaning ??
-        sourceRetrievalMeaningFromDescriptor(candidate.descriptor),
-      sanitizedBody: storedSource.body,
-      sanitizedContentDigest: sessionSha256(storedSource.body),
-      sourceId: id,
-      sourceKind: candidate.sourceKind,
-      sourceRef: candidate.sourceRef,
-      title: approvedTitle,
-    }));
+        title: approvedTitle,
+      }));
+    }
   }
+
   result.sort((left, right) => left.sourceId < right.sourceId ? -1 : left.sourceId > right.sourceId ? 1 : 0);
+  if (result.length > SESSION_COMPILE_LIMITS.maxSources) return denied(input.projectId);
   if (Buffer.byteLength(serializeCanonicalJson(result), 'utf8') >
       SESSION_COMPILE_LIMITS.maxPlanBytes) return denied(input.projectId);
   return Object.freeze(result);
@@ -440,7 +452,8 @@ export function createSessionCompilePlanner(
         const inventory = await selectDeclaredSourceFiles(binding.checkout, loadedManifest, {
           limits: {
             maxAggregateBytes: SESSION_COMPILE_LIMITS.maxPlanBytes,
-            maxFileBytes: SESSION_COMPILE_LIMITS.maxSourceBytes,
+            // Raw documents use the collector's bound; persisted fragments use
+            // maxSourceBytes independently when each stored source is read.
             maxFileCount: SESSION_COMPILE_LIMITS.maxSources,
           },
           sourceAdapterRegistry: profile.sourceAdapters,
