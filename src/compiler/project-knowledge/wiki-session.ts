@@ -1,3 +1,4 @@
+import { enforceResourceBudget } from '../../knowledge/resource-budget.js';
 import { boundedJson, digest, hash, invalid, keys, list, project, record, text, ProjectKnowledgeError } from '../../knowledge/project-knowledge/guards.js';
 import type { KnowledgeDigest, KnowledgeGenerationV1 } from '../../knowledge/project-knowledge/types.js';
 import { parseKnowledgeProposal } from './proposal.js';
@@ -25,7 +26,7 @@ export interface KnowledgeWikiSession {
 }
 
 function freezeState(basis: Omit<KnowledgeWikiState, 'stateDigest'>): KnowledgeWikiState {
-  if (Buffer.byteLength(JSON.stringify(basis)) > 8 * 1024 * 1024) invalid();
+  enforceResourceBudget('wiki-state', 'utf8-bytes', Buffer.byteLength(JSON.stringify(basis)), 8 * 1024 * 1024);
   return Object.freeze({ ...basis, stateDigest: digest(basis) });
 }
 function wikiView(state: KnowledgeWikiState) {

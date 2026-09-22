@@ -1,3 +1,4 @@
+import { enforceResourceBudget, type ResourceBudgetDiagnostic } from '../resource-budget.js';
 import { createHash } from 'node:crypto';
 import { serializeCanonicalJson } from '../atomic-file.js';
 import { parseJsonWithLocationsStrict } from '../strict-json.js';
@@ -95,7 +96,7 @@ export function project(value: unknown, expected: string): string {
   return result;
 }
 /** Reject non-JSON values, cycles and excessive aggregate input before recursive codecs. */
-export function boundedJson(value: unknown): unknown {
+export function serializeBoundedJson(value: unknown, stage: ResourceBudgetDiagnostic['stage'] = 'knowledge-input'): string {
   // JSON.stringify silently drops undefined/function fields, converts NaN to
   // null and invokes toJSON/getters. Reject those values before normalization.
   const ancestors = new Set<object>();
@@ -106,10 +107,11 @@ export function boundedJson(value: unknown): unknown {
     if (!item) invalid();
     if (item.leave) { ancestors.delete(item.value as object); continue; }
     nodes += 1;
-    if (nodes > 300_000 || item.depth > 24) invalid();
+    enforceResourceBudget(stage, 'json-nodes', nodes, 300_000);
+    enforceResourceBudget(stage, 'json-depth', item.depth, 24);
     if (item.value === null || typeof item.value === 'boolean') continue;
     if (typeof item.value === 'string') {
-      if (item.value.length > 524_288 || !item.value.isWellFormed()) invalid();
+      if (item.value.length > 524_288 || !item.value.isWellFormed() || Array.from(item.value).length > 262_144) invalid();
       continue;
     }
     if (typeof item.value === 'number') {
@@ -135,7 +137,14 @@ export function boundedJson(value: unknown): unknown {
   }
   let serialized: string;
   try { serialized = JSON.stringify(value); } catch { return invalid(); }
-  if (typeof serialized !== 'string' || Buffer.byteLength(serialized) > 16 * 1024 * 1024) invalid();
+  if (typeof serialized !== 'string') invalid();
+  enforceResourceBudget(stage, 'utf8-bytes', Buffer.byteLength(serialized), 16 * 1024 * 1024);
+  return serialized;
+}
+
+/** Normalize external values after the same JSON type and resource checks. */
+export function boundedJson(value: unknown, stage: ResourceBudgetDiagnostic['stage'] = 'knowledge-input'): unknown {
+  const serialized = serializeBoundedJson(value, stage);
   try {
     return parseJsonWithLocationsStrict(serialized, {
       maxDepth: 24, maxArrayItems: 8192, maxNodes: 300_000,

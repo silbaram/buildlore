@@ -1,3 +1,4 @@
+import { resourceBudget } from '../../knowledge/resource-budget.js';
 import { constants as fsConstants } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 
@@ -465,8 +466,10 @@ export function finalizeSessionCompilePlan(plan: PlanWithoutDigest): SessionComp
     mergeCandidates: plan.mergeCandidates,
     allowedLinkTargets: plan.allowedLinkTargets,
   });
-  if (Buffer.byteLength(canonicalSessionJson(result), 'utf8') > SESSION_COMPILE_LIMITS.maxPlanBytes) {
-    throw new SessionCompileError('SESSION_PLAN_DENIED', plan.projectId);
+  const bytes = Buffer.byteLength(canonicalSessionJson(result), 'utf8');
+  if (bytes > SESSION_COMPILE_LIMITS.maxPlanBytes) {
+    throw new SessionCompileError('SESSION_PLAN_DENIED', plan.projectId, { resourceBudget:
+      resourceBudget('legacy-session-plan', 'utf8-bytes', bytes, SESSION_COMPILE_LIMITS.maxPlanBytes) });
   }
   return result;
 }

@@ -1,3 +1,4 @@
+import { ResourceBudgetError, resourceBudget, type ResourceBudgetDiagnostic } from '../../knowledge/resource-budget.js';
 import { isWarningSummary } from '../../sanitizer/findings.js';
 import { join, resolve } from 'node:path';
 
@@ -31,7 +32,7 @@ import {
 import { isCollectableProjectSourceKind, type ProjectSourceInput } from '../../projector/project-source-writer.js';
 import { splitProjectSource } from '../../projector/source-chunks.js';
 import type { BuildLoreSourceMetadata } from '../../projector/types.js';
-import { sourceRetrievalMeaningFromDescriptor } from '../../projector/source-contracts.js';
+import { sourceRetrievalMeaningFromDescriptor, type SourceJsonOriginMappingV1 } from '../../projector/source-contracts.js';
 import {
   boundRawSourceInputsAreSafe,
   inspectRawSourceInputs,
@@ -80,6 +81,29 @@ export interface SessionCompilePlanSnapshot {
   readonly workspace: string;
 }
 
+/** @internal Sanitized, source-bound input shared by Wiki and legacy session planning. */
+export interface VerifiedSessionSource extends Omit<SessionPlannedSource, 'citationAnchors'> {
+  readonly jsonOrigins?: readonly SourceJsonOriginMappingV1[];
+}
+
+export interface VerifiedSessionSources {
+  readonly projectId: string;
+  readonly policyDigest: SessionSha256Digest;
+  readonly selectionDigest: SessionSha256Digest;
+  readonly sources: readonly VerifiedSessionSource[];
+}
+
+type PlanBase = Omit<SessionCompilePlanV1,
+  'planDigest' | 'sources' | 'tasks' | 'mergeCandidates' | 'allowedLinkTargets'>;
+
+interface SourcePreparation<T> extends Omit<SessionCompilePlanSnapshot, 'plan'> {
+  readonly planBase: PlanBase;
+  readonly sources: readonly T[];
+  readonly allowedLinkTargets: SessionCompilePlanV1['allowedLinkTargets'];
+}
+
+type SourceRepresentation<T> = (source: VerifiedSessionSource, originalBody: string) => T;
+
 export interface SessionCompilePlanner {
   create(projectId: string): Promise<SessionCompilePlanSnapshot>;
 }
@@ -124,6 +148,9 @@ async function sanitizeCandidateText(
   rejectCredentialFindings = false,
 ): Promise<string> {
   const bodyDigest = sessionSha256(body);
+  // Reports describe normalized input; the prepared-source binding below still
+  // verifies the exact bytes passed to the sanitizer.
+  const normalizedBodyDigest = sessionSha256(body.replace(/\r\n?/gu, '\n').normalize('NFC'));
   const result = await security.prepareSource({
     body,
     bodyDigest,
@@ -136,7 +163,7 @@ async function sanitizeCandidateText(
     !result.ok ||
     result.report.decision !== 'include' ||
     result.report.findingsOverflow ||
-    result.report.inputDigest !== bodyDigest ||
+    result.report.inputDigest !== normalizedBodyDigest ||
     result.report.policyDigest !== policy.digest ||
     result.report.projectId !== projectId ||
     result.report.rulesVersion !== SANITIZER_RULES_VERSION ||
@@ -265,7 +292,7 @@ function compilerSourceId(candidate: CollectionCandidate, projectId: string): st
   return candidate.target;
 }
 
-async function buildPlannedSources(input: {
+async function buildVerifiedSources<T extends { readonly sourceId: string }>(input: {
   readonly candidates: readonly CollectionCandidate[];
   readonly checkout: SourceCheckoutHandle;
   readonly files: ReadonlyMap<string, SelectedSourceFile>;
@@ -275,11 +302,18 @@ async function buildPlannedSources(input: {
   readonly security: ReturnType<typeof createProjectSecurityService>;
   readonly workspace: string;
   readonly rejectCredentialFindings?: boolean;
-}): Promise<readonly SessionPlannedSource[]> {
+}, represent: SourceRepresentation<T>, stage: 'legacy-session-sources' | 'wiki-sources'): Promise<readonly T[]> {
   if (input.candidates.length === 0 || input.candidates.length > SESSION_COMPILE_LIMITS.maxSources) {
     return denied(input.projectId);
   }
-  const result: SessionPlannedSource[] = [];
+  const rejectBudget = (resource: ResourceBudgetDiagnostic['resource'], observed: number, maximum: number): void => {
+    if (observed <= maximum) return;
+    if (stage === 'legacy-session-sources') throw new SessionCompileError('SESSION_PLAN_DENIED', input.projectId,
+      { resourceBudget: resourceBudget(stage, resource, observed, maximum) });
+    throw new ResourceBudgetError(stage, resource, observed, maximum);
+  };
+  const result: T[] = [];
+  let serializedBytes = 3; // [] plus newline; count each indented element before retaining it.
   for (const candidate of input.candidates) {
     if (!isCollectableProjectSourceKind(candidate.sourceKind)) {
       return denied(input.projectId);
@@ -363,19 +397,13 @@ async function buildPlannedSources(input: {
         input.onPhase?.('source-original-read');
       }
       const id = plannedSourceId(partCandidate, storedSource.body);
-      result.push(Object.freeze({
-        ...(part.chunk === undefined ? {} : { chunk: part.chunk, originMappings: storedSource.buildlore.originMappings ?? [] }),
-        citationAnchors: createSessionCitationAnchors({
-          originalBody,
-          ...(storedSource.buildlore.originMappings === undefined
-            ? {}
-            : { originMappings: storedSource.buildlore.originMappings }),
-          ...(storedSource.buildlore.jsonOrigins === undefined
-            ? {}
-            : { jsonOrigins: storedSource.buildlore.jsonOrigins }),
-          sanitizedBody: storedSource.body,
-          sourceId: id,
-          sourceRef: candidate.sourceRef,
+      const source: VerifiedSessionSource = Object.freeze({
+        ...(part.chunk === undefined ? {} : { chunk: part.chunk }),
+        ...(storedSource.buildlore.originMappings === undefined ? {} : {
+          originMappings: storedSource.buildlore.originMappings,
+        }),
+        ...(storedSource.buildlore.jsonOrigins === undefined ? {} : {
+          jsonOrigins: storedSource.buildlore.jsonOrigins,
         }),
         compilerSourceContentDigest: storedSource.contentDigest,
         compilerSourceId: compilerSourceId(partCandidate, input.projectId),
@@ -389,14 +417,17 @@ async function buildPlannedSources(input: {
         sourceKind: candidate.sourceKind,
         sourceRef: candidate.sourceRef,
         title: approvedTitle,
-      }));
+      });
+      const represented = represent(source, originalBody);
+      const serialized = serializeCanonicalJson(represented);
+      serializedBytes += Buffer.byteLength(serialized) - 1 + 2 * (serialized.match(/\n/gu)?.length ?? 0) + 2;
+      rejectBudget('sources', result.length + 1, SESSION_COMPILE_LIMITS.maxSources);
+      rejectBudget('utf8-bytes', serializedBytes, SESSION_COMPILE_LIMITS.maxPlanBytes);
+      result.push(represented);
     }
   }
 
   result.sort((left, right) => left.sourceId < right.sourceId ? -1 : left.sourceId > right.sourceId ? 1 : 0);
-  if (result.length > SESSION_COMPILE_LIMITS.maxSources) return denied(input.projectId);
-  if (Buffer.byteLength(serializeCanonicalJson(result), 'utf8') >
-      SESSION_COMPILE_LIMITS.maxPlanBytes) return denied(input.projectId);
   return Object.freeze(result);
 }
 
@@ -422,140 +453,197 @@ function projectProfileDigest(
       });
 }
 
+async function prepareSessionSources<T extends { readonly sourceId: string }>(
+  options: CreateSessionCompilePlannerOptions,
+  projectId: string,
+  represent: SourceRepresentation<T>,
+  stage: 'legacy-session-sources' | 'wiki-sources',
+): Promise<SourcePreparation<T>> {
+  try {
+    const record = await showProject(options.knowledgeRoot, projectId);
+    const workspace = await resolveProjectWorkspace(options.knowledgeRoot, projectId, {
+      mustExist: true,
+    });
+    const profile = await resolveRegisteredProfileBinding(options.knowledgeRoot, projectId, {
+      registrations: options.jsonKnowledgeAdapters ?? [],
+    });
+    if (resolve(options.knowledgeRoot, record.workspacePath) !== workspace ||
+        profile.workspace !== workspace) {
+      return denied(projectId);
+    }
+    options.onPhase?.('project-resolved');
+    const binding = await resolveLocalProjectBinding(
+      options.hubRoot,
+      projectId,
+      record.entry.sourceRepository,
+    );
+    options.onPhase?.('binding-resolved');
+    const loadedManifest = await readSourceCollectionManifest(binding.checkout, projectId, {
+      sourceAdapterRegistry: profile.sourceAdapters,
+    });
+    const inventory = await selectDeclaredSourceFiles(binding.checkout, loadedManifest, {
+      limits: {
+        maxAggregateBytes: SESSION_COMPILE_LIMITS.maxPlanBytes,
+        // Raw documents use the collector's bound; persisted fragments use
+        // maxSourceBytes independently when each stored source is read.
+        maxFileCount: SESSION_COMPILE_LIMITS.maxSources,
+      },
+      sourceAdapterRegistry: profile.sourceAdapters,
+    });
+    const collection = await createSourceCollectionAdapter({
+      ...(options.jsonKnowledgeAdapters === undefined
+        ? {}
+        : { jsonKnowledgeAdapters: options.jsonKnowledgeAdapters }),
+    }).collect({
+      checkout: binding.checkout,
+      ingestedAt: FIXED_COLLECTION_TIMESTAMP,
+      inventory,
+      loadedManifest,
+      sourceAdapterRegistry: profile.sourceAdapters,
+    });
+    if (collection.notices.length > 0 || collection.entries.some((entry) =>
+      entry.decision === 'blocked' || entry.decision === 'error' ||
+      entry.decision === 'quarantine')) return denied(projectId);
+    options.onPhase?.('sources-collected');
+    const policy = await readSecurityPolicy(options.knowledgeRoot, projectId);
+    if (policy.workspace !== workspace) return denied(projectId);
+    options.onPhase?.('policy-resolved');
+    const security = createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot, sourceIngestion: true });
+    if (!await boundRawSourceInputsAreSafe(collection, {
+      maskSecrets: policy.policy.sourceSecretHandling === 'mask',
+      policyDigest: policy.digest,
+      projectId,
+      security,
+      source: `buildlore://project/${projectId}/selected-json-inputs`,
+      sourceKind: 'json',
+      sourceRevision: loadedManifest.manifestDigest,
+    })) return denied(projectId);
+    const sources = await buildVerifiedSources({
+      ...(options.rejectCredentialFindings === undefined ? {} : { rejectCredentialFindings: options.rejectCredentialFindings }),
+      candidates: collection.candidates,
+      checkout: binding.checkout,
+      files: new Map(inventory.files.map((file) => [file.sourceRef, file] as const)),
+      ...(options.onPhase === undefined ? {} : { onPhase: options.onPhase }),
+      policy,
+      projectId,
+      security,
+      workspace,
+    }, represent, stage);
+    options.onPhase?.('sources-verified');
+    const egressRequest = Object.freeze({ capability: 'compile' as const, projectId });
+    const permit = await prepareCompilerEgress(
+      options.knowledgeRoot,
+      workspace,
+      egressRequest,
+      options.jsonKnowledgeAdapters ?? [],
+    );
+    await verifyAndConsumeCompilerEgress(
+      permit,
+      options.knowledgeRoot,
+      workspace,
+      egressRequest,
+      options.jsonKnowledgeAdapters ?? [],
+    );
+    options.onPhase?.('egress-authorized');
+    const knowledge = await readSessionKnowledgeInventory(workspace, projectId);
+    options.onPhase?.('inventory-read');
+    const freshProfile = await resolveRegisteredProfileBinding(
+      options.knowledgeRoot,
+      projectId,
+      { registrations: options.jsonKnowledgeAdapters ?? [] },
+    );
+    if (freshProfile.workspace !== profile.workspace ||
+        freshProfile.bindingDigest !== profile.bindingDigest) {
+      return denied(projectId);
+    }
+    return Object.freeze({
+      candidateInventoryDigest: knowledge.candidateInventoryDigest,
+      pendingSlugs: knowledge.pendingSlugs,
+      planBase: Object.freeze({
+        schemaVersion: SESSION_COMPILE_PLAN_SCHEMA_VERSION,
+        projectId,
+        contractDigest: SESSION_COMPILE_CONTRACT_DIGEST,
+        profileDigest: projectProfileDigest(record, profile.bindingDigest),
+        policyDigest: policy.digest,
+        selectionDigest: sourceSelectionDigest(inventory, binding.bindingDigest),
+        sourceManifestDigest: loadedManifest.manifestDigest,
+        existingKnowledgeDigest: knowledge.digest,
+        algorithmVersion: SESSION_COMPILE_ALGORITHM_VERSION,
+        limits: SESSION_COMPILE_LIMITS,
+      }),
+      sources,
+      allowedLinkTargets: knowledge.allowedLinkTargets,
+      profileMode: profile.binding.upstreamProfile,
+      wikiInventoryDigest: knowledge.wikiDigest,
+      workspace,
+    });
+  } catch (error) {
+    if (error instanceof SessionCompileError || error instanceof ResourceBudgetError) throw error;
+    return denied(projectId);
+  }
+}
+
+function legacyPlannedSource(source: VerifiedSessionSource, originalBody: string): SessionPlannedSource {
+  // Keep the declared property order: legacy canonical bytes participate in plan identity.
+  return Object.freeze({
+    ...(source.chunk === undefined ? {} : { chunk: source.chunk, originMappings: source.originMappings ?? [] }),
+    citationAnchors: createSessionCitationAnchors({
+      originalBody,
+      ...(source.originMappings === undefined ? {} : { originMappings: source.originMappings }),
+      ...(source.jsonOrigins === undefined ? {} : { jsonOrigins: source.jsonOrigins }),
+      sanitizedBody: source.sanitizedBody,
+      sourceId: source.sourceId,
+      sourceRef: source.sourceRef,
+    }),
+    compilerSourceContentDigest: source.compilerSourceContentDigest,
+    compilerSourceId: source.compilerSourceId,
+    originalContentDigest: source.originalContentDigest,
+    revision: source.revision,
+    retrievalMeaning: source.retrievalMeaning,
+    sanitizedBody: source.sanitizedBody,
+    sanitizedContentDigest: source.sanitizedContentDigest,
+    sourceId: source.sourceId,
+    sourceKind: source.sourceKind,
+    sourceRef: source.sourceRef,
+    title: source.title,
+  });
+}
+
+/** @internal Reuses every source admission check without materializing legacy citation/task arrays. */
+export async function prepareVerifiedSessionSources(
+  options: CreateSessionCompilePlannerOptions,
+  projectId: string,
+): Promise<VerifiedSessionSources> {
+  const prepared = await prepareSessionSources(options, projectId, (source) => source, 'wiki-sources');
+  return Object.freeze({
+    projectId,
+    policyDigest: prepared.planBase.policyDigest,
+    selectionDigest: prepared.planBase.selectionDigest,
+    sources: prepared.sources,
+  });
+}
+
 export function createSessionCompilePlanner(
   options: CreateSessionCompilePlannerOptions,
 ): SessionCompilePlanner {
   return {
     async create(projectId): Promise<SessionCompilePlanSnapshot> {
-      try {
-        const record = await showProject(options.knowledgeRoot, projectId);
-        const workspace = await resolveProjectWorkspace(options.knowledgeRoot, projectId, {
-          mustExist: true,
-        });
-        const profile = await resolveRegisteredProfileBinding(options.knowledgeRoot, projectId, {
-          registrations: options.jsonKnowledgeAdapters ?? [],
-        });
-        if (resolve(options.knowledgeRoot, record.workspacePath) !== workspace ||
-            profile.workspace !== workspace) {
-          return denied(projectId);
-        }
-        options.onPhase?.('project-resolved');
-        const binding = await resolveLocalProjectBinding(
-          options.hubRoot,
-          projectId,
-          record.entry.sourceRepository,
-        );
-        options.onPhase?.('binding-resolved');
-        const loadedManifest = await readSourceCollectionManifest(binding.checkout, projectId, {
-          sourceAdapterRegistry: profile.sourceAdapters,
-        });
-        const inventory = await selectDeclaredSourceFiles(binding.checkout, loadedManifest, {
-          limits: {
-            maxAggregateBytes: SESSION_COMPILE_LIMITS.maxPlanBytes,
-            // Raw documents use the collector's bound; persisted fragments use
-            // maxSourceBytes independently when each stored source is read.
-            maxFileCount: SESSION_COMPILE_LIMITS.maxSources,
-          },
-          sourceAdapterRegistry: profile.sourceAdapters,
-        });
-        const collection = await createSourceCollectionAdapter({
-          ...(options.jsonKnowledgeAdapters === undefined
-            ? {}
-            : { jsonKnowledgeAdapters: options.jsonKnowledgeAdapters }),
-        }).collect({
-          checkout: binding.checkout,
-          ingestedAt: FIXED_COLLECTION_TIMESTAMP,
-          inventory,
-          loadedManifest,
-          sourceAdapterRegistry: profile.sourceAdapters,
-        });
-        if (collection.notices.length > 0 || collection.entries.some((entry) =>
-          entry.decision === 'blocked' || entry.decision === 'error' ||
-          entry.decision === 'quarantine')) return denied(projectId);
-        options.onPhase?.('sources-collected');
-        const policy = await readSecurityPolicy(options.knowledgeRoot, projectId);
-        if (policy.workspace !== workspace) return denied(projectId);
-        options.onPhase?.('policy-resolved');
-        const security = createProjectSecurityService({ knowledgeRoot: options.knowledgeRoot, sourceIngestion: true });
-        if (!await boundRawSourceInputsAreSafe(collection, {
-          maskSecrets: policy.policy.sourceSecretHandling === 'mask',
-          policyDigest: policy.digest,
-          projectId,
-          security,
-          source: `buildlore://project/${projectId}/selected-json-inputs`,
-          sourceKind: 'json',
-          sourceRevision: loadedManifest.manifestDigest,
-        })) return denied(projectId);
-        const sources = await buildPlannedSources({
-          ...(options.rejectCredentialFindings === undefined ? {} : { rejectCredentialFindings: options.rejectCredentialFindings }),
-          candidates: collection.candidates,
-          checkout: binding.checkout,
-          files: new Map(inventory.files.map((file) => [file.sourceRef, file] as const)),
-          ...(options.onPhase === undefined ? {} : { onPhase: options.onPhase }),
-          policy,
-          projectId,
-          security,
-          workspace,
-        });
-        options.onPhase?.('sources-verified');
-        const egressRequest = Object.freeze({ capability: 'compile' as const, projectId });
-        const permit = await prepareCompilerEgress(
-          options.knowledgeRoot,
-          workspace,
-          egressRequest,
-          options.jsonKnowledgeAdapters ?? [],
-        );
-        await verifyAndConsumeCompilerEgress(
-          permit,
-          options.knowledgeRoot,
-          workspace,
-          egressRequest,
-          options.jsonKnowledgeAdapters ?? [],
-        );
-        options.onPhase?.('egress-authorized');
-        const knowledge = await readSessionKnowledgeInventory(workspace, projectId);
-        options.onPhase?.('inventory-read');
-        const freshProfile = await resolveRegisteredProfileBinding(
-          options.knowledgeRoot,
-          projectId,
-          { registrations: options.jsonKnowledgeAdapters ?? [] },
-        );
-        if (freshProfile.workspace !== profile.workspace ||
-            freshProfile.bindingDigest !== profile.bindingDigest) {
-          return denied(projectId);
-        }
-        const planned = createSessionTasksAndMerges(
-          sources,
-          profile.binding.upstreamProfile,
-          projectId,
-        );
-        return Object.freeze({
-          candidateInventoryDigest: knowledge.candidateInventoryDigest,
-          pendingSlugs: knowledge.pendingSlugs,
-          plan: finalizeSessionCompilePlan({
-            schemaVersion: SESSION_COMPILE_PLAN_SCHEMA_VERSION,
-            projectId,
-            contractDigest: SESSION_COMPILE_CONTRACT_DIGEST,
-            profileDigest: projectProfileDigest(record, profile.bindingDigest),
-            policyDigest: policy.digest,
-            selectionDigest: sourceSelectionDigest(inventory, binding.bindingDigest),
-            sourceManifestDigest: loadedManifest.manifestDigest,
-            existingKnowledgeDigest: knowledge.digest,
-            algorithmVersion: SESSION_COMPILE_ALGORITHM_VERSION,
-            limits: SESSION_COMPILE_LIMITS,
-            sources,
-            tasks: planned.tasks,
-            mergeCandidates: planned.mergeCandidates,
-            allowedLinkTargets: knowledge.allowedLinkTargets,
-          }),
-          profileMode: profile.binding.upstreamProfile,
-          wikiInventoryDigest: knowledge.wikiDigest,
-          workspace,
-        });
-      } catch (error) {
-        if (error instanceof SessionCompileError) throw error;
-        return denied(projectId);
-      }
+      const prepared = await prepareSessionSources(options, projectId, legacyPlannedSource, 'legacy-session-sources');
+      const planned = createSessionTasksAndMerges(prepared.sources, prepared.profileMode, projectId);
+      return Object.freeze({
+        candidateInventoryDigest: prepared.candidateInventoryDigest,
+        pendingSlugs: prepared.pendingSlugs,
+        plan: finalizeSessionCompilePlan({
+          ...prepared.planBase,
+          sources: prepared.sources,
+          tasks: planned.tasks,
+          mergeCandidates: planned.mergeCandidates,
+          allowedLinkTargets: prepared.allowedLinkTargets,
+        }),
+        profileMode: prepared.profileMode,
+        wikiInventoryDigest: prepared.wikiInventoryDigest,
+        workspace: prepared.workspace,
+      });
     },
   };
 }

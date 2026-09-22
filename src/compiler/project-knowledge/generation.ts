@@ -1,5 +1,5 @@
 import { parseKnowledgeSnapshot } from '../../knowledge/project-knowledge/evidence.js';
-import { boundedJson, choice, compare, digest, invalid, record } from '../../knowledge/project-knowledge/guards.js';
+import { boundedJson, choice, compare, digest, invalid, record, serializeBoundedJson } from '../../knowledge/project-knowledge/guards.js';
 import { reconcileKnowledge } from '../../knowledge/project-knowledge/reconcile.js';
 import type { KnowledgeGenerationV1, KnowledgeProposalV1, KnowledgeSemanticReviewV1,
   KnowledgeSnapshotV1, KnowledgeRendererVersion } from '../../knowledge/project-knowledge/types.js';
@@ -48,7 +48,7 @@ export function createKnowledgeGeneration(snapshotValue: KnowledgeSnapshotV1,
     proposal, review, records, evidence: Object.freeze(evidence), pages: wiki === undefined ? proposal.pages : knowledgeWikiPublishedPages(proposal, review),
     reconciliationPolicyVersion: 'conservative-currentness-v1' as const,
     rendererVersion: renderer };
-  boundedJson(basis);
+  serializeBoundedJson(basis, 'knowledge-generation');
   const generation = Object.freeze({ ...basis, generationDigest: digest(basis) });
   replayedGenerations.add(generation);
   return generation;

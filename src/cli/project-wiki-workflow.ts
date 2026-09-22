@@ -1,3 +1,4 @@
+import { enforceResourceBudget } from '../knowledge/resource-budget.js';
 import { randomBytes, createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { serializeCanonicalJson } from '../knowledge/atomic-file.js';
@@ -5,7 +6,7 @@ import { parseJsonStrict } from '../knowledge/strict-json.js';
 import { boundedJson, choice, digest, hash, invalid, keys, project, record, ProjectKnowledgeError } from '../knowledge/project-knowledge/guards.js';
 import type { KnowledgeDigest, KnowledgeGenerationV1 } from '../knowledge/project-knowledge/types.js';
 import { readConfinedSessionUtf8 } from '../compiler/session/safe-io.js';
-import { preparePlannedKnowledgeSession } from '../compiler/project-knowledge/planned-sources.js';
+import { preparePlannedKnowledgeSession, prepareVerifiedKnowledgeSession } from '../compiler/project-knowledge/planned-sources.js';
 import { createKnowledgeWikiSession, type KnowledgeWikiState } from '../compiler/project-knowledge/wiki-session.js';
 import { parseKnowledgeWikiPurpose } from '../compiler/project-knowledge/wiki-contracts.js';
 import { bridgeKnowledgeToHierarchy } from '../compiler/project-knowledge/hierarchy-bridge.js';
@@ -17,7 +18,7 @@ import type { RegisteredJsonKnowledgeAdapterV1 } from '../projector/json-knowled
 import { createHierarchyPayloadStore } from './hierarchical-run-store.js';
 
 interface WikiRun {
-  readonly schemaVersion: 'buildlore.wiki-workflow-run.v1';
+  readonly schemaVersion: 'buildlore.wiki-workflow-run.v1' | 'buildlore.wiki-workflow-run.v2';
   readonly projectId: string;
   readonly runId: string;
   readonly revision: number;
@@ -30,14 +31,14 @@ interface WikiRun {
   readonly recordDigest: KnowledgeDigest;
 }
 function freezeRun(basis: Omit<WikiRun, 'recordDigest'>): WikiRun {
-  if (Buffer.byteLength(JSON.stringify(basis)) > 9 * 1024 * 1024) invalid();
+  enforceResourceBudget('wiki-run', 'utf8-bytes', Buffer.byteLength(JSON.stringify(basis)), 9 * 1024 * 1024);
   return Object.freeze({ ...basis, recordDigest: digest(basis) });
 }
 function parseRun(value: unknown, projectId: string, runId: string): WikiRun {
   const r = record(boundedJson(value));
   keys(r, ['schemaVersion', 'projectId', 'runId', 'revision', 'phase', 'baselineAuthorityDigest', 'state', 'ledgerDigest',
     'generationDigest', 'approvedAuthorityDigest', 'recordDigest']);
-  if (r.schemaVersion !== 'buildlore.wiki-workflow-run.v1' || r.runId !== runId || !/^run-[a-f0-9]{64}$/u.test(runId) ||
+  if (!['buildlore.wiki-workflow-run.v1', 'buildlore.wiki-workflow-run.v2'].includes(String(r.schemaVersion)) || r.runId !== runId || !/^run-[a-f0-9]{64}$/u.test(runId) ||
     typeof r.revision !== 'number' || !Number.isSafeInteger(r.revision) || r.revision < 0) invalid();
   const phase = choice(r.phase, ['writing', 'finalized', 'approved']);
   if ((phase === 'writing') !== (r.ledgerDigest === null) || (phase === 'writing') !== (r.generationDigest === null) ||
@@ -45,7 +46,7 @@ function parseRun(value: unknown, projectId: string, runId: string): WikiRun {
   const state = record(r.state);
   if (state.projectId !== projectId || state.runId !== runId) invalid();
   // Source-bound semantic replay follows immediately after the confined store read.
-  const next = freezeRun({ schemaVersion: 'buildlore.wiki-workflow-run.v1', projectId: project(r.projectId, projectId), runId,
+  const next = freezeRun({ schemaVersion: r.schemaVersion as WikiRun['schemaVersion'], projectId: project(r.projectId, projectId), runId,
     revision: r.revision, phase, baselineAuthorityDigest: r.baselineAuthorityDigest === null ? null : hash(r.baselineAuthorityDigest),
     state: state as unknown as KnowledgeWikiState, ledgerDigest: r.ledgerDigest === null ? null : hash(r.ledgerDigest),
     generationDigest: r.generationDigest === null ? null : hash(r.generationDigest),
@@ -74,9 +75,9 @@ export function createProjectWikiWorkflow(options: Readonly<{ hubRoot: string; k
     if (status.state === 'invalid') invalid();
     return status.state === 'none' ? null : corpus.readAuthority(projectId);
   };
-  const prepare = async (projectId: string, purposeValue: unknown, runId: string, previous: CurrentApprovedWikiAuthority | null, saved?: unknown) => {
+  const prepare = async (projectId: string, purposeValue: unknown, runId: string, previous: CurrentApprovedWikiAuthority | null, saved?: unknown, legacy = false) => {
     const purpose = parseKnowledgeWikiPurpose(purposeValue, projectId);
-    const { session: base } = await preparePlannedKnowledgeSession({ ...options, hubRoot, knowledgeRoot, projectId,
+    const { session: base } = await (legacy ? preparePlannedKnowledgeSession : prepareVerifiedKnowledgeSession)({ ...options, hubRoot, knowledgeRoot, projectId,
       outputLanguage: purpose.outputLanguage, rendererVersion: 'knowledge-markdown-v3', authoringMode: 'wiki-v1',
       ...(previous?.knowledgeGeneration?.schemaVersion === 'buildlore.knowledge-authority-extension.v2'
         ? { previousHistory: knowledgeAuthorityHistory(previous.knowledgeGeneration) }
@@ -88,7 +89,7 @@ export function createProjectWikiWorkflow(options: Readonly<{ hubRoot: string; k
   const restore = async (run: WikiRun) => {
     const previous = await baseline(run.projectId);
     if ((previous === null ? null : authorityDigest(previous)) !== run.baselineAuthorityDigest) throw new ProjectKnowledgeError('KNOWLEDGE_DRIFT');
-    return { previous, ...await prepare(run.projectId, run.state.purpose, run.runId, previous, run.state) };
+    return { previous, ...await prepare(run.projectId, run.state.purpose, run.runId, previous, run.state, run.schemaVersion === 'buildlore.wiki-workflow-run.v1') };
   };
   const view = (run: WikiRun, session: Awaited<ReturnType<typeof prepare>>['session']) => ({
     schemaVersion: 'buildlore.wiki-workflow-status.v1', projectId: run.projectId, runId: run.runId, revision: run.revision,
@@ -104,7 +105,7 @@ export function createProjectWikiWorkflow(options: Readonly<{ hubRoot: string; k
     async start(projectId: string, purposeFile: string) {
       const previous = await baseline(projectId), runId = `run-${randomBytes(32).toString('hex')}`;
       const { session, instructions } = await prepare(projectId, await readInput(purposeFile, projectId), runId, previous);
-      const run = freezeRun({ schemaVersion: 'buildlore.wiki-workflow-run.v1', projectId, runId, revision: 0, phase: 'writing',
+      const run = freezeRun({ schemaVersion: 'buildlore.wiki-workflow-run.v2', projectId, runId, revision: 0, phase: 'writing',
         baselineAuthorityDigest: previous === null ? null : authorityDigest(previous), state: session.state(),
         ledgerDigest: null, generationDigest: null, approvedAuthorityDigest: null });
       await store.create(run);

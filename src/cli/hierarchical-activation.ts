@@ -7,7 +7,7 @@ import {
   digestCurrentSessionProposalSecurityBody,
   type CorpusSnapshotV1,
 } from '../compiler/index.js';
-import { preparePlannedKnowledgeSession } from '../compiler/project-knowledge/planned-sources.js';
+import { preparePlannedKnowledgeSession, prepareVerifiedKnowledgeSession } from '../compiler/project-knowledge/planned-sources.js';
 import { readConfinedSessionUtf8 } from '../compiler/session/safe-io.js';
 import { resolveLocalProjectBinding } from '../knowledge/local-project-registry.js';
 import { createRepositoryWriterLease } from '../knowledge/repository-writer-lease.js';
@@ -194,7 +194,8 @@ function createLiveSnapshotVerifier(options: Readonly<{
         if (authority.knowledgeGeneration !== undefined) {
           const generation = latestKnowledgeGeneration(authority.knowledgeGeneration);
           if (!generation) invalid('HIERARCHICAL_WIKI_ACTIVATION_INVALID');
-          const { session } = await preparePlannedKnowledgeSession({ ...options, projectId,
+          const { session } = await (generation.snapshot.sources.some(source => source.originPolicy === 'projected-v1')
+            ? prepareVerifiedKnowledgeSession : preparePlannedKnowledgeSession)({ ...options, projectId,
             rendererVersion: generation.rendererVersion,
             ...(generation.wikiProof === undefined ? {} : { authoringMode: 'wiki-v1' as const, outputLanguage: generation.wikiProof.purpose.outputLanguage }),
             ...(authority.knowledgeGeneration.schemaVersion === 'buildlore.knowledge-authority-extension.v1'

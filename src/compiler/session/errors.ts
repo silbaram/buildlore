@@ -1,3 +1,4 @@
+import { normalizeResourceBudget, type ResourceBudgetDiagnostic } from '../../knowledge/resource-budget.js';
 export type SessionCompileErrorCode =
   | 'SESSION_ADMISSION_FAILED'
   | 'SESSION_CANDIDATE_ALREADY_APPROVED'
@@ -98,12 +99,14 @@ export class SessionCompileError extends Error {
   readonly sideEffectsPossible: boolean;
   readonly candidateRefs: readonly string[];
   readonly exportInspection: SessionExportInspectionDiagnostic | undefined;
+  readonly resourceBudget: ResourceBudgetDiagnostic | undefined;
 
   constructor(
     code: SessionCompileErrorCode,
     projectId: string,
     options: {
       readonly candidateRefs?: readonly string[];
+      readonly resourceBudget?: ResourceBudgetDiagnostic;
       readonly exportInspection?: SessionExportInspectionDiagnostic;
       readonly recoveryAction?: 'check-config' | 'review' | 'retry' | 'status' | 'sync';
       readonly retryable?: boolean;
@@ -132,6 +135,8 @@ export class SessionCompileError extends Error {
       (code === 'SESSION_CANDIDATE_BUSY' || code === 'SESSION_CANDIDATE_APPROVAL_FAILED');
     this.sideEffectsPossible = options.sideEffectsPossible ?? false;
     this.candidateRefs = Object.freeze([...(options.candidateRefs ?? [])].sort());
+    const budget = options.resourceBudget;
+    this.resourceBudget = normalizeResourceBudget(budget);
     this.exportInspection = normalizeExportInspection(options.exportInspection);
   }
 
@@ -142,6 +147,7 @@ export class SessionCompileError extends Error {
       ...(this.exportInspection === undefined
         ? {}
         : { exportInspection: this.exportInspection }),
+      ...(this.resourceBudget === undefined ? {} : { resourceBudget: this.resourceBudget }),
       message: this.message,
       projectId: this.projectId,
       recoveryAction: this.recoveryAction,

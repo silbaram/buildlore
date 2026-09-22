@@ -3,7 +3,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createKnowledgeWorkflowFixture, type KnowledgeWorkflowFixture } from './helpers/project-knowledge-workflow.js';
 import { wikiDraft, wikiPurpose, wikiReview } from './helpers/project-wiki.js';
-import { preparePlannedKnowledgeSession } from '../src/compiler/project-knowledge/planned-sources.js';
+import { prepareVerifiedKnowledgeSession } from '../src/compiler/project-knowledge/planned-sources.js';
 import { createKnowledgeWikiDraft } from '../src/compiler/project-knowledge/wiki-contracts.js';
 import { createKnowledgeWikiReader } from '../src/retrieval/project-knowledge-reader.js';
 import { readApprovedWiki } from '../src/application/wiki-read-service.js';
@@ -30,7 +30,7 @@ describe('generic Wiki public workflow', () => {
       schemaVersion: 'buildlore.wiki-inspection.v1', projectId: f.projectId, mode: 'evidence', offset: 0, limit: 1, maxBytes: 8192 })]);
     expect(inspected, inspected.stderr).toMatchObject({ exitCode: 0, data: { nextOffset: 1 } });
     await matchPublishedShape(inspected.data, { $ref: 'project-wiki.schema.json#/$defs/inspectionResult' });
-    const base = (await preparePlannedKnowledgeSession({ ...f, outputLanguage: 'ko', rendererVersion: 'knowledge-markdown-v3', authoringMode: 'wiki-v1' })).session;
+    const base = (await prepareVerifiedKnowledgeSession({ ...f, outputLanguage: 'ko', rendererVersion: 'knowledge-markdown-v3', authoringMode: 'wiki-v1' })).session;
     const ids = Array.from({ length: count }, (_, i) => `policy-${i}`), draft = wikiDraft(base.exchange.snapshot, ids, true);
     // Distinct child evidence must contribute to the root's inherited search summaries.
     for (const [index, page] of draft.pages.entries()) {

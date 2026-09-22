@@ -372,6 +372,22 @@ wrappers are excluded. Short documents and existing v1/v2/v3 sources remain
 readable. The raw-file selection limit remains 8 MiB; aggregate, evidence-count,
 and inspection-response limits still apply.
 
+New Wiki runs prepare verified sanitized sources directly, without expanding them
+into legacy per-line session anchors and task plans. JSON pointers and original
+code/chunk locations are retained; saved v1 Wiki runs and the plan-returning SDK
+keep their original replay identities. New Wiki runs use `wiki-workflow-run.v2`
+and sources opt into `originPolicy: "projected-v1"`.
+
+The limits remain 32 MiB for prepared sources, 2,048 snapshot fragments, 8,192
+evidence items, and 16 MiB for each snapshot/generation. Source byte size alone
+cannot predict evidence usage. `RESOURCE_BUDGET_EXCEEDED` reports only the stage,
+resource, observed usage and maximum; it includes no source names or content.
+Legacy session plans retain `SESSION_PLAN_DENIED` with a `resourceBudget` detail
+when their serialized size exceeds the cap. Inspect this diagnostic before
+changing a selection; required content must not be silently omitted. A failed
+attempt leaves the previously approved Wiki intact. The diagnostic contract is
+[`resource-budget.schema.json`](schemas/resource-budget.schema.json).
+
 After updating BuildLore in the knowledge checkout, run:
 
 ```sh

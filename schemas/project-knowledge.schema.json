@@ -849,16 +849,39 @@
           "items": {
             "$ref": "source-document-v4.schema.json#/$defs/rangeMapping"
           }
+        },
+        "originPolicy": {
+          "const": "projected-v1"
         }
       },
       "dependentRequired": {
         "chunk": [
           "originMappings"
-        ],
-        "originMappings": [
-          "chunk"
         ]
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "originMappings"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "chunk"
+                ]
+              },
+              {
+                "required": [
+                  "originPolicy"
+                ]
+              }
+            ]
+          }
+        }
+      ]
     },
     "evidence": {
       "type": "object",

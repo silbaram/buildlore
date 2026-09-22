@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { LONG_BODY, TAIL_FACT, longSourceFixture, storedSources } from './helpers/long-source.js';
 import type { KnowledgeWorkflowFixture } from './helpers/project-knowledge-workflow.js';
 import { wikiDraft, wikiPurpose, wikiReview } from './helpers/project-wiki.js';
-import { preparePlannedKnowledgeSession } from '../src/compiler/project-knowledge/planned-sources.js';
+import { prepareVerifiedKnowledgeSession } from '../src/compiler/project-knowledge/planned-sources.js';
 import { createKnowledgeWikiDraft } from '../src/compiler/project-knowledge/wiki-contracts.js';
 import { record } from '../src/knowledge/project-knowledge/guards.js';
 import { connectProject } from '../src/connection/service.js';
@@ -27,7 +27,7 @@ describe('long sources through Wiki and MCP', () => {
     expect(start, start.stderr).toMatchObject({ exitCode: 0, data: { phase: 'awaiting-draft' } });
     const runId = String(start.data.runId), args = ['--project', f.projectId, '--run', runId];
     const stage = (value: Readonly<Record<string, unknown>>) => String(record(value.stage).stageDigest);
-    const { session, plan } = await preparePlannedKnowledgeSession({ ...f, outputLanguage: 'ko',
+    const { session } = await prepareVerifiedKnowledgeSession({ ...f, outputLanguage: 'ko',
       rendererVersion: 'knowledge-markdown-v3', authoringMode: 'wiki-v1' });
     const snapshot = session.exchange.snapshot;
     const jsonSource = snapshot.sources.find(source => (source.origins?.length ?? 0) > 0)!;
@@ -44,7 +44,6 @@ describe('long sources through Wiki and MCP', () => {
     } });
     expect(knowledgeEvidenceContentKind({ ...tail, excerpt: '42' })).toBe('text');
     await matchPublishedShape(snapshot, { $ref: 'project-knowledge.schema.json#/$defs/snapshot' });
-    await matchPublishedShape(plan, { $ref: 'compile-plan.schema.json' });
     for (const source of await storedSources(f)) {
       if (source.document.buildlore.chunk !== undefined) {
         await matchPublishedShape(source.document, { $ref: 'source-document-v4.schema.json' });
@@ -119,7 +118,7 @@ describe('long sources through Wiki and MCP', () => {
     expect(Buffer.byteLength(body)).toBeGreaterThan(524288);
     const f = await longSourceFixture(body); fixtures.push(f);
     expect(await f.cli(['sync', '--project', f.projectId])).toMatchObject({ exitCode: 0 });
-    const { session } = await preparePlannedKnowledgeSession({ ...f, authoringMode: 'wiki-v1', rendererVersion: 'knowledge-markdown-v3' });
+    const { session } = await prepareVerifiedKnowledgeSession({ ...f, authoringMode: 'wiki-v1', rendererVersion: 'knowledge-markdown-v3' });
     expect(session.exchange.snapshot.evidence.some(e => e.excerpt === TAIL_FACT)).toBe(true);
     expect(session.exchange.snapshot.sources.filter(s => s.chunk !== undefined).length).toBeGreaterThan(5);
   }, 60000);

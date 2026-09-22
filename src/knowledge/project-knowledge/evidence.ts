@@ -1,3 +1,4 @@
+import { enforceResourceBudget, ResourceBudgetError } from '../resource-budget.js';
 import { parseJsonWithLocationsStrict } from '../strict-json.js';
 import { serializeCanonicalJson } from '../atomic-file.js';
 import { containsSecretRedaction } from '../../sanitizer/redaction-marker.js';
@@ -5,7 +6,7 @@ import { parseSourceChunk, sourceChunkPayload } from '../../projector/source-chu
 import { sourceChunkIdentity } from '../../projector/source-identity.js';
 import { validateSourceOriginRange, validateJsonPointer } from '../../projector/source-contracts.js';
 import { boundedJson, choice, compare, digest, hash, identifier, invalid, keys, list,
-  nullableText, portablePath, project, record, sha256, text } from './guards.js';
+  nullableText, portablePath, project, record, serializeBoundedJson, sha256, text } from './guards.js';
 import type { KnowledgeEvidenceV1, KnowledgeLocatorV1, KnowledgeSnapshotV1,
   KnowledgeSourceV1, KnowledgeSourceOriginV1 } from './types.js';
 
@@ -31,19 +32,26 @@ function parseSource(value: unknown, projectId: string): KnowledgeSourceV1 {
   const input = record(value);
   keys(input, ['sourceId', 'sourceRef', 'sourceContentDigest', 'sourceRevision', 'codeRevision',
     'tracked', 'format', 'content', ...(Object.hasOwn(input, 'origins') ? ['origins'] : []),
-    ...(Object.hasOwn(input, 'chunk') ? ['chunk', 'originMappings'] : []),
+    ...(Object.hasOwn(input, 'originPolicy') ? ['originPolicy'] : []),
+    ...(Object.hasOwn(input, 'chunk') ? ['chunk'] : []),
+    ...(Object.hasOwn(input, 'originMappings') ? ['originMappings'] : []),
     ...(Object.hasOwn(input, 'repositoryRevision') ? ['repositoryRevision'] : [])]);
   if (input.tracked !== null && typeof input.tracked !== 'boolean') invalid();
   const content = text(input.content, 262_144);
   if (input.origins !== undefined && input.format !== 'markdown') invalid();
+  if (input.originPolicy !== undefined && input.originPolicy !== 'projected-v1') invalid();
+  if (input.originMappings !== undefined && input.chunk === undefined && input.originPolicy === undefined) invalid();
   let fragment: Pick<KnowledgeSourceV1, 'chunk' | 'originMappings'> = {};
-  if (input.chunk !== undefined) {
+  if (input.chunk !== undefined || input.originMappings !== undefined) {
     if (input.format !== 'markdown') invalid();
     try {
-      const raw = record(input.chunk);
-      const chunk = parseSourceChunk(raw, content, sourceChunkIdentity(String(raw.parentSource), Number(raw.index)));
-      const parent = chunk.parentSource.split('/');
-      if (decodeURIComponent(parent[2] ?? '') !== projectId || decodeURIComponent(parent[5] ?? '') !== input.sourceRef) invalid();
+      if (input.chunk !== undefined) {
+        const raw = record(input.chunk);
+        const chunk = parseSourceChunk(raw, content, sourceChunkIdentity(String(raw.parentSource), Number(raw.index)));
+        const parent = chunk.parentSource.split('/');
+        if (decodeURIComponent(parent[2] ?? '') !== projectId || decodeURIComponent(parent[5] ?? '') !== input.sourceRef) invalid();
+        fragment = { chunk };
+      }
       let endLine = 0;
       const lines = content.split('\n');
       const originMappings = list(input.originMappings, 128).map((value) => {
@@ -54,13 +62,14 @@ function parseSource(value: unknown, projectId: string): KnowledgeSourceV1 {
         endLine = canonical.endLine;
         return Object.freeze({ canonical, origin });
       });
-      fragment = { chunk, originMappings: Object.freeze(originMappings) };
+      fragment = { ...fragment, originMappings: Object.freeze(originMappings) };
     } catch { return invalid(); }
   }
   if (input.repositoryRevision !== undefined && input.repositoryRevision !== null &&
       (typeof input.repositoryRevision !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(input.repositoryRevision))) invalid();
   return Object.freeze({
     ...fragment,
+    ...(input.originPolicy === undefined ? {} : { originPolicy: input.originPolicy }),
     sourceId: identifier(input.sourceId), sourceRef: portablePath(input.sourceRef),
     sourceContentDigest: hash(input.sourceContentDigest),
     sourceRevision: nullableText(input.sourceRevision), codeRevision: nullableText(input.codeRevision),
@@ -132,6 +141,9 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
   while (start < lines.length) {
     if (start + 1 < firstPayloadLine || start + 1 > lastPayloadLine || (lines[start] ?? '').trim() === '' ||
         (excludeRedacted && containsSecretRedaction(lines[start] ?? ''))) { start += 1; continue; }
+    const mapped = source.originPolicy === 'projected-v1' && source.originMappings !== undefined;
+    const mappedRange = source.originMappings?.find(item => item.canonical.startLine <= start + 1 && item.canonical.endLine >= start + 1);
+    if (mapped && mappedRange === undefined && !originByLine.has(start + 1)) { start += 1; continue; }
     const origin = originByLine.get(start + 1);
     if (origin !== undefined) {
       result.push(evidence(source, { kind: 'lines', start: start + 1, end: start + 1 },
@@ -140,7 +152,7 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
       continue;
     }
     let end = start + 1;
-    while (end < lines.length && end < lastPayloadLine && (lines[end] ?? '').trim() !== '' && !originByLine.has(end + 1) &&
+    while (end < lines.length && end < lastPayloadLine && (!mapped || end < (mappedRange?.canonical.endLine ?? end)) && (lines[end] ?? '').trim() !== '' && !originByLine.has(end + 1) &&
       !(excludeRedacted && containsSecretRedaction(lines[end] ?? ''))) end += 1;
     const mapping = source.originMappings?.find((item) =>
       item.canonical.startLine <= start + 1 && item.canonical.endLine >= end);
@@ -158,8 +170,9 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
 }
 
 export function createKnowledgeSnapshot(value: unknown, expectedProjectId: string): KnowledgeSnapshotV1 {
-  const input = record(boundedJson(value));
+  const input = record(boundedJson(value, 'knowledge-snapshot'));
   keys(input, ['projectId', 'selectionDigest', 'sanitizerPolicyDigest', 'sanitizerRulesVersion', 'sources']);
+  if (Array.isArray(input.sources)) enforceResourceBudget('knowledge-snapshot', 'sources', input.sources.length, 2048);
   const sources = list(input.sources, 2048).map(value => parseSource(value, expectedProjectId)).sort((a, b) => compare(a.sourceId, b.sourceId));
   if (sources.length === 0 || new Set(sources.map((s) => s.sourceId)).size !== sources.length) invalid();
   const groups = new Map<string, KnowledgeSourceV1[]>();
@@ -184,24 +197,31 @@ export function createKnowledgeSnapshot(value: unknown, expectedProjectId: strin
   }
   let extracted: readonly KnowledgeEvidenceV1[];
   const projectId = project(input.projectId, expectedProjectId);
-  try { extracted = sources.flatMap((s) => extractKnowledgeEvidence(s, projectId,
+  try {
+    const items: KnowledgeEvidenceV1[] = [];
+    for (const s of sources) {
+      const next = extractKnowledgeEvidence(s, projectId,
     input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v6' ||
     input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v7' ||
     input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v8' ||
-    input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v9')).sort((a, b) => compare(a.evidenceId, b.evidenceId)); }
-  catch { return invalid(); }
-  if (extracted.length > 8192) invalid();
+    input.sanitizerRulesVersion === 'buildlore.sanitizer-rules.v9');
+      enforceResourceBudget('knowledge-snapshot', 'evidence', items.length + next.length, 8192);
+      items.push(...next);
+    }
+    extracted = items.sort((a, b) => compare(a.evidenceId, b.evidenceId));
+  } catch (error) { if (error instanceof ResourceBudgetError) throw error; return invalid(); }
   const basis = {
     schemaVersion: 'buildlore.knowledge-snapshot.v1' as const,
     projectId, selectionDigest: hash(input.selectionDigest),
     sanitizerPolicyDigest: hash(input.sanitizerPolicyDigest), sanitizerRulesVersion: text(input.sanitizerRulesVersion, 256),
     sources: Object.freeze(sources), evidence: Object.freeze(extracted),
   };
+  serializeBoundedJson(basis, 'knowledge-snapshot');
   return Object.freeze({ ...basis, snapshotDigest: digest(basis) });
 }
 
 export function parseKnowledgeSnapshot(value: unknown, expectedProjectId: string): KnowledgeSnapshotV1 {
-  const input = record(boundedJson(value));
+  const input = record(boundedJson(value, 'knowledge-snapshot'));
   keys(input, ['schemaVersion', 'projectId', 'selectionDigest', 'sanitizerPolicyDigest',
     'sanitizerRulesVersion', 'sources', 'evidence', 'snapshotDigest']);
   const rebuilt = createKnowledgeSnapshot({

@@ -1228,7 +1228,7 @@
       ],
       "properties": {
         "schemaVersion": {
-          "const": "buildlore.wiki-workflow-run.v1"
+          "enum": ["buildlore.wiki-workflow-run.v1", "buildlore.wiki-workflow-run.v2"]
         },
         "projectId": {
           "type": "string",

@@ -361,6 +361,19 @@ node dist/cli/bin.js knowledge status
 정렬합니다. 내용의 의미가 같아도 필드·선언 순서, 들여쓰기 또는 줄바꿈 바이트가
 다르면 BuildLore가 거부합니다.
 
+Wiki를 새로 작성할 때는 검증·정제된 소스를 직접 준비하여 줄별 세션 인용 앵커와
+작업 계획의 중복 생성을 줄입니다. JSON 포인터와 코드·분할 문서의 원본 위치를
+유지하며, 기존 v1 실행과 계획을 반환하는 SDK는 기존 식별자로 재생합니다.
+새 실행은 `wiki-workflow-run.v2`, 소스 위치는 `originPolicy: "projected-v1"`을 사용합니다.
+
+준비 소스 32MiB, 스냅샷 조각 2,048개, 근거 8,192개, 스냅샷·세대별 16MiB 한도는
+유지합니다. 본문 크기가 같아도 근거 개수는 다를 수 있습니다.
+`RESOURCE_BUDGET_EXCEEDED`는 원문이나 파일명 없이 실패 단계·자원·관측 사용량·한도를
+반환합니다. 기존 세션 계획의 크기 초과는 `SESSION_PLAN_DENIED`와 `resourceBudget`
+상세 정보로 표시합니다. 필수 소스를 조용히 제외하지 말고 진단을 먼저 확인하세요.
+실패한 시도는 이전에 승인된 Wiki를 변경하지 않습니다.
+진단 형식은 [resource-budget.schema.json](schemas/resource-budget.schema.json)을 따릅니다.
+
 #### 범용 JSON과 JSON knowledge adapter
 
 JSON을 생산자와 무관한 일반 source로 수집하려면 `buildlore.sources.v2`를

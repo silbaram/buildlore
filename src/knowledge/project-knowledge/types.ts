@@ -10,6 +10,8 @@ export type KnowledgePageRole = string;
 export type KnowledgeRendererVersion = 'knowledge-markdown-v1' | 'knowledge-markdown-v2' | 'knowledge-markdown-v3';
 
 export interface KnowledgeSourceV1 {
+  /** Explicit opt-in; absent on legacy snapshots, whose evidence identity is unchanged. */
+  readonly originPolicy?: 'projected-v1';
   readonly chunk?: SourceChunk;
   readonly originMappings?: readonly SourceRangeMappingV1[];
   readonly sourceId: string;

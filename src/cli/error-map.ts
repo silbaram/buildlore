@@ -1,3 +1,4 @@
+import { normalizeResourceBudget, ResourceBudgetError } from '../knowledge/resource-budget.js';
 import { connectionRecovery } from '../application/connection-recovery.js';
 import { ConnectionError } from '../connection/contracts.js';
 import { LookupBatchError } from '../compiler/project-knowledge/lookup-batch.js';
@@ -292,6 +293,9 @@ export function mapCliError(
       data: { schemaVersion: 'buildlore.knowledge-completeness-budget.v1', maximumBytes: error.maximumBytes,
         recoveryAction: 'reduce-input-without-dropping-required-content' } });
   }
+  if (error instanceof ResourceBudgetError) {
+    return Object.freeze({ ...baseFailure(context, 3, error.code, 'Input exceeds the bounded resource limit.'), data: normalizeResourceBudget(error.diagnostic) ?? {} });
+  }
   if (error instanceof KnowledgeHistoryError || error instanceof ProjectKnowledgeError || error instanceof KnowledgeHierarchyQualityError) {
     return baseFailure(context, 3, error.code, error.message);
   }
@@ -440,6 +444,7 @@ export function mapCliError(
       ),
       data: Object.freeze({
         candidateRefs: error.candidateRefs,
+        ...(error.resourceBudget === undefined ? {} : { resourceBudget: normalizeResourceBudget(error.resourceBudget) }),
         ...(error.exportInspection === undefined
           ? {}
           : { exportInspection: error.exportInspection }),
