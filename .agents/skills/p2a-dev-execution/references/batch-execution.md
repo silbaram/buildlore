@@ -2,6 +2,8 @@
 
 Batch mode wraps the single-work-item lifecycle; it does not create a batch run, change schemas, or delegate lifecycle ownership. Each work item keeps its own run id, worktree, Gate-derived execution envelope, verification evidence, and finish. Monitor evidence and retrospective handling remain conditional on their normal activation rules.
 
+The main owner consolidates progress and direction advice for the user; advice alone adds no approval or stop condition. Share already-inspected relevant project memory with implementers rather than repeating the same optional lookup per worker. Missing memory does not prevent authorized batch work.
+
 ### 1. Freeze one ready snapshot and select a bounded batch
 
 Run `p2a tasks ready` once and freeze that result as the current ready snapshot. Select at most the user-approved concurrency limit and never add tasks that become ready while the batch is running. Because ready tasks already have every declared dependency in `done`, no selected task can directly depend on another selected task.

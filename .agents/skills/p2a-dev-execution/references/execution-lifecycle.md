@@ -40,9 +40,32 @@ p2a tasks ready --artifacts <dir>
 
 The envelope source hash, objective, scope, `mustPreserve`, non-goals, `iterationConstraints`, acceptance, verification, authority, and visual contract are canonical. Apply the current iteration's architecture, interface, and dependency constraints even when the project has no constitution. The work item is only an ownership and recovery boundary.
 
-For a retry whose latest run is `failed` or `blocked`, inspect that local run's failure class, localization, and verification evidence before starting. If already-committed BuildLore knowledge is materially relevant, one explicit same-project search may supplement that evidence; apply only a clearly similar mitigation and cite the inspected knowledge source in the run notes. Do not synchronize, compile, commit, or publish BuildLore as an implicit retry step.
+For a retry whose latest run is `failed` or `blocked`, inspect that local run's failure class, localization, and verification evidence before starting. Relevant project memory may supplement that evidence, not replace it; apply only a clearly similar mitigation and keep its inspected source reference in existing run notes.
 
-Do not query BuildLore for a normal first attempt. Unavailable, empty, or fallback retrieval is not a blocker unless the approved contract explicitly requires historical knowledge.
+## Optional project memory
+
+When `buildlore.enabled` is true in project configuration and memory is relevant to the task, a first attempt may read it too. At start, resume, or a meaningful direction change, make one bounded `p2a buildlore memory --task '<current goal>' --progressive --json` query. Reuse what was already read. For a needed source, use `p2a buildlore lookup --kind evidence --id <canonical-id> --expect-generation <returned-generation> --json`; use the canonical ID from the memory registry, not its short alias. Do not repeatedly poll for more knowledge during ordinary edits.
+
+Keep retrieval within the current project. Check the returned project, generation, and available source digests; do not mix generations or quietly replace the active execution baseline when newer memory arrives. `sourceRevision` identifies source evidence, `codeRevision` identifies the recorded verification target, and `repositoryRevision` is an observed repository HEAD. Source revision or HEAD alone does not prove code was verified. Missing verification targets, revision mismatches, and dirty working-tree changes mean historical or unconfirmed evidence, not proof of current behavior.
+
+Missing configuration, unavailable/offline storage, empty results, stale generations, or timeouts are advisory fallback outcomes: continue from current code, the latest user request, and the approved contract. If historical knowledge is explicitly required by that contract, report the unmet requirement through the existing boundary. Retrieval never implicitly authorizes synchronization, AI generation, compilation, approval, commit, publication, or other knowledge writes. A past Wiki decision does not grant new execution authority.
+
+## Progress and direction advice
+
+Explain the current goal and immediate next action when starting or resuming needs context. Update the user when a usable outcome is implemented or verified, a consequential design choice or new fact appears, failures repeat, scope grows, or the user asks about status. Usually two to four sentences and one important concern are enough. Follow the host's progress-update cadence without creating a report for every edit or tool call.
+
+Distinguish four inputs instead of blending them into certainty:
+
+- Current intent: the latest user request and choices, interpreted with the active execution contract.
+- Current facts: inspected code and diff, commands actually run, their results, and what is still unchecked.
+- Previous memory: recorded decisions, constraints, failed approaches, and their historical verification scope.
+- Advice: inferred impact and a recommended next action, with uncertainty when evidence is incomplete.
+
+Ask whether the change helps solve the current user problem. Unnecessary structure or dependencies, repeated fixes without testing the cause, or tests unlike real usage may justify a concern; file count, a revised plan, or disagreement with old Wiki prose alone does not establish drift. Explain **observation → impact on the goal → advice → next authorized action**. Advice alone does not mark work blocked or failed, create a new approval gate, start another reviewer, or require a report. Continue authorized development without waiting for a response; preserve real scope, verification, and external-authority boundaries.
+
+Reflect the user's changed direction through the existing contract-update path when needed. If the user defers advice or chooses differently, remember that choice and do not repeat the same recommendation without new evidence or changed impact. Keep only resume-critical intent, deferred advice, and next action in existing notes, not additional progress/review/summary documents.
+
+Describe progress in user-visible capabilities and verified scope, not percentages guessed from file or task counts. Test definitions are not executed evidence. At completion, separate implemented outcomes, actual verification, and unresolved issues; mention knowledge handoff or cleanup only when actually performed.
 
 ## Start or resume the run
 
@@ -73,4 +96,4 @@ Before editing, inventory the source baseline and unrelated user changes. If pre
 
 The current owner implements Direct and ordinary single-owner Planned work. Spawn `p2a-implementer` only when an independently confined owner materially helps Orchestrated/batch work or explicit context isolation. A spawned implementer edits only its scope and may run local checks, but lifecycle verification and finish remain with the owner.
 
-Own the envelope objective, inspect the repository, choose internal structure, implement, run checks, and correct ordinary code/test/UI drift without asking the user to choose implementation details. Before finish, compare the implementation and changed dependencies/interfaces with `iterationConstraints`; a conflict is not a successful implementation even when commands pass. Return to Gate B only when the objective requires changing product meaning, acceptance, approved scope, an approved iteration constraint, constitution, or an external authorization boundary.
+Own the envelope objective, inspect the repository, choose internal structure, implement, run checks, and correct ordinary code/test/UI drift without asking the user to choose implementation details. Before finish, compare the implementation and changed dependencies/interfaces with `iterationConstraints`; a conflict is not a successful implementation even when commands pass. Return to Gate B only when the objective requires changing product meaning, acceptance, approved scope, an approved iteration constraint, or constitution. Handle external authorization through `provider-confinement.md` without product reapproval.

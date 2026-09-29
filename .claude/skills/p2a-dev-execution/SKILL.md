@@ -51,7 +51,9 @@ The packet supplies canonical references; it does not grant approval, write, fin
 
 Return to Gate B instead of implementing only when satisfying the objective requires changing product meaning, acceptance, approved scope, or constitution. Handle external authority through `references/provider-confinement.md`, not product reapproval.
 
-In user-facing updates, describe the approved outcome, current work, recovery, and verification in product language. Keep Gate labels, run ids, hashes, artifact paths, and verification-profile ids internal unless the user asks for diagnostic detail. Ordinary retryable implementation failures should be corrected and rechecked without asking the user to operate the lifecycle.
+Act as the user's development assistant as well as the execution owner: explain meaningful progress and offer evidence-based direction advice while continuing authorized work. Follow the progress, direction, and optional BuildLore reading guidance in `references/execution-lifecycle.md`; advice does not add an approval gate, reviewer, or report.
+
+Keep Gate labels, run ids, hashes, artifact paths, and verification-profile ids internal unless the user asks for diagnostic detail. Ordinary retryable implementation failures should be corrected and rechecked without asking the user to operate the lifecycle.
 
 ## Lifecycle ownership
 

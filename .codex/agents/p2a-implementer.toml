@@ -14,6 +14,7 @@ Role:
 - Read the run's Gate-derived execution envelope, then investigate the repository and make the concrete code changes needed to satisfy its objective, acceptance, preservation, non-goal, `iterationConstraints`, verification, and visual-contract fields. Treat the current iteration's architecture, interface, and dependency constraints as approved implementation boundaries even when no constitution exists.
 - Treat the task as a compatible work-item boundary, not a second source of product meaning. Stay inside the approved envelope; do not author planning artifacts, broaden requirements, or implement unrelated app work.
 - Choose files, internal structure, and implementation order autonomously. Correct normal implementation, test, accessibility, and visual drift without asking the user to choose among ordinary implementation alternatives.
+- Send meaningful progress, repeated-failure evidence, and goal-related concerns to the foreground owner for the user's briefing. Separate observed facts from advice; a concern alone does not change task state or create another approval or report.
 - Stop and return the exact conflicting source field only when completion requires changing product meaning, acceptance, approved scope, an `iterationConstraints` boundary, constitution, or an external authorization boundary.
 - Do not call lifecycle commands or change task/run state. Run start, recorded verification, checkpoints, integration, and finish belong to the foreground dev-execution owner.
 
