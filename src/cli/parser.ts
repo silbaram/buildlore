@@ -52,6 +52,7 @@ const RESERVED_PROJECT_IDS = new Set(['knowledge', 'manifest', 'projects', 'shar
 const LOCAL_MODEL_PROFILE_ID = 'multilingual-e5-small';
 
 export const CONNECTED_READ_COMMANDS: readonly CliCommandId[] = ['wiki.list', 'wiki.read', 'wiki.memory', 'wiki.lookup', 'wiki.citations', 'search'];
+export const HANDOFF_COMMANDS: readonly CliCommandId[] = ['handoff.import', 'handoff.read', 'handoff.verify', 'handoff.list'];
 
 const COMMAND_SPECS: readonly CommandSpec[] = [
   command(['workspace', 'guide'], 'workspace.guide', 'workspace.guide', ['--project', '--client'], [], [], {}, '--project'),
@@ -64,6 +65,10 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
   command(['connection', 'status'], 'connection.status', 'connection.status', ['--project'], [], [], {}, '--project'),
   command(['connection', 'relocate-hub'], 'connection.relocate-hub', 'connection.relocate-hub', ['--from', '--to', '--knowledge-repo', '--expect-plan'], ['--from', '--to', '--knowledge-repo'], ['--apply']),
   command(['doctor'], 'doctor', 'doctor', ['--project'], [], [], {}, '--project'),
+  command(['handoff', 'import'], 'handoff.import', 'handoff.import', ['--project', '--file'], ['--project', '--file'], ['--commit'], {}, '--project'),
+  command(['handoff', 'read'], 'handoff.read', 'handoff.read', ['--project', '--id'], ['--project', '--id'], [], {}, '--project'),
+  command(['handoff', 'verify'], 'handoff.verify', 'handoff.verify', ['--project', '--id'], ['--project', '--id'], [], {}, '--project'),
+  command(['handoff', 'list'], 'handoff.list', 'handoff.list', ['--project', '--work-id', '--limit'], ['--project'], [], {}, '--project'),
   command(
     ['init'],
     'init',
@@ -636,8 +641,23 @@ function parseOptions(
   validateSessionCompileOptions(spec.command, values);
   validateSourceOptions(spec.operation, values);
   validateWikiOptions(spec.command, values);
+  validateHandoffOptions(spec.command, values);
   validateLocalModelOptions(spec.command, values);
   return Object.freeze(values);
+}
+
+function validateHandoffOptions(
+  commandId: CliCommandId,
+  values: Readonly<Record<string, CliOptionValue>>,
+): void {
+  if (!HANDOFF_COMMANDS.includes(commandId)) return;
+  const id = values['--id'], file = values['--file'], workId = values['--work-id'], limit = values['--limit'];
+  if ((id !== undefined && (typeof id !== 'string' || !PLAN_DIGEST_PATTERN.test(id))) ||
+      (file !== undefined && (typeof file !== 'string' || file.length > 4096 || containsControlCharacter(file))) ||
+      (workId !== undefined && (typeof workId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(workId))) ||
+      (limit !== undefined && (typeof limit !== 'string' || !/^[1-9][0-9]{0,2}$/u.test(limit) || Number(limit) > 100))) {
+    throw new CliUsageError('CLI_ARGUMENT_INVALID');
+  }
 }
 
 function validateLocalModelOptions(

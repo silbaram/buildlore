@@ -1,4 +1,5 @@
 import { normalizeResourceBudget, ResourceBudgetError } from '../knowledge/resource-budget.js';
+import { CompletionHandoffError } from '../knowledge/completion-handoff.js';
 import { connectionRecovery } from '../application/connection-recovery.js';
 import { ConnectionError } from '../connection/contracts.js';
 import { LookupBatchError } from '../compiler/project-knowledge/lookup-batch.js';
@@ -180,6 +181,11 @@ export function mapCliError(
   error: unknown,
   context: CliPresentationContext = { command: 'unknown' },
 ): CliFailureResult {
+  if (error instanceof CompletionHandoffError) {
+    return baseFailure(context, error.code.includes('COMMIT') || error.code.includes('GIT') || error.code.endsWith('TARGET_STAGED') ? 6 :
+      error.code.includes('WRITE') || error.code.includes('BUSY') ? 4 : 3,
+    error.code, 'Completion handoff preservation or verification could not complete safely.');
+  }
   if (error instanceof ConnectionError) {
     const code = error.code;
     const exitCode = ['CONNECTION_MISSING', 'CONNECTION_INCOMPLETE', 'APPROVAL_MISSING', 'FORMAT_UNSUPPORTED', 'GENERATION_REQUIRED'].includes(code) ? 2 :

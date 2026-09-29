@@ -181,3 +181,14 @@ export {
 } from './validation.js';
 
 export type { KnowledgeHistoryReferenceV1, KnowledgeGenerationRecordV1 } from './project-knowledge/history.js';
+export {
+  COMPLETION_HANDOFF_MAX_INPUT_BYTES,
+  CompletionHandoffError,
+  preserveCompletionHandoff,
+  readCompletionHandoff,
+  verifyCompletionHandoff,
+  listCompletionHandoffs,
+  type CompletionHandoffInput,
+  type CompletionHandoff,
+  type CompletionHandoffReceipt,
+} from './completion-handoff.js';

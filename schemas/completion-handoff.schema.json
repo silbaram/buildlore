@@ -1,0 +1,636 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildlore.dev/schemas/completion-handoff.schema.json",
+  "title": "Independent completion handoff",
+  "description": "Input is limited to 1 MiB serialized UTF-8. Stored bodyDigest binds sanitized UTF-8 bytes; sourceDigest retains original input integrity, not execution or approval authority. Handoff id/digest is SHA-256 of recursively key-sorted compact JSON excluding handoffId/digest. Baseline body must decode to a JSON object. Preservation does not approve Wiki facts, select a current baseline, or authorize cleanup.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/input"
+    },
+    {
+      "$ref": "#/$defs/handoff"
+    },
+    {
+      "$ref": "#/$defs/receipt"
+    }
+  ],
+  "$defs": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "workId",
+        "workKind",
+        "completedAt",
+        "repository",
+        "predecessor",
+        "affectedAreas",
+        "supersedes",
+        "baseline",
+        "knowledge",
+        "sources"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.completion-input.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "not": {
+            "enum": [
+              "knowledge",
+              "manifest",
+              "projects",
+              "shared"
+            ]
+          }
+        },
+        "workId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "workKind": {
+          "enum": [
+            "iteration",
+            "maintenance"
+          ]
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+        },
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "codeRevision",
+            "contentDigest"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "codeRevision": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+                }
+              ]
+            },
+            "contentDigest": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              ]
+            }
+          }
+        },
+        "predecessor": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "handoffId",
+                "baselineDigest"
+              ],
+              "properties": {
+                "handoffId": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "baselineDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              }
+            }
+          ]
+        },
+        "affectedAreas": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          }
+        },
+        "supersedes": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "baseline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "format",
+            "body",
+            "sourceDigest"
+          ],
+          "properties": {
+            "format": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            },
+            "sourceDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          }
+        },
+        "knowledge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "summary",
+            "decisions",
+            "lessons",
+            "remaining"
+          ],
+          "properties": {
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
+            },
+            "decisions": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              }
+            },
+            "lessons": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              }
+            },
+            "remaining": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              }
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ref",
+              "role",
+              "mediaType",
+              "body",
+              "sourceDigest"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.git)(?:/|$))[^\\\\:\\u0000-\\u001f\\u007f]+(?:/[^\\\\:\\u0000-\\u001f\\u007f]+)*$"
+              },
+              "role": {
+                "enum": [
+                  "contract",
+                  "task",
+                  "verification",
+                  "decision",
+                  "note",
+                  "evidence"
+                ]
+              },
+              "mediaType": {
+                "enum": [
+                  "application/json",
+                  "text/markdown",
+                  "text/plain"
+                ]
+              },
+              "body": {
+                "type": "string",
+                "maxLength": 1048576
+              },
+              "sourceDigest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "workId",
+        "workKind",
+        "completedAt",
+        "repository",
+        "predecessor",
+        "affectedAreas",
+        "supersedes",
+        "baseline",
+        "knowledge",
+        "sources",
+        "handoffId",
+        "digest",
+        "wikiStatus",
+        "cleanupEligible",
+        "sanitation"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.completion-handoff.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "not": {
+            "enum": [
+              "knowledge",
+              "manifest",
+              "projects",
+              "shared"
+            ]
+          }
+        },
+        "workId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "workKind": {
+          "enum": [
+            "iteration",
+            "maintenance"
+          ]
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+        },
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "codeRevision",
+            "contentDigest"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "codeRevision": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+                }
+              ]
+            },
+            "contentDigest": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              ]
+            }
+          }
+        },
+        "predecessor": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "handoffId",
+                "baselineDigest"
+              ],
+              "properties": {
+                "handoffId": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "baselineDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              }
+            }
+          ]
+        },
+        "affectedAreas": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          }
+        },
+        "supersedes": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "baseline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "format",
+            "body",
+            "sourceDigest",
+            "bodyDigest"
+          ],
+          "properties": {
+            "format": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            },
+            "sourceDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "bodyDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          }
+        },
+        "knowledge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "summary",
+            "decisions",
+            "lessons",
+            "remaining"
+          ],
+          "properties": {
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
+            },
+            "decisions": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              }
+            },
+            "lessons": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              }
+            },
+            "remaining": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              }
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ref",
+              "role",
+              "mediaType",
+              "body",
+              "sourceDigest",
+              "bodyDigest"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.git)(?:/|$))[^\\\\:\\u0000-\\u001f\\u007f]+(?:/[^\\\\:\\u0000-\\u001f\\u007f]+)*$"
+              },
+              "role": {
+                "enum": [
+                  "contract",
+                  "task",
+                  "verification",
+                  "decision",
+                  "note",
+                  "evidence"
+                ]
+              },
+              "mediaType": {
+                "enum": [
+                  "application/json",
+                  "text/markdown",
+                  "text/plain"
+                ]
+              },
+              "body": {
+                "type": "string",
+                "maxLength": 1048576
+              },
+              "sourceDigest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "bodyDigest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
+        "handoffId": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "wikiStatus": {
+          "const": "pending"
+        },
+        "cleanupEligible": {
+          "const": false
+        },
+        "sanitation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "policyDigest",
+            "rulesVersion"
+          ],
+          "properties": {
+            "policyDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "rulesVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "workId",
+        "handoffId",
+        "digest",
+        "relativePath",
+        "commit",
+        "storage",
+        "wikiStatus",
+        "cleanupEligible"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "buildlore.completion-receipt.v1"
+        },
+        "projectId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "not": {
+            "enum": [
+              "knowledge",
+              "manifest",
+              "projects",
+              "shared"
+            ]
+          }
+        },
+        "workId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "handoffId": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "relativePath": {
+          "type": "string",
+          "pattern": "^projects/[a-z0-9]+(?:-[a-z0-9]+)*/handoffs/objects/[a-f0-9]{64}\\.json$"
+        },
+        "commit": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+            }
+          ]
+        },
+        "storage": {
+          "enum": [
+            "stored",
+            "committed"
+          ]
+        },
+        "wikiStatus": {
+          "const": "pending"
+        },
+        "cleanupEligible": {
+          "const": false
+        }
+      }
+    }
+  }
+}

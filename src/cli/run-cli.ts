@@ -6,10 +6,19 @@ import { workspaceCheck } from '../application/workspace-check.js';
 import { createWorkspacePublicationService, normalizeWorkspacePublication } from '../knowledge/workspace-publication.js';
 import { initializeKnowledgeWorkspace, resolveWorkspaceLayout, inspectKnowledgeWorkspace, type WorkspaceLayout } from '../knowledge/knowledge-workspace.js';
 import type { ReadObserver } from '../retrieval/read-observer.js';
-import { setupHub, connectProject, disconnectProject, resolveConnection, connectionOutcome, relocateHub } from '../connection/service.js';
+import { setupHub, connectProject, disconnectProject, resolveConnection, connectionOutcome, relocateHub, connectionPaths, assertConnectionCurrent } from '../connection/service.js';
+import { readConfig } from '../connection/io.js';
 import { fail as connectionFail, ConnectionError, digest as connectionPlanDigest } from '../connection/contracts.js';
 import { connectionStatus, unavailableConnectionStatus, readConnectedWiki, readApprovedWiki, type WikiReadRequest } from '../application/wiki-read-service.js';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import {
+  COMPLETION_HANDOFF_MAX_INPUT_BYTES,
+  CompletionHandoffError,
+  preserveCompletionHandoff,
+  readCompletionHandoff,
+  verifyCompletionHandoff,
+  listCompletionHandoffs,
+} from '../knowledge/completion-handoff.js';
 import { createProjectKnowledgeCompletenessWorkflow } from './project-knowledge-workflow.js';
 import type { CompletenessRole } from '../compiler/project-knowledge/completeness.js';
 
@@ -34,12 +43,13 @@ import {
 } from '../knowledge/local-project-registry.js';
 import { createRepositoryWriterLease } from '../knowledge/repository-writer-lease.js';
 import { getKnowledgeStatus } from '../knowledge/status.js';
+import { createGitMachineAdapter } from '../knowledge/git-machine.js';
 import type {
   CompilerStatusPort,
   ProjectRecord,
   ProjectRegistryEntry,
 } from '../knowledge/types.js';
-import { addProject, listProjects, showProject, validateProjectRegistry } from '../knowledge/workspace.js';
+import { addProject, listProjects, showProject, readProjectRegistration, validateProjectRegistry } from '../knowledge/workspace.js';
 import {
   createBuiltInSourceAdapterRegistry,
   createProjectSyncService,
@@ -108,7 +118,7 @@ import { createProjectKnowledgeWorkflow, type ProjectKnowledgeWorkflowService } 
 import { createKnowledgeWikiReader } from '../retrieval/project-knowledge-reader.js';
 import { hash, choice, invalid, ProjectKnowledgeError } from '../knowledge/project-knowledge/guards.js';
 import { HELP_TEXT } from './help.js';
-import { CliUsageError, CONNECTED_READ_COMMANDS, inferCliCommand, parseCliArguments } from './parser.js';
+import { CliUsageError, CONNECTED_READ_COMMANDS, HANDOFF_COMMANDS, inferCliCommand, parseCliArguments } from './parser.js';
 import { renderCliResult, writeRenderedCliResult } from './presentation.js';
 import { createCliPublicationLineageResolver } from './publication-lineage.js';
 import type {
@@ -261,6 +271,7 @@ function statusErrorCode(state: string): KnowledgeErrorCode {
 async function assertProjectCommandsReady(
   runtime: CliRuntime,
   projectId?: string,
+  allowArchivePinDrift = false,
 ): Promise<void> {
   if (runtime.workspaceLayout?.mode === 'knowledge') {
     await inspectKnowledgeWorkspace(runtime.cwd);
@@ -268,7 +279,13 @@ async function assertProjectCommandsReady(
     return;
   }
   const status = await getKnowledgeStatus(runtime.cwd);
-  if (!status.ok) {
+  // A local handoff commit advances the knowledge checkout before a parent
+  // submodule pin is updated. Its immutable objects remain directly readable.
+  const archivePinDrift = allowArchivePinDrift && status.knowledge.state === 'commit-mismatch'
+    && status.knowledge.checkedOutCommit !== null && status.knowledge.pinnedCommit !== null
+    && await createGitMachineAdapter().isAncestor(runtimeKnowledgeRoot(runtime),
+      status.knowledge.pinnedCommit, status.knowledge.checkedOutCommit);
+  if (!status.ok && !archivePinDrift) {
     throw new KnowledgeError(
       statusErrorCode(status.knowledge.state),
       'Knowledge repository requires recovery before project access.',
@@ -542,10 +559,47 @@ async function searchWithApprovedWiki(
   }
 }
 
+async function executeHandoffCommand(command: ParsedCliCommand, runtime: CliRuntime): Promise<unknown> {
+  const projectId = requiredStringOption(command, '--project');
+  // Resolve the capability even with an explicit project. Invalid/incomplete connections
+  // must never silently select another repository through the legacy hub route.
+  const connection = await resolveConnection(runtime.cwd, runtime.configDir === undefined ? {} : { configDir: runtime.configDir });
+  if (connection && connection.projectId !== projectId) connectionFail('PROJECT_MISMATCH');
+  const knowledgeRoot = connection ? connectionPaths(connection).knowledgeRoot : runtimeKnowledgeRoot(runtime);
+  if (!connection) {
+    await assertProjectCommandsReady(runtime, command.command === 'handoff.import' ? projectId : undefined, true);
+    if (command.command !== 'handoff.import') await readProjectRegistration(knowledgeRoot, projectId);
+  }
+  if (command.command === 'handoff.import') {
+    let input: unknown;
+    try {
+      const file = await readConfig(resolve(runtime.cwd, requiredStringOption(command, '--file')), COMPLETION_HANDOFF_MAX_INPUT_BYTES);
+      if (!file) throw new CompletionHandoffError('COMPLETION_HANDOFF_INPUT_INVALID');
+      input = file.value;
+    } catch {
+      throw new CompletionHandoffError('COMPLETION_HANDOFF_INPUT_INVALID');
+    }
+    if (connection) await assertConnectionCurrent(connection);
+    return preserveCompletionHandoff({ knowledgeRoot, projectId, input, commit: command.options['--commit'] === true });
+  }
+  if (connection) await assertConnectionCurrent(connection);
+  switch (command.command) {
+    case 'handoff.read': return readCompletionHandoff({ knowledgeRoot, projectId, id: requiredStringOption(command, '--id') });
+    case 'handoff.verify': return verifyCompletionHandoff({ knowledgeRoot, projectId, id: requiredStringOption(command, '--id') });
+    case 'handoff.list': {
+      const workId = stringOption(command, '--work-id'), limit = stringOption(command, '--limit');
+      return listCompletionHandoffs({ knowledgeRoot, projectId,
+        ...(workId === undefined ? {} : { workId }), ...(limit === undefined ? {} : { limit: Number(limit) }) });
+    }
+    default: throw new CliUsageError('CLI_COMMAND_UNSUPPORTED');
+  }
+}
+
 async function executeCommand(
   command: ParsedCliCommand,
   runtime: CliRuntime,
 ): Promise<unknown> {
+  if (HANDOFF_COMMANDS.includes(command.command)) return executeHandoffCommand(command, runtime);
   if (CONNECTED_READ_COMMANDS.includes(command.command) && stringOption(command, '--expect-generation') !== undefined) {
     const projectId = requiredStringOption(command, '--project');
     await assertProjectCommandsReady(runtime, projectId);

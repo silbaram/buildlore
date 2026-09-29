@@ -27,6 +27,9 @@ Connected source reads may omit --project. read/lookup/citations require --expec
   buildlore source add --project <project-id> --id <declaration-id> --kind markdown|text|code|json --path <relative-directory-or-file> [--recursive|--no-recursive] [--json]
   buildlore source list --project <project-id> [--json]
   buildlore source diff --project <project-id> [--json]
+  buildlore handoff import --project <project-id> --file <completion-handoff.json> [--commit] [--json]
+  buildlore handoff read|verify --project <project-id> --id <sha256:handoff-id> [--json]
+  buildlore handoff list --project <project-id> [--work-id <work-id>] [--limit <1-100>] [--json]
   buildlore wiki list --project <project-id> [--cursor <opaque-cursor>] [--limit <1-100>] [--json]
   buildlore wiki curate --project <project-id> [--json]
   buildlore wiki read --project <project-id> --page <page-type/slug|page-sha256-id|overview|architecture|decisions> [--view full|reader] [--json]
@@ -89,7 +92,7 @@ Source registration:
   Example: buildlore source add --project my-project --id docs --kind markdown --path docs
 
 Provider requirements:
-  None         init, project, source, sync, wiki, export, check, index status, lexical/graph search, compile plan/apply/candidates/approve/activate/hierarchy
+  None         init, project, source, handoff, sync, wiki, export, check, index status, lexical/graph search, compile plan/apply/candidates/approve/activate/hierarchy
   Conditional  index rebuild, semantic/hybrid search, context
   Required     legacy compile, query
 
@@ -121,10 +124,18 @@ Evidence reading:
   --ids accepts 1-16 IDs of one kind; default batch budget is 32768 bytes.
   Split oversized batches; cite only material actually read and preserve unknowns.
 
+Completion preservation:
+  handoff import sanitizes and preserves a bounded, original-independent completion bundle.
+  --commit explicitly commits only that preserved bundle locally; it never pushes.
+  handoff read/list/verify are read-only and work without an approved Wiki generation.
+  Preserved handoffs remain pending, not approved Wiki facts or a current development baseline.
+  cleanupEligible is always false: no source retirement or work-document deletion is authorized.
+
 Compatibility aliases:
   knowledge clone, knowledge init, knowledge status, project validate
 
 Source roots are explicit local-only bindings and are never written to knowledge or command output.
 Project-scoped commands require --project and never infer a default project.
-Output never includes credentials, source bodies, or stack traces.
+Diagnostics never echo credentials, raw input, or stack traces.
+Explicit read commands return only validated and sanitized knowledge or preserved content.
 `;

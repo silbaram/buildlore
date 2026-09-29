@@ -104,6 +104,11 @@ describe('knowledge tracking policy v1', () => {
 
   it('applies exactly one class and keeps policy-track excluded without explicit review input', () => {
     expect(classifyTrackingPath(
+      `projects/fixture/handoffs/objects/${'a'.repeat(64)}.json`, packageIdentity,
+    )).toEqual({ classification: 'always-track', disposition: 'include', entryId: 'always-track-completion-handoff', ok: true });
+    expect(KNOWLEDGE_TRACKING_POLICY.entries.find(({ id }) => id === 'always-track-completion-handoff'))
+      .toMatchObject({ portability: 'portable', regenerationSafety: 'not-regenerable', mergeRisk: 'review-required' });
+    expect(classifyTrackingPath(
       'projects/fixture/sources/decision.md',
       packageIdentity,
     )).toEqual({

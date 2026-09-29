@@ -14,6 +14,7 @@
     "buildlore": "./dist/cli/bin.js"
   },
   "exports": {
+    "./schemas/completion-handoff.schema.json": "./schemas/completion-handoff.schema.json",
     "./schemas/project-knowledge-completeness.schema.json": "./schemas/project-knowledge-completeness.schema.json",
     "./schemas/project-knowledge-change-impact.schema.json": "./schemas/project-knowledge-change-impact.schema.json",
     "./schemas/project-knowledge-history.schema.json": "./schemas/project-knowledge-history.schema.json",

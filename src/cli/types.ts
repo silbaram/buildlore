@@ -33,6 +33,7 @@ export type CliCommandId =
   | 'compile.plan'
   | 'context'
   | 'export'
+  | 'handoff.import' | 'handoff.read' | 'handoff.verify' | 'handoff.list'
   | 'init'
   | 'index.rebuild'
   | 'index.status'

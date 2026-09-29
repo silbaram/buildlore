@@ -281,11 +281,12 @@ async function createStagedWorkspace(
 async function projectRecordForEntry(
   knowledgeRoot: string,
   entry: ProjectRegistryEntry,
+  readWorkspace: (workspace: string) => Promise<ProjectDescriptor> = validateWorkspaceShape,
 ): Promise<ProjectRecord> {
   const workspace = await resolveProjectWorkspace(knowledgeRoot, entry.projectId, {
     mustExist: true,
   });
-  const descriptor = await validateWorkspaceShape(workspace);
+  const descriptor = await readWorkspace(workspace);
   if (
     descriptor.projectId !== entry.projectId ||
     descriptor.sourceRepository !== entry.sourceRepository
@@ -401,9 +402,10 @@ export async function listProjects(knowledgeRoot: string): Promise<readonly Proj
   return (await readManifest(knowledgeRoot, { allowMissing: true })).projects;
 }
 
-export async function showProject(
+async function registeredProject(
   knowledgeRoot: string,
   projectId: string,
+  readWorkspace: (workspace: string) => Promise<ProjectDescriptor>,
 ): Promise<ProjectRecord> {
   const id = validateProjectId(projectId);
   const manifest = await readManifest(knowledgeRoot, { allowMissing: true });
@@ -413,7 +415,25 @@ export async function showProject(
       recoveryCommand: ['project', 'list'],
     });
   }
-  return projectRecordForEntry(knowledgeRoot, entry);
+  return projectRecordForEntry(knowledgeRoot, entry, readWorkspace);
+}
+
+export async function showProject(
+  knowledgeRoot: string,
+  projectId: string,
+): Promise<ProjectRecord> {
+  return registeredProject(knowledgeRoot, projectId, validateWorkspaceShape);
+}
+
+/** Internal read-only registration check for independently preserved objects.
+ * Git does not retain empty compilation directories, and archived reads do not use them.
+ * Normal project commands continue to validate the complete workspace through showProject.
+ */
+export async function readProjectRegistration(
+  knowledgeRoot: string,
+  projectId: string,
+): Promise<ProjectRecord> {
+  return registeredProject(knowledgeRoot, projectId, readDescriptor);
 }
 
 export async function validateProjectRegistry(

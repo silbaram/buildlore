@@ -548,6 +548,54 @@ before persistence. Rejected values and absolute source roots are not echoed. Th
 sanitized source, wiki, and compiler state remain confined to
 `/d/knowledge/projects/<project-id>/`.
 
+#### Preserve completed work independently of Wiki approval
+
+With a registered project and security policy, import an explicit completion snapshot
+from P2A (`p2a knowledge capture`) or another producer of `buildlore.completion-input.v1`:
+
+```sh
+node dist/cli/bin.js handoff import --project a --file completion.json --json
+node dist/cli/bin.js handoff import --project a --file completion.json --commit --json
+node dist/cli/bin.js handoff list --project a --work-id v1-mvp --limit 20 --json
+node dist/cli/bin.js handoff read --project a --id sha256:<64-hex> --json
+node dist/cli/bin.js handoff verify --project a --id sha256:<64-hex> --json
+```
+
+These commands support connected source repositories, standalone knowledge workspaces,
+and legacy hubs. The explicit project must match the connection and input. Import accepts
+a regular, non-symlink JSON file up to 1 MiB, validates its body digests, and sanitizes all
+fields before storing an immutable object under
+`projects/<project-id>/handoffs/objects/<digest>.json`. Suspected credentials fail closed
+without persisting or echoing the input. Keep the unsanitized producer snapshot local;
+never commit or share it as a preserved knowledge object.
+
+By default the receipt reports `storage: stored` with no commit. `--commit` explicitly
+creates a local commit containing only the preserved object, retaining unrelated staged
+and unstaged changes. It never pushes, activates a Wiki, or advances a development baseline.
+Read and verify use only preserved content; they do not reopen the original source files.
+Verify reports `committed` only when the exact stored object is present at the knowledge
+repository's current HEAD. A list is bounded to 1–100 results (default 20), not an instruction
+to adopt the newest baseline.
+
+In a legacy hub, the local handoff commit can advance the knowledge submodule checkout
+ahead of its parent pin. Handoff import/read/verify/list remain available for that
+registered project; they do not update the parent pin or approve the new commit.
+
+All objects remain `wikiStatus: pending` and `cleanupEligible: false`. Original and sanitized
+body digests are distinct. Repository identity is supplied provenance, not independently
+verified authority; missing verified code revision or content digest remains `null`.
+Automatic completion capture, archived-source compilation, baseline restoration and
+artifact cleanup are not implemented here. **Keep original development documents** until
+those reference transitions are implemented and verified. No provider is needed for this
+preservation/read path.
+
+The opt-in cross-repository test uses only temporary fixtures and the built CLI:
+
+```sh
+npm run build
+P2A_CHECKOUT=/path/to/plan2agent npm test -- test/completion-handoff-p2a.test.ts
+```
+
 ### 5. Configure provider access when needed
 
 Local project, sync, check, and lexical search commands need no model provider.

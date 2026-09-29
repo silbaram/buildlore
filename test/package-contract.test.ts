@@ -551,7 +551,16 @@ describe('package contract', () => {
 
     const allSource = await readSources(['']);
     expect(allSource).not.toMatch(/from\s+['"]llm-wiki-compiler\//u);
-    expect(allSource).not.toMatch(/\bGIT_INDEX_FILE\b/u);
+    // Completion preservation uses a private, generated index to commit exactly
+    // one sanitized object without including or clearing the caller's staged work.
+    // Caller GIT_* variables are stripped there and covered by service tests;
+    // no other subsystem may acquire alternate-index authority.
+    const alternateIndexOwners = await Promise.all(sourcePaths.map(async (path) => ({
+      path: path.replaceAll('\\', '/'),
+      source: await readFile(new URL(path.replaceAll('\\', '/'), sourceRoot), 'utf8'),
+    })));
+    expect(alternateIndexOwners.filter(({ source }) => /\bGIT_INDEX_FILE\b/u.test(source))
+      .map(({ path }) => path)).toEqual(['knowledge/completion-handoff.ts']);
     expect(allSource).not.toMatch(/['"](?:pull|rebase|stash)['"]/u);
     expect(allSource).not.toMatch(/['"]--force(?:-with-lease)?['"]/u);
     expect(allSource).not.toMatch(
