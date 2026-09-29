@@ -33,6 +33,7 @@
         "utf8-bytes",
         "sources",
         "evidence",
+        "origin-end-columns",
         "json-nodes",
         "json-depth"
       ]

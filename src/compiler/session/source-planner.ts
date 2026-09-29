@@ -1,5 +1,6 @@
-import { ResourceBudgetError, resourceBudget, type ResourceBudgetDiagnostic } from '../../knowledge/resource-budget.js';
+import { enforceResourceBudget, ResourceBudgetError, resourceBudget, type ResourceBudgetDiagnostic } from '../../knowledge/resource-budget.js';
 import { isWarningSummary } from '../../sanitizer/findings.js';
+import { containsSecretRedaction } from '../../sanitizer/redaction-marker.js';
 import { join, resolve } from 'node:path';
 
 import { serializeCanonicalJson } from '../../knowledge/atomic-file.js';
@@ -84,6 +85,8 @@ export interface SessionCompilePlanSnapshot {
 /** @internal Sanitized, source-bound input shared by Wiki and legacy session planning. */
 export interface VerifiedSessionSource extends Omit<SessionPlannedSource, 'citationAnchors'> {
   readonly jsonOrigins?: readonly SourceJsonOriginMappingV1[];
+  /** Original columns needed when sanitization changes a paragraph's last line. */
+  readonly originLineEndColumns?: readonly Readonly<{ canonicalLine: number; endColumn: number }>[];
 }
 
 export interface VerifiedSessionSources {
@@ -609,12 +612,41 @@ function legacyPlannedSource(source: VerifiedSessionSource, originalBody: string
   });
 }
 
+function changedParagraphEndColumns(source: VerifiedSessionSource, originalBody: string, projectId: string):
+  VerifiedSessionSource['originLineEndColumns'] {
+  if (source.originMappings === undefined) return undefined;
+  const originalLines = originalBody.replace(/\r\n?/gu, '\n').split('\n');
+  const sanitizedLines = source.sanitizedBody.split('\n');
+  const corrections: Array<{ canonicalLine: number; endColumn: number }> = [];
+  for (const mapping of source.originMappings) {
+    for (let canonicalLine = mapping.canonical.startLine; canonicalLine < mapping.canonical.endLine; canonicalLine += 1) {
+      const line = sanitizedLines[canonicalLine - 1], next = sanitizedLines[canonicalLine];
+      if (line === undefined || next === undefined) return denied(projectId);
+      if (line.trim() === '' || containsSecretRedaction(line) ||
+          (next.trim() !== '' && !containsSecretRedaction(next) &&
+            !source.jsonOrigins?.some(item => item.canonical.startLine <= canonicalLine + 1 &&
+              item.canonical.endLine >= canonicalLine + 1))) continue;
+      const originalLine = originalLines[mapping.origin.startLine + canonicalLine - mapping.canonical.startLine - 1];
+      if (originalLine === undefined) return denied(projectId);
+      const endColumn = Array.from(originalLine).length + 1;
+      if (endColumn !== Array.from(line).length + 1) {
+        enforceResourceBudget('wiki-sources', 'origin-end-columns', corrections.length + 1, 8192);
+        corrections.push({ canonicalLine, endColumn });
+      }
+    }
+  }
+  return corrections.length === 0 ? undefined : Object.freeze(corrections.map(item => Object.freeze(item)));
+}
+
 /** @internal Reuses every source admission check without materializing legacy citation/task arrays. */
 export async function prepareVerifiedSessionSources(
   options: CreateSessionCompilePlannerOptions,
   projectId: string,
 ): Promise<VerifiedSessionSources> {
-  const prepared = await prepareSessionSources(options, projectId, (source) => source, 'wiki-sources');
+  const prepared = await prepareSessionSources(options, projectId, (source, originalBody) => {
+    const originLineEndColumns = changedParagraphEndColumns(source, originalBody, projectId);
+    return originLineEndColumns === undefined ? source : Object.freeze({ ...source, originLineEndColumns });
+  }, 'wiki-sources');
   return Object.freeze({
     projectId,
     policyDigest: prepared.planBase.policyDigest,

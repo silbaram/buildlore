@@ -35,13 +35,16 @@ function parseSource(value: unknown, projectId: string): KnowledgeSourceV1 {
     ...(Object.hasOwn(input, 'originPolicy') ? ['originPolicy'] : []),
     ...(Object.hasOwn(input, 'chunk') ? ['chunk'] : []),
     ...(Object.hasOwn(input, 'originMappings') ? ['originMappings'] : []),
+    ...(Object.hasOwn(input, 'originLineEndColumns') ? ['originLineEndColumns'] : []),
     ...(Object.hasOwn(input, 'repositoryRevision') ? ['repositoryRevision'] : [])]);
   if (input.tracked !== null && typeof input.tracked !== 'boolean') invalid();
   const content = text(input.content, 262_144);
   if (input.origins !== undefined && input.format !== 'markdown') invalid();
   if (input.originPolicy !== undefined && input.originPolicy !== 'projected-v1') invalid();
   if (input.originMappings !== undefined && input.chunk === undefined && input.originPolicy === undefined) invalid();
-  let fragment: Pick<KnowledgeSourceV1, 'chunk' | 'originMappings'> = {};
+  if (input.originLineEndColumns !== undefined &&
+      (input.originPolicy !== 'projected-v1' || input.originMappings === undefined)) invalid();
+  let fragment: Pick<KnowledgeSourceV1, 'chunk' | 'originMappings' | 'originLineEndColumns'> = {};
   if (input.chunk !== undefined || input.originMappings !== undefined) {
     if (input.format !== 'markdown') invalid();
     try {
@@ -63,6 +66,24 @@ function parseSource(value: unknown, projectId: string): KnowledgeSourceV1 {
         return Object.freeze({ canonical, origin });
       });
       fragment = { ...fragment, originMappings: Object.freeze(originMappings) };
+      if (input.originLineEndColumns !== undefined) {
+        let previousLine = 0;
+        const originLineEndColumns = list(input.originLineEndColumns, 8192).map((value) => {
+          const item = record(value); keys(item, ['canonicalLine', 'endColumn']);
+          const canonicalLine = item.canonicalLine, endColumn = item.endColumn;
+          if (typeof canonicalLine !== 'number' || !Number.isSafeInteger(canonicalLine) ||
+              canonicalLine <= previousLine || canonicalLine > lines.length ||
+              typeof endColumn !== 'number' || !Number.isSafeInteger(endColumn) || endColumn < 1 ||
+              !originMappings.some(mapping => mapping.canonical.startLine <= canonicalLine &&
+                canonicalLine < mapping.canonical.endLine) ||
+              (lines[canonicalLine - 1] ?? '').trim() === '' ||
+              containsSecretRedaction(lines[canonicalLine - 1] ?? '') ||
+              endColumn === Array.from(lines[canonicalLine - 1] ?? '').length + 1) invalid();
+          previousLine = canonicalLine;
+          return Object.freeze({ canonicalLine, endColumn });
+        });
+        fragment = { ...fragment, originLineEndColumns: Object.freeze(originLineEndColumns) };
+      }
     } catch { return invalid(); }
   }
   if (input.repositoryRevision !== undefined && input.repositoryRevision !== null &&
@@ -133,6 +154,8 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
   const result: KnowledgeEvidenceV1[] = [];
   let start = 0;
   const originByLine = new Map(source.origins?.map((o) => [o.projectedLine, o]));
+  const originalEndColumnByLine = new Map(source.originLineEndColumns?.map((item) =>
+    [item.canonicalLine, item.endColumn]));
   const chunk = source.chunk;
   const prefix = chunk === undefined ? '' : Array.from(source.content).slice(0, chunk.payloadStart).join('');
   const firstPayloadLine = prefix.split('\n').length;
@@ -161,7 +184,8 @@ export function extractKnowledgeEvidence(source: KnowledgeSourceV1, projectId: s
       range: { startLine: start + 1 + mapping.origin.startLine - mapping.canonical.startLine,
         endLine: end + mapping.origin.startLine - mapping.canonical.startLine,
         startColumn: start + 1 === mapping.canonical.startLine ? mapping.origin.startColumn : 1,
-        endColumn: end === mapping.canonical.endLine ? mapping.origin.endColumn : Array.from(lines[end - 1] ?? '').length + 1 },
+        endColumn: end === mapping.canonical.endLine ? mapping.origin.endColumn
+          : (originalEndColumnByLine.get(end) ?? Array.from(lines[end - 1] ?? '').length + 1) },
     };
     result.push(evidence(source, { kind: 'lines', start: start + 1, end }, lines.slice(start, end).join('\n'), projectId, rangeOrigin));
     start = end;

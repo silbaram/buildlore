@@ -377,6 +377,9 @@ into legacy per-line session anchors and task plans. JSON pointers and original
 code/chunk locations are retained; saved v1 Wiki runs and the plan-returning SDK
 keep their original replay identities. New Wiki runs use `wiki-workflow-run.v2`
 and sources opt into `originPolicy: "projected-v1"`.
+When sanitization changes a paragraph's final column, existing small mappings
+retain their replay identities. Larger correction sets store only the needed
+original columns in `originLineEndColumns` without expanding range mappings.
 
 The limits remain 32 MiB for prepared sources, 2,048 snapshot fragments, 8,192
 evidence items, and 16 MiB for each snapshot/generation. Source byte size alone

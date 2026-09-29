@@ -14,6 +14,8 @@ export interface KnowledgeSourceV1 {
   readonly originPolicy?: 'projected-v1';
   readonly chunk?: SourceChunk;
   readonly originMappings?: readonly SourceRangeMappingV1[];
+  /** Sparse original end columns for sanitized paragraph boundaries within a range mapping. */
+  readonly originLineEndColumns?: readonly Readonly<{ canonicalLine: number; endColumn: number }>[];
   readonly sourceId: string;
   readonly sourceRef: string;
   readonly sourceContentDigest: KnowledgeDigest;

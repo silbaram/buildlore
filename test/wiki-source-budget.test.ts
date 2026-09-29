@@ -43,6 +43,8 @@ it('distinguishes dense evidence and byte limits from malformed input, without s
     source: 'private-name', get excerpt() { throw new Error('must not execute'); } })).toEqual(failure.data);
   expect(normalizeResourceBudget({ stage: 'private-name', resource: 'evidence', observed: 8200, maximum: 8192 })).toBeUndefined();
   expect(normalizeResourceBudget({ get stage() { throw new Error('must not execute'); } })).toBeUndefined();
+  await matchPublishedShape(mapCliError(new ResourceBudgetError('wiki-sources', 'origin-end-columns', 8193, 8192)).data,
+    { $ref: 'resource-budget.schema.json' });
   let byteError: unknown;
   try { boundedJson(Array.from({ length: 65 }, () => 'a'.repeat(262144))); } catch (caught) { byteError = caught; }
   expect(byteError).toMatchObject({ diagnostic: { resource: 'utf8-bytes', maximum: 16777216 } });
@@ -159,6 +161,73 @@ it.each(['single line', 'Unicode CRLF'])('activates sanitized code with shorter 
     await activateSourceWiki(f, snapshot, code.sourceRef);
     expect(await storedSources(f)).toEqual(storedBefore);
     expect((await preparePlannedKnowledgeSession(options)).plan).toEqual(legacy.plan);
+  } finally { await f.cleanup(); }
+}, 60000);
+
+it('keeps original end columns when a sanitized code paragraph ends before its mapping', async () => {
+  const f = await longSourceFixture('# Ordinary handbook\n\nSafe information.\n');
+  try {
+    const first = `const 경로 = "/${['home', 'example', 'ordinary', 'long', 'project', 'location'].join('/')}";`;
+    await mkdir(join(f.sourceRoot, 'src'));
+    await writeFile(join(f.sourceRoot, 'src/example.ts'), [first, '', 'const tail = 1;', ''].join('\r\n'));
+    const path = join(f.sourceRoot, '.buildlore/sources.json');
+    const manifest = parseSourceCollectionManifestV2(JSON.parse(await readFile(path, 'utf8')));
+    await writeFile(path, serializeCanonicalJson(parseSourceCollectionManifestV2({ ...manifest, sources: [...manifest.sources,
+      { adapterId: 'buildlore.generic', adapterVersion: 1, id: 'code', kind: 'code', path: 'src', pathType: 'directory', recursive: true }] })));
+    expect(await f.cli(['sync', '--project', f.projectId])).toMatchObject({ exitCode: 0 });
+    const { session } = await prepareVerifiedKnowledgeSession({ ...f, outputLanguage: 'ko',
+      rendererVersion: 'knowledge-markdown-v3', authoringMode: 'wiki-v1' });
+    const snapshot = session.exchange.snapshot;
+    const code = snapshot.sources.find(item => item.sourceRef === 'src/example.ts');
+    if (code === undefined) throw new Error('Missing code source.');
+    expect(code.content).toContain('<HOME>');
+    expect(code.originMappings).toHaveLength(2);
+    expect(code.originLineEndColumns).toBeUndefined();
+    const evidence = snapshot.evidence.filter(item => item.sourceId === code.sourceId);
+    expect(evidence).toHaveLength(2);
+    const firstEvidence = evidence.find(item => item.excerpt.includes('<HOME>'));
+    expect(firstEvidence?.origin?.range).toEqual({ startLine: 1, startColumn: 1,
+      endLine: 1, endColumn: Array.from(first).length + 1 });
+    expect(evidence.find(item => item.excerpt === 'const tail = 1;')?.origin?.range).toEqual({
+      startLine: 3, startColumn: 1, endLine: 3, endColumn: 'const tail = 1;'.length + 1 });
+    expect(parseKnowledgeSnapshot(snapshot, f.projectId)).toEqual(snapshot);
+    expect(() => createKnowledgeSnapshot({ ...input([{ ...code, originLineEndColumns: [
+      { canonicalLine: code.originMappings?.[0]?.canonical.endLine ?? 0, endColumn: 27 },
+    ] }]), projectId: f.projectId }, f.projectId)).toThrow(expect.objectContaining({ code: 'KNOWLEDGE_INVALID' }));
+    await activateSourceWiki(f, snapshot, code.sourceRef);
+  } finally { await f.cleanup(); }
+}, 60000);
+
+it('starts Wiki generation with 128 corrected paragraphs without expanding range mappings', async () => {
+  const f = await longSourceFixture('# Ordinary handbook\n\nSafe information.\n');
+  try {
+    const lines = Array.from({ length: 128 }, (_, index) =>
+      `const file${index} = "/${['home', 'example', 'ordinary', 'long', 'project', 'location'].join('/')}";`);
+    await mkdir(join(f.sourceRoot, 'src'));
+    await writeFile(join(f.sourceRoot, 'src/example.ts'), `${lines.join('\n\n')}\n\nconst tail = 1;\n`);
+    const path = join(f.sourceRoot, '.buildlore/sources.json');
+    const manifest = parseSourceCollectionManifestV2(JSON.parse(await readFile(path, 'utf8')));
+    await writeFile(path, serializeCanonicalJson(parseSourceCollectionManifestV2({ ...manifest, sources: [...manifest.sources,
+      { adapterId: 'buildlore.generic', adapterVersion: 1, id: 'code', kind: 'code', path: 'src', pathType: 'directory', recursive: true }] })));
+    expect(await f.cli(['sync', '--project', f.projectId])).toMatchObject({ exitCode: 0 });
+    const { session } = await prepareVerifiedKnowledgeSession({ ...f, outputLanguage: 'ko',
+      rendererVersion: 'knowledge-markdown-v3', authoringMode: 'wiki-v1' });
+    const snapshot = session.exchange.snapshot;
+    const code = snapshot.sources.find(item => item.sourceRef === 'src/example.ts');
+    if (code === undefined) throw new Error('Missing code source.');
+    expect(code.originMappings).toHaveLength(1);
+    expect(code.originLineEndColumns).toHaveLength(128);
+    const evidence = snapshot.evidence.filter(item => item.sourceId === code.sourceId);
+    expect(evidence).toHaveLength(129);
+    expect(evidence.find(item => item.excerpt.includes('file0'))?.origin?.range.endColumn)
+      .toBe(Array.from(lines[0] ?? '').length + 1);
+    expect(evidence.find(item => item.excerpt.includes('file127'))?.origin?.range.endColumn)
+      .toBe(Array.from(lines[127] ?? '').length + 1);
+    expect(parseKnowledgeSnapshot(snapshot, f.projectId)).toEqual(snapshot);
+    await matchPublishedShape(snapshot, { $ref: 'project-knowledge.schema.json#/$defs/snapshot' });
+    const started = await f.cli(['compile', 'wiki', 'start', '--project', f.projectId,
+      '--purpose', await f.json('purpose.json', wikiPurpose(f.projectId))]);
+    expect(started, started.stderr).toMatchObject({ exitCode: 0, data: { phase: 'awaiting-draft' } });
   } finally { await f.cleanup(); }
 }, 60000);
 

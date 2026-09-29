@@ -1,7 +1,7 @@
 /** Content-free diagnostics: no source names, excerpts, digests or caller messages. */
 const STAGES = ['legacy-session-sources', 'legacy-session-plan', 'wiki-sources', 'knowledge-input',
   'knowledge-snapshot', 'knowledge-generation', 'wiki-state', 'wiki-run'] as const;
-const RESOURCES = ['utf8-bytes', 'sources', 'evidence', 'json-nodes', 'json-depth'] as const;
+const RESOURCES = ['utf8-bytes', 'sources', 'evidence', 'origin-end-columns', 'json-nodes', 'json-depth'] as const;
 export interface ResourceBudgetDiagnostic {
   readonly schemaVersion: 'buildlore.resource-budget.v1';
   readonly stage: typeof STAGES[number];

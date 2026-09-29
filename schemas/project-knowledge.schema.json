@@ -850,6 +850,19 @@
             "$ref": "source-document-v4.schema.json#/$defs/rangeMapping"
           }
         },
+        "originLineEndColumns": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["canonicalLine", "endColumn"],
+            "properties": {
+              "canonicalLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+              "endColumn": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            }
+          }
+        },
         "originPolicy": {
           "const": "projected-v1"
         }
@@ -880,6 +893,10 @@
               }
             ]
           }
+        },
+        {
+          "if": { "required": ["originLineEndColumns"] },
+          "then": { "required": ["originPolicy", "originMappings"] }
         }
       ]
     },

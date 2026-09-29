@@ -63,9 +63,11 @@ function projectedJsonOrigins(source: VerifiedSessionSource): NonNullable<Knowle
   });
 }
 
-function projectedRangeMappings(source: VerifiedSessionSource): NonNullable<KnowledgeSourceV1['originMappings']> {
+function projectedRangeMappings(source: VerifiedSessionSource):
+  Pick<KnowledgeSourceV1, 'originMappings' | 'originLineEndColumns'> {
   const lines = source.sanitizedBody.split('\n');
-  return (source.originMappings ?? []).map(mapping => {
+  const mappings = source.originMappings ?? [];
+  const bounded = mappings.map(mapping => {
     const lastLine = lines[mapping.canonical.endLine - 1];
     if (lastLine === undefined) invalid();
     // Verified stored mappings may retain pre-sanitization columns. Bound only the
@@ -74,6 +76,41 @@ function projectedRangeMappings(source: VerifiedSessionSource): NonNullable<Know
     return endColumn === mapping.canonical.endColumn ? mapping
       : { ...mapping, canonical: { ...mapping.canonical, endColumn } };
   });
+  const corrections = source.originLineEndColumns ?? [];
+  if (corrections.length === 0) return { originMappings: bounded };
+  // Older v2 snapshots used split mappings. Keep their exact identities while
+  // representing larger correction sets without expanding the 128-map contract.
+  if (bounded.length + corrections.length > 128) {
+    return { originMappings: bounded, originLineEndColumns: corrections };
+  }
+  const columns = new Map(corrections.map(item => [item.canonicalLine, item.endColumn]));
+  const expanded = bounded.flatMap(mapping => {
+    const ranges: NonNullable<KnowledgeSourceV1['originMappings']>[number][] = [];
+    let canonicalStartLine = mapping.canonical.startLine, canonicalStartColumn = mapping.canonical.startColumn;
+    let originStartLine = mapping.origin.startLine, originStartColumn = mapping.origin.startColumn;
+    for (let line = mapping.canonical.startLine; line < mapping.canonical.endLine; line += 1) {
+      const originalEndColumn = columns.get(line);
+      if (originalEndColumn === undefined) continue;
+      const canonicalLine = lines[line - 1];
+      if (canonicalLine === undefined) invalid();
+      const canonicalEndColumn = Array.from(canonicalLine).length + 1;
+      if (line === canonicalStartLine &&
+          (canonicalEndColumn < canonicalStartColumn || originalEndColumn < originStartColumn)) invalid();
+      const originEndLine = mapping.origin.startLine + line - mapping.canonical.startLine;
+      ranges.push({ canonical: { startLine: canonicalStartLine, startColumn: canonicalStartColumn,
+        endLine: line, endColumn: canonicalEndColumn },
+      origin: { startLine: originStartLine, startColumn: originStartColumn,
+        endLine: originEndLine, endColumn: originalEndColumn } });
+      canonicalStartLine = line + 1; canonicalStartColumn = 1;
+      originStartLine = originEndLine + 1; originStartColumn = 1;
+    }
+    ranges.push({ canonical: { startLine: canonicalStartLine, startColumn: canonicalStartColumn,
+      endLine: mapping.canonical.endLine, endColumn: mapping.canonical.endColumn },
+    origin: { startLine: originStartLine, startColumn: originStartColumn,
+      endLine: mapping.origin.endLine, endColumn: mapping.origin.endColumn } });
+    return ranges;
+  });
+  return { originMappings: expanded };
 }
 
 async function prepareKnowledgeSession(input: KnowledgePreparationInput,
@@ -93,7 +130,7 @@ async function prepareKnowledgeSession(input: KnowledgePreparationInput,
     const source: KnowledgeSourceV1 = {
       ...(mapped ? { originPolicy: 'projected-v1' as const,
         ...(planned.chunk === undefined ? {} : { chunk: planned.chunk }),
-        ...(planned.originMappings === undefined ? {} : { originMappings: projectedRangeMappings(planned) }) }
+        ...(planned.originMappings === undefined ? {} : projectedRangeMappings(planned)) }
         : planned.chunk === undefined ? {} : { chunk: planned.chunk, originMappings: planned.originMappings ?? [] }),
       sourceId: planned.sourceId, sourceRef: planned.sourceRef,
       sourceContentDigest: planned.originalContentDigest,
