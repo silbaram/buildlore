@@ -11,8 +11,12 @@ Git checkout. Source projects connect to it; they do not need their own installa
   the repository-pinned npm 11.19.0 for lockfiles and release verification.
 - Wiki generation, review, approval, activation and local read-only MCP are the core
   workflow. Embeddings are optional and are not installed with a production package.
-- Native Windows authoring is not yet supported: POSIX permission checks remain a
-  known limitation. macOS and paid Claude execution are not verified by this gate.
+- State storage uses OS-specific permission checks, retaining POSIX `0700`/`0600`
+  enforcement on Linux. Native Windows authoring still needs executed validation;
+  do not claim support from a Linux run or simulated Windows mode bits. Windows
+  access uses the existing folder ACL; use a folder restricted to the current user.
+  BuildLore does not rewrite ACLs or promise exclusive access from mode bits.
+  macOS and paid Claude execution are not verified by this gate.
 - MCP protocol readiness and activation in a particular AI client session are
   separate checks. Start a new trusted Codex source-project session and inspect
   `/mcp` after applying its configuration.
@@ -47,6 +51,20 @@ search/read/isolation. The product source is hidden, network is disabled during 
 workflow, and direct MCP reads use read-only mounts. This is not an AI writing or
 productivity benchmark. Consumer dependencies are installed separately from the
 development lockfile and audited too. Missing verification tools fail the gate.
+
+For native Windows, run the separate check with Node 24+, npm 11.19.0 and Git:
+
+```sh
+npm run verify:windows-authoring -- --archive /path/to/release/buildlore-0.1.1-rc.1.tgz
+```
+
+Use a real Windows path with quotes when it contains spaces. This check installs
+the supplied archive into a temporary knowledge repository, exercises both state
+store persistence and generic Wiki drafting/review/explicit fixture approval/
+activation, and reads it through the installed MCP. It checks stale generations
+and wrong-project requests. It uses temporary client settings and no paid AI.
+Linux/WSL cannot satisfy its native-platform check. Its summary records the archive
+hash and completed stages; it does not claim network or filesystem-mount isolation.
 
 Before a registry release, choose the version and tag, confirm package-name/account
 permissions, review license/metadata and the exact archive, and explicitly remove

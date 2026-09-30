@@ -46,6 +46,13 @@ describe('generic Wiki public workflow', () => {
     expect(reviewed, reviewed.stderr).toMatchObject({ exitCode: 0, data: { phase: 'reviewed', stage: { assessment: 'needs-attention' } } });
     const finalized = await f.cli(['compile', 'wiki', 'finalize', ...args, '--expect-stage', stage(reviewed.data)]);
     expect(finalized, finalized.stderr).toMatchObject({ exitCode: 0, data: { phase: 'finalized' } });
+    const runPath = join(f.hubRoot, '.buildlore/hierarchy-runs', f.projectId, run, 'run.json');
+    const savedRun = await readFile(runPath), beforeApproval = await f.cli(['compile', 'wiki', 'status', ...args]);
+    const unconfirmed = await f.cli(['compile', 'wiki', 'approve', ...args, '--expect-ledger', String(finalized.data.ledgerDigest)]);
+    expect(unconfirmed).toMatchObject({ exitCode: 2 });
+    expect(record(JSON.parse(unconfirmed.stderr)).errors).toMatchObject([{ code: 'CLI_OPTION_MISSING' }]);
+    expect(await readFile(runPath)).toEqual(savedRun);
+    expect(await f.cli(['compile', 'wiki', 'status', ...args])).toEqual(beforeApproval);
     const approved = await f.cli(['compile', 'wiki', 'approve', ...args, '--expect-ledger', String(finalized.data.ledgerDigest), '--confirm-approval']);
     expect(approved, approved.stderr).toMatchObject({ exitCode: 0, data: { phase: 'approved' } });
     const activated = await f.cli(approved.data.activationArgs as string[]);

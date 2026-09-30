@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Use Windows read/write attributes for authoring state and locks while preserving
+  POSIX private modes, path/file identity checks and compare-and-swap on Linux.
+- Add native Windows installed-package authoring verification and document its
+  existing-folder ACL boundary. Native Windows support validation remains pending.
+
 - Prefer directory source registration in setup guidance and authoring instructions.
   New directories include subdirectories by default; `--no-recursive` limits depth.
   Existing declarations retain their scope when re-added without a recursion option.

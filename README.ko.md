@@ -102,7 +102,7 @@ npx --no buildlore workspace check --project my-project --client codex
 
 설정만 확인하려면 `workspace guide --project my-project --client codex`를 사용합니다. 이 안내는 통신 검사를 수행했다고 표시하지 않습니다. 새 setup/check와 `--client` 안내는 CLI envelope 안의 `buildlore.workspace-setup.v1` 계약을 사용하고, 옵션 없는 guide는 기존 계약을 유지합니다. 미커밋·미승인 Wiki, 설정 누락, 세대 변경, 시간 초과는 실패 단계와 후속 행동으로 구분합니다. `--json`도 원문 본문·개인 경로·자식 프로세스 출력을 노출하지 않습니다.
 
-위 전체 작성 흐름은 Linux에서 검증합니다. Windows에서는 경로·연결·동기화 검증을 수행했지만, 문서 작성 상태 저장의 POSIX 전용 파일 권한 검사로 `HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED`가 발생합니다. 따라서 Windows의 전체 작성 흐름은 아직 지원 검증을 통과하지 못했습니다. Windows CLI는 `node .../bin.js`로 실행하며 실제 드라이브 경로와 공백 경로의 따옴표를 사용합니다. MCP는 연결한 프로젝트의 승인된 지식만 읽습니다. 소스 프로젝트마다 BuildLore를 다시 설치하지 않습니다.
+위 전체 작성 흐름의 통합 검증은 Linux에서 수행합니다. 작성 상태 저장의 권한 검사를 OS별로 분리해 Windows에 POSIX 전용 `0700`/`0600` 값을 요구하던 오류를 수정했습니다. 링크·파일 교체 탐지와 잠금은 유지합니다. **Native Windows의 전체 작성 흐름은 아직 지원 검증을 통과하지 못했습니다.** Windows는 폴더의 기존 ACL을 상속하므로 현재 사용자에게 접근이 제한된 지식 저장소 폴더를 사용하세요. BuildLore가 Windows ACL을 자동 변경하거나 단독 접근을 보장하지 않습니다. Windows CLI는 `node .../bin.js`로 실행하며 실제 드라이브 경로와 공백 경로의 따옴표를 사용합니다. MCP는 연결한 프로젝트의 승인된 지식만 읽습니다. 소스 프로젝트마다 BuildLore를 다시 설치하지 않습니다.
 
 프로젝트 지식을 publish하기 전에 초기 설정과 npm 메타데이터(`.gitignore`, `.buildlore/workspace.json`, `package.json`, `package-lock.json`)를 별도 커밋하세요. 루트 파일이 변경된 상태에서는 publish를 중단하며, npm 파일을 Wiki 콘텐츠로 선택하지 않습니다.
 
@@ -166,6 +166,8 @@ npx --no buildlore workspace check --project my-project --client codex
 3. 현재 `private: true`를 유지합니다. 향후 npm 게시 직전에 패키지 이름 사용 가능 여부·버전·라이선스·게시 파일·계정 권한을 확인하고, 별도 게시 승인 후에만 공개 설정을 바꿉니다. 이 절차는 npm 게시를 실행하지 않습니다.
 
 설치 검증은 두 프로젝트의 CLI 초기 등록·자료 선언·작성·검토·명시적 테스트 승인·활성화·게시, 새 clone 재설치와 MCP 검색/읽기·격리를 확인합니다. 원래 `.tgz`를 제거하고 새 경로로 전달한 동일 파일을 사용합니다. 실제 AI 작성 품질이나 실제 클라이언트 대화 검증은 아니며, Windows OS 검증은 후속 작업입니다.
+
+Native Windows에서는 Node 24+, npm **11.19.0**, Git으로 `npm run verify:windows-authoring -- --archive <동일한-배포파일.tgz>`를 실행합니다. 임시 저장소와 임시 클라이언트 설정만 사용해 공백 경로의 로컬 설치·초기 등록, 상태 저장·재개, 작성·검토·명시적 테스트 승인·활성화와 MCP 검색·읽기를 확인합니다. Linux/WSL에서 이 명령은 실패하며 Windows 통과로 기록하지 않습니다. 이 검사는 Linux 검증의 네트워크 차단·읽기 전용 마운트 격리나 실제 AI 작성 품질을 증명하지 않습니다.
 
 [배포 검사·호환 정책](RELEASE.md)과 [변경 기록](CHANGELOG.md)을 참고하세요.
 

@@ -310,6 +310,7 @@ describe('package contract', () => {
       typecheck: 'tsc -p tsconfig.json --noEmit',
       'verify:installed-read': 'node scripts/verify-installed-read.mjs',
       'verify:installed-workspace': 'node scripts/verify-installed-workspace.mjs',
+      'verify:windows-authoring': 'node scripts/verify-windows-authoring.mjs',
       prepack: 'node scripts/build.mjs',
       'pack:local': 'node scripts/pack-local.mjs',
     });

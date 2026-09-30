@@ -26,6 +26,7 @@ import {
 } from '../compiler/index.js';
 import { serializeCanonicalJson, syncDirectory, writeJsonAtomic } from '../knowledge/atomic-file.js';
 import { isNodeError } from '../knowledge/errors.js';
+import { hasExpectedFilePermissions, usesPosixFilePermissions } from '../knowledge/file-permissions.js';
 import { decodeUtf8Strict, parseJsonStrict } from '../knowledge/strict-json.js';
 import { validateProjectId } from '../knowledge/validation.js';
 import {
@@ -854,7 +855,9 @@ async function ensureDirectory(path: string, parent: string): Promise<void> {
     if (!status.isDirectory() || status.isSymbolicLink() || await realpath(path) !== resolve(path)) {
       fail('HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED');
     }
-    if ((status.mode & 0o777) !== 0o700) await chmod(path, 0o700);
+    if (usesPosixFilePermissions() && !hasExpectedFilePermissions(status.mode, 0o700)) {
+      await chmod(path, 0o700);
+    }
   } catch (error) {
     if (error instanceof HierarchicalWorkflowRunStoreError) throw error;
     fail('HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED');
@@ -865,7 +868,7 @@ async function directoryIdentity(path: string, requirePrivate: boolean): Promise
   try {
     const status = await lstat(path);
     if (!status.isDirectory() || status.isSymbolicLink() || await realpath(path) !== resolve(path) ||
-        (requirePrivate && (status.mode & 0o777) !== 0o700)) {
+        (requirePrivate && !hasExpectedFilePermissions(status.mode, 0o700))) {
       fail('HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED');
     }
     return Object.freeze({ device: status.dev, inode: status.ino, path: resolve(path) });
@@ -887,7 +890,7 @@ async function identitiesMatch(identity: RunIdentity): Promise<boolean> {
       const status = await lstat(entry.path);
       if (!status.isDirectory() || status.isSymbolicLink() || status.dev !== entry.device ||
           status.ino !== entry.inode || await realpath(entry.path) !== entry.path ||
-          (entry !== identity.hub && (status.mode & 0o777) !== 0o700)) return false;
+          (entry !== identity.hub && !hasExpectedFilePermissions(status.mode, 0o700))) return false;
     }
     return identity.buildlore.path === join(identity.hub.path, '.buildlore') &&
       identity.runs.path === join(identity.buildlore.path, RUNS_DIRECTORY) &&
@@ -934,13 +937,13 @@ async function readRegularFileSnapshot(
   try {
     const pathBefore = await lstat(path);
     if (!pathBefore.isFile() || pathBefore.isSymbolicLink() ||
-        (pathBefore.mode & 0o777) !== 0o600 || pathBefore.size < 2 ||
+        !hasExpectedFilePermissions(pathBefore.mode, 0o600) || pathBefore.size < 2 ||
         pathBefore.size > maximumBytes || await realpath(path) !== resolve(path)) {
       fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
     }
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const before = await handle.stat();
-    if (!before.isFile() || (before.mode & 0o777) !== 0o600 ||
+    if (!before.isFile() || !hasExpectedFilePermissions(before.mode, 0o600) ||
         before.dev !== pathBefore.dev || before.ino !== pathBefore.ino ||
         before.size !== pathBefore.size) {
       fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
@@ -952,7 +955,7 @@ async function readRegularFileSnapshot(
         after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs ||
         pathAfter.dev !== before.dev || pathAfter.ino !== before.ino ||
         pathAfter.size !== before.size || bytes.byteLength !== before.size ||
-        (pathAfter.mode & 0o777) !== 0o600) {
+        !hasExpectedFilePermissions(pathAfter.mode, 0o600)) {
       fail('HIERARCHICAL_WORKFLOW_RUN_INVALID');
     }
     await handle.close();
@@ -1042,7 +1045,7 @@ async function recoverAbandonedLock(
   try {
     const current = await lstat(path);
     if (!current.isFile() || current.isSymbolicLink() || current.dev !== existing.device ||
-        current.ino !== existing.inode || (current.mode & 0o777) !== 0o600 ||
+        current.ino !== existing.inode || !hasExpectedFilePermissions(current.mode, 0o600) ||
         !await identitiesMatch(identity)) return false;
     await unlink(path);
     await syncDirectory(identity.run.path);
@@ -1063,7 +1066,7 @@ async function lockMatches(
   try {
     const status = await lstat(lockPath);
     return status.isFile() && !status.isSymbolicLink() && status.dev === lock.device &&
-      status.ino === lock.inode && (status.mode & 0o777) === 0o600 &&
+      status.ino === lock.inode && hasExpectedFilePermissions(status.mode, 0o600) &&
       await realpath(lockPath) === lockPath;
   } catch {
     return false;
@@ -1109,7 +1112,7 @@ async function acquireLock(
     await handle.writeFile(serializeCanonicalJson(owner), 'utf8');
     await handle.sync();
     const ownerStatus = await handle.stat();
-    if (!ownerStatus.isFile() || (ownerStatus.mode & 0o777) !== 0o600 ||
+    if (!ownerStatus.isFile() || !hasExpectedFilePermissions(ownerStatus.mode, 0o600) ||
         !await identitiesMatch(identity)) {
       fail('HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED');
     }
@@ -1138,7 +1141,7 @@ async function acquireLock(
     const lockStatus = await lstat(path);
     if (!lockStatus.isFile() || lockStatus.isSymbolicLink() ||
         lockStatus.dev !== ownerStatus.dev || lockStatus.ino !== ownerStatus.ino ||
-        (lockStatus.mode & 0o777) !== 0o600 || !await identitiesMatch(identity)) {
+        !hasExpectedFilePermissions(lockStatus.mode, 0o600) || !await identitiesMatch(identity)) {
       fail('HIERARCHICAL_WORKFLOW_RUN_WRITE_FAILED');
     }
     await unlink(ownerPath);
