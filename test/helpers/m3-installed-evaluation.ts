@@ -12,6 +12,13 @@ function object(value: unknown): Record<string, unknown> {
   assert(value !== null && typeof value === 'object' && !Array.isArray(value));
   return value as Record<string, unknown>;
 }
+export async function readM3CandidateIdentity(tarball: string): Promise<{ version: string; filename: string }> {
+  const metadata = object(JSON.parse((await exec('tar', ['-xOf', tarball, 'package/package.json'])).stdout) as unknown);
+  assert.equal(metadata.name, 'buildlore');
+  const version = metadata.version;
+  assert(typeof version === 'string' && /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/u.test(version), 'Invalid candidate version.');
+  return { version, filename: `buildlore-${version}.tgz` };
+}
 async function tree(root: string): Promise<{ digest: string; bytes: number }> {
   const entries: [string, string][] = []; let bytes = 0;
   const visit = async (relative: string): Promise<void> => {
@@ -26,7 +33,8 @@ async function tree(root: string): Promise<{ digest: string; bytes: number }> {
 export async function verifyInstalledM3(o: InstalledM2Options & { tarball: string; install: string }): Promise<void> {
   const baseline = process.env.BUILDLORE_M3_BASELINE_TARBALL;
   assert(baseline, 'Baseline tarball required');
-  const candidate = join(o.evidence, 'buildlore-0.1.1-rc.1.tgz'); await cp(o.tarball, candidate);
+  const identity = await readM3CandidateIdentity(o.tarball);
+  const candidate = join(o.evidence, identity.filename); await cp(o.tarball, candidate);
   const claudeConfig = join(o.root, 'isolated-claude'); await mkdir(claudeConfig);
   const preservedClaude = '{"unrelated":"preserve"}\n';
   await writeFile(join(claudeConfig, '.claude.json'), preservedClaude);
@@ -107,7 +115,7 @@ export async function verifyInstalledM3(o: InstalledM2Options & { tarball: strin
   try {
     // Actual baseline/candidate transitions in the same consumer installation.
     await install(baseline, '0.1.0');
-    await install(candidate, '0.1.1-rc.1');
+    await install(candidate, identity.version);
     for (const client of ['codex', 'claude-code']) await configure(client, 'configure');
     const held = new Peer(o.binary, ['mcp', '--project-dir', o.sourceRoot, '--read-only'], env);
     try {
@@ -138,7 +146,7 @@ export async function verifyInstalledM3(o: InstalledM2Options & { tarball: strin
     } finally { await held.close(); }
     await readProjects();
     await install(baseline, '0.1.0');
-    await install(candidate, '0.1.1-rc.1');
+    await install(candidate, identity.version);
     await verifyInstalledM2Protocol({ ...o, hubRoot: hub });
     // A different launch path must update owned settings without touching user data.
     const alternatePackage = join(o.install, 'node_modules/buildlore-alternate');
@@ -156,7 +164,7 @@ export async function verifyInstalledM3(o: InstalledM2Options & { tarball: strin
     assert.equal((await tree(o.configDir)).digest, configBeforeUninstall.digest);
     assert.equal((await tree(join(hub, 'knowledge'))).digest, knowledgeBefore.digest);
     assert.deepEqual(await gitState(), gitBefore);
-    await install(candidate, '0.1.1-rc.1');
+    await install(candidate, identity.version);
     for (const client of ['codex', 'claude-code']) await configure(client, 'remove');
     const claude = object(JSON.parse(await readFile(join(claudeConfig, '.claude.json'), 'utf8')));
     assert.equal(claude.unrelated, 'preserve');
@@ -175,7 +183,7 @@ export async function verifyInstalledM3(o: InstalledM2Options & { tarball: strin
     const summary = { schemaVersion: 'buildlore.m3-lifecycle-evidence.v1', passed: true,
       environment: { node: process.version, npm: (await run('npm', ['--version'])).stdout.trim(), platform: process.platform, arch: process.arch },
       packages: { baseline: { version: '0.1.0', sha256: hash(await readFile(baseline)) },
-        candidate: { version: '0.1.1-rc.1', sha256: hash(await readFile(candidate)), compressedBytes: (await lstat(candidate)).size } },
+        candidate: { version: identity.version, sha256: hash(await readFile(candidate)), compressedBytes: (await lstat(candidate)).size } },
       stages, commands, knowledgePreserved: true, knowledgeHeadAndIndexPreserved: true, writerRegistryPreserved: true, sourceManifestPreserved: true,
       concurrentRelocationGuardPassed: true, heldMcpSessionRejected: true, uninstallFirstRecoveryPassed: true,
       realAiClientCalls: 0, claudeActualClient: 'excluded by user; unverified',

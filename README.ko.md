@@ -30,12 +30,12 @@ BuildLore 허브는 `knowledge/`에 Git 서브모듈로 연결된 하나의 지�
 
 Node.js 24 이상, npm 11.19.0, Git이 필요합니다. 지식 저장소 하나에 여러 프로젝트를 보관하고 **그 저장소에 BuildLore 패키지를 설치**합니다. 제품 소스를 복사하거나 별도 허브를 만들지 않습니다.
 
-현재는 npm 레지스트리 미게시 상태입니다. 배포용 `.tgz`를 받아 다음처럼 설치합니다. 게시 후에는 설치 줄을 `npm install buildlore`로 바꿀 수 있습니다. 소스에서 패키지를 만드는 것은 아래 개발자 절차입니다.
+**GitHub Releases에 올린 빌드된 `.tgz` 파일**을 배포 경로로 사용합니다. npm 레지스트리 게시가 필요하지 않습니다. 아래 `0.1.1-rc.2` URL은 해당 릴리스 게시 전까지 예시입니다. [Releases](https://github.com/silbaram/buildlore/releases)에서 사용 가능한 버전의 패키지 URL을 골라 한 줄로 입력하세요. GitHub가 자동 제공하는 “Source code” 압축파일은 빌드된 npm 패키지가 아닙니다. 별도로 전달받은 로컬 `.tgz` 설치도 가능합니다. 패키지 빌드는 유지보수자 절차입니다.
 
 ```sh
 git clone <지식-저장소-URL> my-knowledge
 cd my-knowledge
-npm install --save-exact /path/to/buildlore-0.1.1-rc.1.tgz
+npm install --save-exact "https://github.com/silbaram/buildlore/releases/download/v0.1.1-rc.2/buildlore-0.1.1-rc.2.tgz"
 npx --no buildlore workspace init --json
 ```
 
@@ -44,13 +44,29 @@ Git 원격이 없다면 초기화에 `--knowledge-repo <이식-가능한-저장�
 ```text
 my-knowledge/
   package.json                  # Git으로 관리
-  package-lock.json             # Git으로 관리; 다른 PC에 .tgz도 별도 전달
+  package-lock.json             # 배포 URL과 integrity를 Git으로 관리
   node_modules/                 # 로컬 설치 결과, Git 제외
   .buildlore/workspace.json      # 저장소 모드와 이식 가능한 식별 정보
   .buildlore/local-projects.json # 내 PC의 소스 경로, Git 제외
   manifest.json
   projects/<project-id>/
 ```
+
+`npm install`은 이 지식 저장소의 `node_modules/buildlore/`에 설치하고 `package.json`과 `package-lock.json`에 URL을 기록합니다. `npx --no buildlore`는 설치된 실행 파일을 사용합니다. 원격 `npx` 실행은 npm 캐시를 이용하므로 지식 저장소에 영속 설치하는 절차가 아닙니다. 의존성 설치에는 npm 레지스트리 접근이 필요할 수 있습니다. 각 소스 프로젝트에는 같은 설치 파일을 참조하는 MCP 설정만 등록하며, 클라이언트 연결마다 프로젝트에 묶인 stdio 프로세스를 실행합니다.
+
+### 업그레이드와 이전 버전 복구
+
+해당 설치를 사용하는 AI 클라이언트/MCP를 중지하고, 이전 호환 버전의 URL·패키지·npm 메타데이터를 보관하세요. **같은 지식 저장소 디렉터리에서 새 버전 URL**로 설치합니다.
+
+```sh
+npm install --save-exact "<새-버전-tgz-URL>"
+npx --no buildlore --version
+npx --no buildlore workspace check --project my-project --client codex
+```
+
+일반 업그레이드마다 초기화를 반복하지 않습니다. 설치는 패키지와 npm 메타데이터를 갱신하며 Wiki를 자동 이전·승인·활성화하지 않습니다. npm 변경은 검토해 Wiki 게시와 별도로 커밋하세요. 연결된 프로젝트별 검사가 끝나면 클라이언트를 재시작합니다. 설치 경로가 같으면 기존 MCP 설정을 계속 사용하며, Node 또는 패키지 경로가 바뀌면 연결 설정을 미리 보고 다시 적용합니다.
+
+복구는 `npm install --save-exact "<이전-호환-버전-tgz-URL-또는-경로>"`로 재설치한 뒤 버전·조회 검사를 반복하고 클라이언트를 재시작합니다. 이전 파일도 계속 내려받을 수 있도록 보존하세요. URL 의존성의 새 버전은 직접 지정합니다. `npm update`가 최신 GitHub Release를 찾아주지는 않습니다. 게시한 동일 버전 파일을 교체하거나 버전 고정 설치에 변경 가능한 `latest` URL을 사용하지 않습니다.
 
 ### 현재 상태와 다음 단계 확인
 
@@ -145,11 +161,11 @@ npx --no buildlore source add --project my-project --id readme --kind markdown -
 
 ### 새 PC 또는 새 복제본에서 복원
 
-로컬 `.tgz` 설치는 파일 경로를 npm 메타데이터에 저장합니다. Git clone만 하고 `npm ci`를 실행해도 원래 `.tgz` 경로가 없으면 설치되지 않습니다. **동일한 배포 파일을 별도로 전달**하고 전달받은 경로로 다시 설치하세요.
+GitHub의 버전별 URL로 설치하고 npm 메타데이터를 커밋했다면, 새 clone에서 `npm ci`로 패키지를 복원합니다. 기록된 URL에 접근할 수 있어야 하며 lockfile의 integrity를 검사합니다. 소스 프로젝트의 로컬 경로 바인딩은 별도로 복원합니다. 로컬 파일 설치에서 원래 `.tgz` 경로가 사라진 경우에는 동일한 파일을 전달받아 먼저 `npm install --save-exact "<새-패키지-경로>"`로 다시 설치하세요.
 
 ```sh
 cd /new/my-knowledge
-npm install --save-exact /new/downloads/buildlore-0.1.1-rc.1.tgz
+npm ci
 npx --no buildlore workspace guide --project my-project
 npx --no buildlore workspace init --json
 npx --no buildlore project bind --project my-project --source-root /new/my-project --json
@@ -159,13 +175,14 @@ npx --no buildlore workspace check --project my-project --client codex
 
 소스 저장소와 `.buildlore/sources.json`도 새 PC에 준비해야 합니다. 복제본의 Git origin은 workspace에 기록된 지식 저장소를 가리켜야 합니다. `workspace init` 재실행은 Git이 보존하지 않는 로컬 폴더 권한·바인딩 저장소를 준비하며, 기존 Wiki나 승인 기록을 교체하지 않습니다. 프로젝트마다 bind/connect를 반복하고, AI 클라이언트 설정도 새 경로로 미리보기 후 적용하세요. 재설치로 바뀐 npm 메타데이터는 검토해 별도 커밋합니다.
 
-### 메인테이너: 로컬 배포와 마지막 npm 준비
+### 메인테이너: GitHub Release 준비
 
-1. Node 24+와 npm **11.19.0**에서 build/test/lint/typecheck 및 `npm run verify:installed-workspace`를 통과시킵니다. Linux 검증은 `bwrap`이 필요하며, 없으면 실패로 기록합니다.
-2. `npm run pack:local -- --output <배포폴더>`로 이전 빌드 결과를 정리하고 `.tgz`의 파일·공개 exports·용량·integrity를 검사합니다. 삭제된 소스의 빌드 파일이 섞이면 실패합니다. 일반 `npm pack`도 clean build를 먼저 수행합니다. 같은 파일의 `sha256sum <파일.tgz>`도 전달합니다. `.tgz`에는 실행 코드·공개 스키마·작성/활성화 스킬이 들어가며 제품 소스·테스트·사용자 지식·로컬 상태는 제외합니다.
-3. 현재 `private: true`를 유지합니다. 향후 npm 게시 직전에 패키지 이름 사용 가능 여부·버전·라이선스·게시 파일·계정 권한을 확인하고, 별도 게시 승인 후에만 공개 설정을 바꿉니다. 이 절차는 npm 게시를 실행하지 않습니다.
+1. Node 24+와 npm **11.19.0**에서 build/test/lint/typecheck, `p2a doctor --target . --dev`와 해당 entry 검증을 통과시킵니다.
+2. `npm run release:prepare -- --output <빈-배포폴더>`로 빌드·패키지 검사를 수행하고 `buildlore-0.1.1-rc.2.tgz`, `SHA256SUMS`, `release-notes.md`를 생성합니다. 기존 파일이 있으면 중단합니다. 런타임·스키마·profile·스킬을 포함하며 제품 소스·테스트·사용자 지식·로컬 계획은 제외합니다. 출력의 `verified: false`, `published: false`는 준비만 완료됐다는 뜻입니다.
+3. 정확히 그 후보 파일로 `npm run test:release-packaging`, `npm run verify:installed-workspace -- --archive <후보.tgz>`, `npm run verify:release-install -- --archive <후보.tgz> --previous-archive <호환-이전.tgz>`를 실행합니다. Linux 검증에는 `bwrap`이 필요합니다. URL 검증은 로컬 HTTP로 실제 npm 설치·업그레이드·복구·clone/npm ci와 승인된 두 프로젝트를 확인합니다. GitHub HTTPS 전달은 게시 후 별도 확인합니다. 고정 작성·검토 입력은 프로토콜 검증이며 유료 AI 품질 검증이 아닙니다. 실패·미실행은 통과로 처리하지 않습니다.
+4. 검증 및 명시적 공개 배포 승인 후 해당 소스 커밋에 버전 태그를 붙이고, 생성한 notes와 **동일한 archive·SHA256SUMS**를 GitHub Release에 올립니다. [배포 검사](RELEASE.md)를 참고하세요. 이전 파일을 보존하고 `private: true`를 유지합니다. npm 레지스트리에는 게시하지 않습니다.
 
-설치 검증은 두 프로젝트의 CLI 초기 등록·자료 선언·작성·검토·명시적 테스트 승인·활성화·게시, 새 clone 재설치와 MCP 검색/읽기·격리를 확인합니다. 원래 `.tgz`를 제거하고 새 경로로 전달한 동일 파일을 사용합니다. 실제 AI 작성 품질이나 실제 클라이언트 대화 검증은 아니며, Windows OS 검증은 후속 작업입니다.
+기존 `pack:local`은 파일 직접 전달에 계속 사용할 수 있습니다. `release:prepare`는 기존 패키지 검사에 배포 산출물을 추가하며 Git push·태그 생성·GitHub 호출·공개 게시를 수행하지 않습니다. native Windows 검증은 별도입니다.
 
 Native Windows에서는 Node 24+, npm **11.19.0**, Git으로 `npm run verify:windows-authoring -- --archive <동일한-배포파일.tgz>`를 실행합니다. 임시 저장소와 임시 클라이언트 설정만 사용해 공백 경로의 로컬 설치·초기 등록, 상태 저장·재개, 작성·검토·명시적 테스트 승인·활성화와 MCP 검색·읽기를 확인합니다. Linux/WSL에서 이 명령은 실패하며 Windows 통과로 기록하지 않습니다. 이 검사는 Linux 검증의 네트워크 차단·읽기 전용 마운트 격리나 실제 AI 작성 품질을 증명하지 않습니다.
 
@@ -1532,7 +1549,7 @@ Claude Code는 `--client claude-code`를 사용합니다. Codex는 Git에 추적
 
 ## 재연결·허브 이동·업데이트와 제거
 
-로컬 릴리스 후보는 **0.1.1-rc.1**이며 `private: true`를 유지합니다. 실제 검증 대상은 Linux x64입니다. Windows/macOS는 미검증이며, 후보 버전은 npm 공개 배포를 뜻하지 않습니다. 업데이트 전에 이전 버전의 정확한 tarball을 보관합니다.
+아래 기존 M3 예시는 이전 **0.1.1-rc.1** archive를 사용합니다. 현재 GitHub 배포 후보는 **0.1.1-rc.2**이며 `private: true`를 유지합니다. 위 권장 설치 절차를 사용하세요. 실제 검증 대상은 Linux x64이며 Windows/macOS는 미검증입니다. 후보는 공개 게시 완료를 뜻하지 않습니다. 업데이트 전에 이전 버전의 정확한 tarball을 보관합니다.
 
 ### 소스 체크아웃 재연결
 

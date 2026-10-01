@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1-rc.2 — candidate (not yet published)
+
+- Prepare a prebuilt GitHub Release archive, SHA256SUMS and installation notes with
+  `release:prepare`, refusing existing output files and keeping npm registry private.
+- Verify versioned URL installation, previous-to-candidate upgrade, compatible
+  rollback and clone/npm ci, including approved Wiki/connection preservation and
+  installed MCP reads. GitHub HTTPS delivery needs its own post-publication check.
+- Document knowledge-repository local installation and explicit URL upgrades;
+  source projects share the installed package through project-specific MCP settings.
+
 ## Unreleased
 
 - Use Windows read/write attributes for authoring state and locks while preserving

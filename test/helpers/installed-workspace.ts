@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { Peer } from './m2-installed-evaluation.js';
 import type { KnowledgeWorkflowFixture } from './project-knowledge-workflow.js';
@@ -13,13 +14,28 @@ import { parseSourceCollectionManifestV2 } from '../../src/projector/source-mani
 import { serializeCanonicalJson } from '../../src/knowledge/atomic-file.js';
 
 const exec = promisify(execFile);
-export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: readonly string[]): Promise<void> {
+export interface ReleaseInstallOptions {
+  readonly candidateUrl: string;
+  readonly previousUrl: string;
+  readonly candidateVersion: string;
+  readonly previousVersion: string;
+  readonly candidateIntegrity: string;
+}
+export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: readonly string[], release?: ReleaseInstallOptions): Promise<void> {
   assert.equal(process.platform, 'linux', 'Installed isolation verification unavailable: Linux with bwrap is required.');
   const root = await mkdtemp(join(tmpdir(), 'buildlore-installed-flow-'));
   try {
-    const npm = process.env.npm_execpath;
-    assert(npm, 'Run verification with npm@11.19.0.');
+    const originalNpm = process.env.npm_execpath;
+    assert(originalNpm, 'Run verification with npm@11.19.0.');
+    let npm = originalNpm;
     assert.equal((await exec(process.execPath, [npm, '--version'])).stdout.trim(), '11.19.0');
+    if (hiddenRoots.some(path => originalNpm.startsWith(path + sep))) {
+      // A pinned task-local npm may be under the product checkout that bwrap hides.
+      // Copy only the package-manager runtime, never the product, into the fixture.
+      const copiedNpm = join(root, 'npm-runtime');
+      await cp(dirname(dirname(npm)), copiedNpm, { recursive: true });
+      npm = join(copiedNpm, 'bin/npm-cli.js');
+    }
     let workspace = join(root, 'knowledge');
     let config = join(root, 'config');
     const origin = join(root, 'knowledge.git');
@@ -28,7 +44,7 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
     const install = async (path: string): Promise<void> => {
       await exec(process.execPath, [npm, 'install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', path], { cwd: workspace, maxBuffer: 4 * 1024 * 1024 });
     };
-    await install(tarball);
+    await install(release?.previousUrl ?? tarball);
     await exec(process.execPath, [npm, 'audit', '--omit=dev', '--audit-level=moderate'], { cwd: workspace });
     const binary = (): string => join(workspace, 'node_modules/buildlore/dist/cli/bin.js');
     const env = (): NodeJS.ProcessEnv => ({ ...process.env, BUILDLORE_CONFIG_DIR: config });
@@ -163,6 +179,54 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
     }
     const baseline = new Map<string, Record<string, unknown>>();
     for (const project of projects) baseline.set(project, await mcp(project));
+    async function preservedState(): Promise<Record<string, string>> {
+      const files: Record<string, string> = {};
+      async function collect(path: string, key: string): Promise<void> {
+        for (const entry of await readdir(path, { withFileTypes: true })) {
+          assert(!entry.isSymbolicLink());
+          const child = join(path, entry.name), id = `${key}/${entry.name}`;
+          if (entry.isDirectory()) await collect(child, id);
+          else { assert(entry.isFile()); files[id] = createHash('sha256').update(await readFile(child)).digest('hex'); }
+        }
+      }
+      for (const name of ['projects', '.buildlore']) await collect(join(workspace, name), name);
+      await collect(config, 'config');
+      for (const project of projects) {
+        await collect(join(source(project), '.buildlore'), `source-${project}/.buildlore`);
+        await collect(join(source(project), '.codex'), `source-${project}/.codex`);
+      }
+      files.manifest = createHash('sha256').update(await readFile(join(workspace, 'manifest.json'))).digest('hex');
+      return files;
+    }
+    async function installedVersion(expected: string): Promise<void> {
+      await checkBin();
+      const metadata = record(JSON.parse(await readFile(join(workspace, 'node_modules/buildlore/package.json'), 'utf8')) as unknown);
+      assert.equal(metadata.version, expected);
+    }
+    async function candidateUrlRecorded(): Promise<void> {
+      assert(release);
+      const metadata = record(JSON.parse(await readFile(join(workspace, 'package.json'), 'utf8')) as unknown);
+      assert.equal(record(metadata.dependencies).buildlore, release.candidateUrl);
+      const lock = record(JSON.parse(await readFile(join(workspace, 'package-lock.json'), 'utf8')) as unknown);
+      const entry = record(record(lock.packages)['node_modules/buildlore']);
+      assert.equal(entry.resolved, release.candidateUrl);
+      assert.equal(entry.integrity, release.candidateIntegrity);
+    }
+    if (release) {
+      await installedVersion(release.previousVersion);
+      const before = await preservedState();
+      await install(release.candidateUrl);
+      await installedVersion(release.candidateVersion); await candidateUrlRecorded();
+      assert.deepEqual(await preservedState(), before, 'Upgrade must preserve knowledge, approval history and connections.');
+      for (const project of projects) assert.deepEqual(await mcp(project), baseline.get(project));
+      await install(release.previousUrl); await installedVersion(release.previousVersion);
+      assert.deepEqual(await preservedState(), before, 'Rollback must preserve knowledge and connections.');
+      for (const project of projects) assert.deepEqual(await mcp(project), baseline.get(project));
+      await install(release.candidateUrl); await installedVersion(release.candidateVersion); await candidateUrlRecorded();
+      assert.deepEqual(await preservedState(), before);
+      await git(workspace, 'add', 'package.json', 'package-lock.json');
+      await git(workspace, 'commit', '-m', 'record versioned release URL');
+    }
     // Local client config is not Git data. Release it under its original owner before simulating another PC.
     for (const projectId of projects) {
       const args = ['client', 'remove', '--client', 'codex', '--project-dir', source(projectId)];
@@ -174,9 +238,24 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
     await git(root, 'clone', original, workspace);
     // A clone from a local checkout has a different origin; restore its declared portable repository identity.
     await git(workspace, 'remote', 'set-url', 'origin', '../knowledge.git');
-    const delivered = join(root, 'delivered'); await mkdir(delivered);
-    const replacement = join(delivered, basename(tarball)); await cp(tarball, replacement); await rm(tarball);
-    await install(replacement); // Fails if package/lock still depends on the now unavailable original tarball.
+    if (release) {
+      // A fresh cache forces npm ci to fetch the committed URL instead of reusing the first install.
+      await exec(process.execPath, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', join(root, 'clone-npm-cache')], { cwd: workspace, maxBuffer: 4 * 1024 * 1024 });
+      await candidateUrlRecorded(); await installedVersion(release.candidateVersion);
+      const intactLock = await readFile(join(workspace, 'package-lock.json'), 'utf8');
+      const corruptLock = record(JSON.parse(intactLock) as unknown);
+      const packages = record(corruptLock.packages);
+      await writeFile(join(workspace, 'package-lock.json'), JSON.stringify({ ...corruptLock, packages: { ...packages,
+        'node_modules/buildlore': { ...record(packages['node_modules/buildlore']), integrity: `sha512-${Buffer.alloc(64).toString('base64')}` } } }));
+      await assert.rejects(exec(process.execPath, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--fetch-retries=0', '--cache', join(root, 'corrupt-npm-cache')], { cwd: workspace }),
+        (error: unknown) => typeof error === 'object' && error !== null && 'stderr' in error && typeof error.stderr === 'string' && error.stderr.includes('EINTEGRITY'));
+      await writeFile(join(workspace, 'package-lock.json'), intactLock);
+      await exec(process.execPath, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', join(root, 'clone-npm-cache')], { cwd: workspace, maxBuffer: 4 * 1024 * 1024 });
+    } else {
+      const delivered = join(root, 'delivered'); await mkdir(delivered);
+      const replacement = join(delivered, basename(tarball)); await cp(tarball, replacement); await rm(tarball);
+      await install(replacement); // Fails if package/lock still depends on the now unavailable original tarball.
+    }
     await checkBin();
     config = join(root, 'restored-config');
     const cloned = await invoke(['workspace', 'guide', '--project', 'parcel']);
@@ -200,7 +279,9 @@ export async function verifyInstalledWorkspace(tarball: string, hiddenRoots: rea
     await mcp('parcel', true); await writeFile(authority, bytes);
     process.stdout.write(JSON.stringify({ installedWorkspace: 'passed', platform: process.platform, sourceHidden: true,
       mcpReadOnlyMount: true, networkDisabledDuringWorkflow: true, projects: 2, firstInitialization: 'created',
-      publication: 'two CLI Git commits', freshClone: 'reinstalled from separately delivered tarball; original removed',
+      publication: 'two CLI Git commits', freshClone: release ? 'npm ci from committed URL and fresh cache' : 'reinstalled from separately delivered tarball; original removed',
+      ...(release ? { upgrade: `${release.previousVersion} -> ${release.candidateVersion}`, rollback: 'previous installed CLI/MCP read passed',
+        existingKnowledgeAndConnections: 'byte hashes preserved', urlAndIntegrity: 'recorded', corruptIntegrity: 'rejected' } : {}),
       shortNpmBin: 'passed', ownedClientSetup: 'passed', workspaceCheck: 'passed', versionConsistency: 'passed', consumerAudit: 'passed',
       generationAndContentRestored: true, searchReadIsolationAndStaleGeneration: 'passed', invalidApproval: 'rejected',
       authoring: 'deterministic proposal/review inputs; explicit test approval; no paid AI' }) + '\n');

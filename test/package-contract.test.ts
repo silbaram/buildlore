@@ -313,6 +313,9 @@ describe('package contract', () => {
       'verify:windows-authoring': 'node scripts/verify-windows-authoring.mjs',
       prepack: 'node scripts/build.mjs',
       'pack:local': 'node scripts/pack-local.mjs',
+      'release:prepare': 'node scripts/prepare-release.mjs',
+      'test:release-packaging': 'node --test scripts/test-release-packaging.mjs',
+      'verify:release-install': 'node scripts/verify-release-install.mjs',
     });
   });
 

@@ -26,7 +26,7 @@ export default tseslint.config(
       parserOptions: {
         projectService: {
           allowDefaultProject: ['scripts/*.mjs', 'vitest.config.mjs'],
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 9,
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 12,
         },
         tsconfigRootDir: import.meta.dirname,
       },

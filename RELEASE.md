@@ -1,7 +1,9 @@
 # Release checks and compatibility
 
-BuildLore is currently a prerelease. The package remains private until an explicit
-registry release. The installation default is one local dependency in the knowledge
+BuildLore is currently a prerelease. Distribution uses versioned prebuilt npm
+archives attached to GitHub Releases; npm registry publication is not required.
+The candidate is 0.1.1-rc.2 and remains `private: true`. Until its assets are
+published, URL examples are proposals, not available downloads. The installation default is one local dependency in the knowledge
 Git checkout. Source projects connect to it; they do not need their own installation.
 
 ## Supported scope
@@ -35,9 +37,15 @@ npm test
 npm run lint
 npm run typecheck
 npm audit --omit=dev
-npm run pack:local -- --output /path/to/release
-npm run verify:installed-workspace -- --archive /path/to/release/buildlore-0.1.1-rc.1.tgz
+npm run test:release-packaging
+npm run release:prepare -- --output /path/to/empty-release-directory
+npm run verify:installed-workspace -- --archive /path/to/empty-release-directory/buildlore-0.1.1-rc.2.tgz
+npm run verify:release-install -- --archive /path/to/empty-release-directory/buildlore-0.1.1-rc.2.tgz --previous-archive /path/to/previous/buildlore-0.1.1-rc.1.tgz
 ```
+
+`release:prepare` writes the tarball, SHA256SUMS and release-notes.md, using an empty
+output directory and refusing replacement. Its `verified: false`/`published: false`
+result is not a claim of passing verification or actual publication.
 
 `build` removes old `dist` outputs. `pack:local` validates compiled file coverage,
 exports, skills and release assets and reports SHA-256 and npm integrity. Plain
@@ -55,7 +63,7 @@ development lockfile and audited too. Missing verification tools fail the gate.
 For native Windows, run the separate check with Node 24+, npm 11.19.0 and Git:
 
 ```sh
-npm run verify:windows-authoring -- --archive /path/to/release/buildlore-0.1.1-rc.1.tgz
+npm run verify:windows-authoring -- --archive /path/to/release/buildlore-0.1.1-rc.2.tgz
 ```
 
 Use a real Windows path with quotes when it contains spaces. This check installs
@@ -71,6 +79,52 @@ permissions, review license/metadata and the exact archive, and explicitly remov
 `private: true`. Rebuild and reverify that changed candidate. A metadata change is
 not permission to publish. Account authentication and publication are separate
 release actions; never put tokens in repository files.
+
+## Publish the verified GitHub assets
+
+After the required checks pass and publication is explicitly approved, commit the
+reviewed source/metadata and create/push the matching version tag through the normal
+Git review process. Verify that the tag points to the tested source. Upload the
+**identical** tarball and SHA256SUMS in GitHub’s release UI with the generated notes,
+or run this from the prepared release directory after the tag already exists:
+
+```sh
+gh release create v0.1.1-rc.2 --repo silbaram/buildlore --verify-tag --prerelease --title "BuildLore 0.1.1-rc.2" --notes-file release-notes.md buildlore-0.1.1-rc.2.tgz SHA256SUMS
+```
+
+This is an external publication command, not part of `release:prepare`. Do not replace
+an existing tag’s assets; issue a new version. Retain old releases for reproducible
+installation and rollback. GitHub’s automatic source-code archives are not the npm
+package. npm `private: true` does not prevent this archive distribution.
+
+After publication, install the real HTTPS asset URL in a disposable knowledge checkout
+and repeat CLI version, initialization and MCP read checks; compare the downloaded
+archive to SHA256SUMS. Local HTTP URL verification does not establish that GitHub
+published or serves the intended bytes. URL installation records the dependency and
+integrity in npm metadata; dependencies may still require registry access.
+
+## URL installation and upgrade
+
+Run `npm install --save-exact "<versioned-release-tgz-URL>"` inside the knowledge
+checkout; runtime files live in `node_modules/buildlore/`. Execute them with
+`npx --no buildlore ...`. Upgrade with a different explicit version URL, then check the
+version and every project’s `workspace check` and restart clients/MCP. Do not routinely
+reinitialize on upgrade. Installation does not migrate or approve Wiki data. Keep npm
+metadata commits separate from project publication.
+
+For rollback, explicitly reinstall a compatible previous URL/archive and repeat read
+checks. For a fresh clone with committed URL metadata, `npm ci` restores the package
+while that URL is accessible; `workspace init`, source binding and client configuration
+still require the existing documented restore steps. A local-file dependency requires
+separate delivery if its old path is unavailable. `npm update` does not discover new
+GitHub Release asset URLs.
+
+`verify:release-install` requires both the candidate and a compatible previous archive
+with different real versions. It uses local HTTP versioned endpoints, fresh npm caches
+for clone/ci and integrity rejection, two authored/approved projects and installed
+MCP reads across upgrade and rollback. It compares existing knowledge, approval history
+and connection byte hashes. It retains Linux source-hidden/network-disabled runtime
+and read-only MCP checks; it does not start a product HTTP server or contact a model.
 
 ## Stable contract policy
 

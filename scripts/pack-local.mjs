@@ -18,15 +18,15 @@ async function filesIn(directory, prefix = '') {
   }
   return files;
 }
-/** @param {string} repo @param {Set<string>} paths @param {unknown} metadata */
+/** @param {string | null} repo @param {Set<string>} paths @param {unknown} metadata */
 async function inspectEntries(repo, paths, metadata) {
-  const expectedDist = new Set((await filesIn(join(repo, 'src'))).filter(p => p.endsWith('.ts')).flatMap(p =>
+  const expectedDist = repo === null ? null : new Set((await filesIn(join(repo, 'src'))).filter(p => p.endsWith('.ts')).flatMap(p =>
     ['.js', '.js.map', '.d.ts', '.d.ts.map'].map(suffix => `dist/${p.slice(0, -3)}${suffix}`)));
   for (const path of paths) {
     assert(/^(?:dist|schemas|profiles|skills)\//u.test(path) || ['package.json', 'README.md', 'README.ko.md', 'LICENSE', 'CHANGELOG.md', 'RELEASE.md'].includes(path), 'Unexpected package file.');
-    if (path.startsWith('dist/')) assert(expectedDist.has(path), 'Orphan build output in package.');
+    if (path.startsWith('dist/') && expectedDist) assert(expectedDist.has(path), 'Orphan build output in package.');
   }
-  for (const path of expectedDist) assert(paths.has(path), 'Missing compiled package file.');
+  for (const path of expectedDist ?? []) assert(paths.has(path), 'Missing compiled package file.');
   for (const path of ['dist/cli/bin.js', 'LICENSE', 'README.md', 'README.ko.md', 'RELEASE.md', 'CHANGELOG.md',
     'skills/buildlore-authoring/SKILL.md', 'skills/buildlore-activation/SKILL.md']) assert(paths.has(path), 'Missing release asset.');
   assert(metadata && typeof metadata === 'object' && 'exports' in metadata && metadata.exports && typeof metadata.exports === 'object');
@@ -40,10 +40,9 @@ async function inspectEntries(repo, paths, metadata) {
   }
 
 }
-/** Inspect a supplied archive without extracting files or modifying it.
- * @param {string} repo @param {string} archive
+/** @param {string | null} repo @param {string} archive
  */
-export async function inspectArchive(repo, archive) {
+async function inspectSuppliedArchive(repo, archive) {
   const listing = await exec('tar', ['-tzf', archive], { maxBuffer: 8 * 1024 * 1024 });
   const entries = listing.stdout.trim().split('\n');
   assert(entries.every(p => p.startsWith('package/') && !p.includes('..') && !p.includes('\\')), 'Invalid archive paths.');
@@ -55,6 +54,21 @@ export async function inspectArchive(repo, archive) {
   const bytes = await readFile(archive);
   return { filename: basename(archive), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
     sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length, entryCount: paths.size, published: false };
+}
+
+/** Check a current candidate against the current source tree as well as its exports.
+ * @param {string} repo @param {string} archive
+ */
+export async function inspectArchive(repo, archive) {
+  return inspectSuppliedArchive(repo, archive);
+}
+
+/** Historical packages own their file layout; current-source build coverage does not apply.
+ * Path, release-asset and public-export checks still apply. No extraction or mutation.
+ * @param {string} archive
+ */
+export async function inspectHistoricalArchive(archive) {
+  return inspectSuppliedArchive(null, archive);
 }
 
 /** Build and inspect the exact archive that will be delivered. Never publishes.

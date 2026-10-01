@@ -30,12 +30,12 @@ that binds those inputs and outputs.
 
 Use Node.js 24+, npm 11.19.0 and Git. Install the **distributed npm package into your knowledge Git checkout**, which can hold several projects. The checkout itself manages the Wiki; no separate hub or product source copy is needed.
 
-The package is not published to the npm registry yet. Install a supplied release tarball as below. After publication, the install command can become `npm install buildlore`. Building a tarball from product source is a maintainer step described below.
+The distribution path is a **prebuilt `.tgz` asset on GitHub Releases**; npm registry publication is not required. The `0.1.1-rc.2` URL below is an example until that release is published. Select an available version from [Releases](https://github.com/silbaram/buildlore/releases), then use its package asset URL on one line. GitHub’s automatic “Source code” archives are not the compiled npm package. A supplied local `.tgz` can also be installed. Building the package is a maintainer step.
 
 ```sh
 git clone <knowledge-repository-URL> my-knowledge
 cd my-knowledge
-npm install --save-exact /path/to/buildlore-0.1.1-rc.1.tgz
+npm install --save-exact "https://github.com/silbaram/buildlore/releases/download/v0.1.1-rc.2/buildlore-0.1.1-rc.2.tgz"
 npx --no buildlore workspace init --json
 ```
 
@@ -44,13 +44,29 @@ Without a Git origin, supply an explicit portable `--knowledge-repo <repository-
 ```text
 my-knowledge/
   package.json                  # version in Git
-  package-lock.json             # version in Git; local tarball must also be delivered
+  package-lock.json             # asset URL and integrity in Git
   node_modules/                 # installed package; ignored by Git
   .buildlore/workspace.json      # portable workspace mode/identity
   .buildlore/local-projects.json # local source paths; ignored by Git
   manifest.json
   projects/<project-id>/
 ```
+
+`npm install` saves the package under this checkout’s `node_modules/buildlore/` and records its URL in `package.json`/`package-lock.json`. `npx --no buildlore` executes this local installation; remote `npx` execution uses the npm cache and does not install a lasting workspace dependency. Dependencies may still require npm registry access. Each source project’s MCP configuration refers to this same installation; clients start separate project-bound stdio processes as needed.
+
+### Upgrade or roll back
+
+Stop the AI clients/MCP processes using this installation and retain the previous compatible URL/archive and npm metadata. From the same knowledge checkout, install the **new version’s** asset URL:
+
+```sh
+npm install --save-exact "<new-version-tgz-URL>"
+npx --no buildlore --version
+npx --no buildlore workspace check --project my-project --client codex
+```
+
+Do not rerun initialization as a routine upgrade. Installation updates the package and npm metadata; it does not migrate, approve or activate the Wiki. Review and commit npm metadata separately from Wiki publication. Restart clients after checking each connected project. With the same installation path, projects keep using the existing MCP configuration; a changed Node or package path requires preview/apply of the connection settings.
+
+To roll back, use `npm install --save-exact "<previous-compatible-tgz-URL-or-path>"`, repeat the version/read checks and restart clients. Keep previous assets available. Versioned release URLs are explicit dependencies: `npm update` is not a “find the latest GitHub Release” command. Do not overwrite a published version’s asset or use a mutable `latest` URL for pinned installations.
 
 ### Find the next setup step
 
@@ -148,11 +164,11 @@ applying. Approved Wiki content is updated through a separate authoring workflow
 
 ### Restore on another PC or in a fresh clone
 
-A local `.tgz` installation records a file path in npm metadata. A Git clone followed by `npm ci` is insufficient when that original tarball path is unavailable. **Deliver the same tarball separately**, then reinstall from its new location:
+For a versioned GitHub asset URL installation, clone the committed knowledge repository and use `npm ci` while that URL remains available; npm checks the lockfile integrity. This restores the package, not machine-local source bindings. For a local-file installation whose original archive path is unavailable, deliver the identical archive and reinstall it with `npm install --save-exact "<new-archive-path>"` first.
 
 ```sh
 cd /new/my-knowledge
-npm install --save-exact /new/downloads/buildlore-0.1.1-rc.1.tgz
+npm ci
 npx --no buildlore workspace guide --project my-project
 npx --no buildlore workspace init --json
 npx --no buildlore project bind --project my-project --source-root /new/my-project --json
@@ -162,13 +178,14 @@ npx --no buildlore workspace check --project my-project --client codex
 
 Restore the source checkout and its `.buildlore/sources.json` too. The clone's Git origin must identify the knowledge repository recorded in the workspace. Rerunning `workspace init` prepares local folder permissions and binding storage that Git does not preserve; it retains existing Wiki and approval records. Repeat bind/connect for each project, and preview client configuration with the new paths before applying it. Review and commit changed npm metadata separately.
 
-### Maintainers: local distribution, then npm preparation
+### Maintainers: prepare a GitHub Release
 
-1. With Node 24+ and **npm 11.19.0**, pass build/test/lint/typecheck and `npm run verify:installed-workspace`. Linux verification requires `bwrap`; its absence is reported as failure.
-2. Use `npm run pack:local -- --output <distribution-directory>` to clean-build and inspect the tarball file list, public exports, size and integrity. It rejects obsolete build files; plain `npm pack` also runs the clean-build hook. Deliver `sha256sum <file.tgz>` with the identical archive. It contains runtime code, public schemas and authoring/activation skills; product source, tests, user knowledge and local state are excluded.
-3. Keep `private: true` for now. Immediately before a future registry release, verify name availability, version, license, package contents and account permissions; change public-release settings only with separate publication approval. This workflow does not publish to npm.
+1. With Node 24+ and **npm 11.19.0**, pass build/test/lint/typecheck, `p2a doctor --target . --dev` and entry validation when applicable.
+2. Run `npm run release:prepare -- --output <empty-distribution-directory>`. It clean-builds and inspects the archive, then writes `buildlore-0.1.1-rc.2.tgz`, `SHA256SUMS` and `release-notes.md`. Existing output files are rejected. Runtime code, schemas, profiles and skills are included; product source, tests, user knowledge and local planning state are excluded. The result says `verified: false`, `published: false`: preparation alone is not a completed release.
+3. Run `npm run test:release-packaging`, `npm run verify:installed-workspace -- --archive <candidate.tgz>` and `npm run verify:release-install -- --archive <candidate.tgz> --previous-archive <compatible-previous.tgz>` on the exact candidate. Linux verification requires `bwrap`. The URL check uses a local HTTP endpoint and real npm install/upgrade/rollback/clone-ci with two approved projects; actual GitHub HTTPS delivery is a post-publication check. Fixed authoring/review inputs test protocols, not paid AI quality. Failed or unavailable checks remain failures.
+4. After verification and explicit publication approval, tag the corresponding reviewed source commit and upload the **identical archive and SHA256SUMS** to a version-matching GitHub Release, using the prepared notes. See [release checks](RELEASE.md). Retain previous assets. Keep `private: true`; this distribution does not publish to the npm registry.
 
-Installed verification covers CLI registration, source selection, authoring, review, explicit test approval, activation and publication for two projects, then clone/reinstall and MCP search/read/isolation. It removes the original tarball and uses a separately delivered copy. Deterministic inputs test protocols, not actual AI quality or a real client conversation. Windows OS verification remains follow-up work.
+`pack:local` remains available for local file delivery. `release:prepare` adds release assets to that existing archive inspection; it does not push Git, create a tag, call GitHub, or publish anything. Native Windows validation remains separate.
 
 On native Windows with Node 24+, **npm 11.19.0** and Git, run `npm run verify:windows-authoring -- --archive <identical-delivered-file.tgz>`. It uses temporary repositories and client settings to check local installation and registration in paths with spaces, state persistence and resume, drafting, review, explicit fixture approval, activation and MCP search/read. The command fails on Linux/WSL instead of recording Windows success. It does not prove Linux's network-disabled/read-only-mount isolation or actual AI writing quality.
 
@@ -1750,7 +1767,7 @@ Initial compatibility targets are Linux x64, Codex CLI 0.154.0 and Claude Code 2
 
 ## Reconnection, hub relocation and package lifecycle
 
-The local release candidate is **0.1.1-rc.1**, with `private: true`. Linux x64 is the verification target; Windows and macOS remain unverified. Retain the exact previous tarball before updating. A candidate is not a public npm release.
+The following legacy M3 examples use the previous **0.1.1-rc.1** archive. The current GitHub distribution candidate is **0.1.1-rc.2**, with `private: true`; use the recommended installation flow above. Linux x64 is the verification target; Windows and macOS remain unverified. Retain the exact previous tarball before updating. A candidate is not a published release.
 
 ### Reconnect a source checkout
 
